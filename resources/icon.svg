@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">Herdr Desktop</title>
+  <rect x="112" y="112" width="800" height="800" rx="184" fill="#000000"/>
+  <rect x="72" y="72" width="800" height="800" rx="184" fill="#6e91ff" stroke="#000000" stroke-width="32"/>
+  <g transform="translate(152 122) scale(30)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3" stroke="#000000" stroke-width="3.1"/>
+    <path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3" stroke="#f7f7f7" stroke-width="1.8"/>
+  </g>
+</svg>

@@ -1,0 +1,2228 @@
+import {
+  Blocks,
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  CloudCog,
+  Command,
+  FolderGit2,
+  GitBranch,
+  Maximize2,
+  MessageSquare,
+  Minimize2,
+  MoreHorizontal,
+  PanelBottom,
+  PanelRight,
+  PanelTop,
+  Pencil,
+  Play,
+  Plus,
+  Puzzle,
+  RefreshCw,
+  Rocket,
+  Settings,
+  SlidersHorizontal,
+  SquareTerminal,
+  Trash2,
+  Wifi,
+} from 'lucide-react';
+import {
+  type CSSProperties,
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Toaster } from '@/components/ui/sonner';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
+import { AgentSidebar } from '@/renderer/agents/AgentSidebar';
+import {
+  ChatPanel,
+  type ChatSessionState,
+  type ChatSessionUpdate,
+  createChatSessionState,
+} from '@/renderer/chat/ChatPanel';
+import { ShortcutHelpDialog } from '@/renderer/help/ShortcutHelpDialog';
+import { WhatsNewDialog } from '@/renderer/help/WhatsNewDialog';
+import { Navigator, planTabMove, planWorkspaceMove, ReorderControls } from '@/renderer/navigation';
+import { agentNotifications } from '@/renderer/notifications/agent-notifications';
+import { deliverSystemNotification } from '@/renderer/notifications/system-notification';
+import { PaneControls, PaneDetails, type PaneMoveIntent, SplitHandles } from '@/renderer/panes';
+import {
+  type InstalledPluginViewModel,
+  type PluginActionViewModel,
+  PluginCenter,
+} from '@/renderer/plugins/PluginCenter';
+import { MobileSwitcher, type MobileSwitcherSection } from '@/renderer/responsive';
+import { SettingsDialog } from '@/renderer/settings/SettingsDialog';
+import { TerminalPanel } from '@/renderer/terminal/TerminalPanel';
+import {
+  CreateWorktreeDialog,
+  OpenWorktreeDialog,
+  RemoveWorktreeDialog,
+  WorktreeSpaces,
+} from '@/renderer/worktrees';
+import {
+  AGENT_KINDS,
+  type AgentKind,
+  type AgentManifestInfo,
+  type DesktopAction,
+  type HerdrCommand,
+  type HerdrQueryResult,
+  INTEGRATION_TARGETS,
+  type InstalledPluginInfo,
+  type PluginActionInfo,
+} from '@/shared/desktop-api';
+import type { HerdrEventConnectionState } from '@/shared/events';
+import type {
+  AgentStatus,
+  EngineBootstrap,
+  PaneInfo,
+  PaneLayoutSnapshot,
+  WorkspaceInfo,
+} from '@/shared/herdr';
+import { DEFAULT_DESKTOP_PREFERENCES, type DesktopPreferences } from '@/shared/preferences';
+import packageMetadata from '../../package.json';
+
+const INSTALL_URL = 'https://github.com/herdrdev/herdr#installation';
+
+const statusStyle: Record<AgentStatus, string> = {
+  working: 'bg-chart-1',
+  blocked: 'bg-chart-2',
+  done: 'bg-chart-4',
+  idle: 'bg-secondary-background',
+  unknown: 'bg-chart-3',
+};
+
+const statusSymbol: Record<AgentStatus, string> = {
+  working: '●',
+  blocked: '!',
+  done: '✓',
+  idle: '○',
+  unknown: '?',
+};
+
+function StatusDot({
+  status,
+  style = 'dot',
+}: {
+  status: AgentStatus;
+  style?: DesktopPreferences['indicatorStyle'];
+}) {
+  if (style === 'symbol') {
+    return (
+      <span aria-label={status} className="font-heading" role="img">
+        {statusSymbol[status]}
+      </span>
+    );
+  }
+  return (
+    <>
+      <span
+        aria-hidden="true"
+        className={cn('size-3 shrink-0 rounded-full border-2 border-border', statusStyle[status])}
+      />
+      <span className="sr-only">{status}</span>
+    </>
+  );
+}
+
+function AppMark() {
+  return (
+    <div
+      className="grid size-8 shrink-0 place-items-center rounded-base border-2 border-border bg-main shadow-none"
+      data-slot="app-mark"
+    >
+      <Command aria-hidden="true" className="size-4 stroke-[3]" />
+    </div>
+  );
+}
+
+function WindowChrome({
+  onRefresh,
+  onPlugins,
+  onSettings,
+  busy,
+}: {
+  onRefresh?: () => void;
+  onPlugins?: () => void;
+  onSettings?: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <header className="app-drag flex h-12 shrink-0 items-center border-b-2 border-border bg-secondary-background pl-20 pr-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <AppMark />
+        <span className="truncate text-sm font-heading tracking-[0.12em]">HERDR DESKTOP</span>
+        <Badge className="hidden sm:inline-flex" variant="neutral">
+          ENGINE UI
+        </Badge>
+      </div>
+      <div className="app-no-drag ml-auto flex items-center gap-2">
+        {onPlugins ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="Plugins"
+                className="size-8"
+                disabled={busy}
+                onClick={onPlugins}
+                size="icon"
+                variant="neutral"
+              >
+                <Puzzle aria-hidden="true" className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Herdr plugins</TooltipContent>
+          </Tooltip>
+        ) : null}
+        {onRefresh ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="Refresh session"
+                className="size-8"
+                disabled={busy}
+                onClick={onRefresh}
+                size="icon"
+                variant="neutral"
+              >
+                <RefreshCw aria-hidden="true" className={cn('size-4', busy && 'animate-spin')} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh Herdr snapshot</TooltipContent>
+          </Tooltip>
+        ) : null}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              aria-label="Settings"
+              className="size-8"
+              disabled={!onSettings}
+              onClick={onSettings}
+              size="icon"
+              variant="neutral"
+            >
+              <Settings aria-hidden="true" className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Settings</TooltipContent>
+        </Tooltip>
+      </div>
+    </header>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <WindowChrome />
+      <main className="grid flex-1 place-items-center p-8">
+        <Card className="w-full max-w-md bg-secondary-background">
+          <CardContent className="flex items-center gap-4 py-1">
+            <div className="grid size-12 place-items-center rounded-base border-2 border-border bg-main shadow-shadow">
+              <RefreshCw aria-hidden="true" className="size-5 animate-spin" />
+            </div>
+            <div>
+              <h1 className="text-lg">Connecting to Herdr</h1>
+              <p className="mt-1 text-sm">Reading the engine status and live session snapshot.</p>
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}
+
+interface OnboardingScreenProps {
+  result: Exclude<EngineBootstrap, { state: 'connected' }>;
+  busy: boolean;
+  onRetry: () => void;
+  onStart: () => void;
+  onSettings: () => void;
+}
+
+function OnboardingScreen({ result, busy, onRetry, onStart, onSettings }: OnboardingScreenProps) {
+  const missing = result.state === 'missing';
+  const stopped = result.state === 'stopped';
+  const incompatible = result.state === 'incompatible';
+  const title = missing
+    ? 'Herdr engine not found'
+    : stopped
+      ? 'Herdr server is stopped'
+      : incompatible
+        ? 'Herdr versions do not match'
+        : 'Herdr could not be reached';
+  const message =
+    result.state === 'missing' || result.state === 'error'
+      ? result.message
+      : stopped
+        ? 'The Herdr CLI is installed. Start its headless server to open your session here.'
+        : 'The running Herdr server uses a different protocol. Restart it with your current Herdr CLI.';
+
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <WindowChrome onSettings={onSettings} />
+      <main className="relative grid flex-1 place-items-center overflow-hidden p-8">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 opacity-30 [background-image:linear-gradient(var(--border)_1px,transparent_1px),linear-gradient(90deg,var(--border)_1px,transparent_1px)] [background-size:32px_32px]"
+        />
+        <Card className="relative w-full max-w-2xl bg-secondary-background">
+          <CardHeader className="border-b-2 border-border">
+            <div className="mb-5 flex size-14 items-center justify-center rounded-base border-2 border-border bg-main shadow-shadow">
+              {missing ? <CloudCog aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
+            </div>
+            <CardTitle>
+              <h1 className="text-3xl">{title}</h1>
+            </CardTitle>
+            <p className="max-w-xl pt-2 text-base leading-7">{message}</p>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="grid gap-3 sm:grid-cols-3">
+              {[
+                ['01', 'Engine', missing ? 'Install Herdr' : 'CLI detected'],
+                ['02', 'Server', stopped ? 'Ready to start' : 'Check version'],
+                ['03', 'Desktop', 'Connect automatically'],
+              ].map(([number, label, detail]) => (
+                <div className="rounded-base border-2 border-border bg-background p-3" key={number}>
+                  <span className="text-xs font-heading">
+                    {number} / {label}
+                  </span>
+                  <p className="mt-2 text-sm">{detail}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              {missing ? (
+                <Button onClick={() => window.herdr.openExternal(INSTALL_URL)}>
+                  Open install guide
+                </Button>
+              ) : null}
+              {stopped ? (
+                <Button disabled={busy} onClick={onStart}>
+                  <Play aria-hidden="true" />
+                  Start Herdr
+                </Button>
+              ) : null}
+              <Button disabled={busy} onClick={onRetry} variant="neutral">
+                <RefreshCw aria-hidden="true" className={cn(busy && 'animate-spin')} />
+                Check again
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}
+
+function CreateWorkspaceDialog({
+  busy,
+  onCreate,
+}: {
+  busy: boolean;
+  onCreate: (cwd?: string, label?: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [cwd, setCwd] = useState('');
+  const [label, setLabel] = useState('');
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onCreate(cwd.trim() || undefined, label.trim() || undefined);
+    setOpen(false);
+    setCwd('');
+    setLabel('');
+  };
+
+  return (
+    <Dialog onOpenChange={setOpen} open={open}>
+      <DialogTrigger asChild>
+        <Button className="w-full" variant="neutral">
+          <Plus aria-hidden="true" /> New workspace
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create a Herdr workspace</DialogTitle>
+          <DialogDescription>
+            Herdr owns the workspace and terminal. This desktop app sends the request.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="space-y-5" onSubmit={submit}>
+          <div className="space-y-2">
+            <Label htmlFor="workspace-cwd">Working directory</Label>
+            <Input
+              autoFocus
+              id="workspace-cwd"
+              onChange={(event) => setCwd(event.target.value)}
+              placeholder="/path/to/project"
+              value={cwd}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="workspace-label">Workspace label</Label>
+            <Input
+              id="workspace-label"
+              onChange={(event) => setLabel(event.target.value)}
+              placeholder="Optional"
+              value={label}
+            />
+          </div>
+          <DialogFooter>
+            <Button disabled={busy} type="submit">
+              Create workspace
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateTabDialog({
+  busy,
+  onCreate,
+}: {
+  busy: boolean;
+  onCreate: (label?: string, cwd?: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState('');
+  const [cwd, setCwd] = useState('');
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onCreate(label.trim() || undefined, cwd.trim() || undefined);
+    setOpen(false);
+    setLabel('');
+    setCwd('');
+  };
+
+  return (
+    <Dialog onOpenChange={setOpen} open={open}>
+      <DialogTrigger asChild>
+        <Button aria-label="New tab" className="size-8" size="icon" variant="neutral">
+          <Plus aria-hidden="true" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create a Herdr tab</DialogTitle>
+          <DialogDescription>
+            Add another engine-owned terminal tab to this workspace.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="space-y-5" onSubmit={submit}>
+          <div className="space-y-2">
+            <Label htmlFor="tab-label">Tab label</Label>
+            <Input
+              autoFocus
+              id="tab-label"
+              onChange={(event) => setLabel(event.target.value)}
+              placeholder="Optional"
+              value={label}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="tab-cwd">Working directory</Label>
+            <Input
+              id="tab-cwd"
+              onChange={(event) => setCwd(event.target.value)}
+              placeholder="Inherit workspace"
+              value={cwd}
+            />
+          </div>
+          <DialogFooter>
+            <Button disabled={busy} type="submit">
+              Create tab
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface NamedResourceTarget {
+  kind: 'workspace' | 'tab' | 'pane';
+  id: string;
+  label: string;
+}
+
+function RenameResourceDialog({
+  target,
+  onOpenChange,
+  onSave,
+}: {
+  target: NamedResourceTarget | null;
+  onOpenChange: (open: boolean) => void;
+  onSave: (target: NamedResourceTarget, label: string) => void;
+}) {
+  const [label, setLabel] = useState(target?.label || '');
+
+  useEffect(() => setLabel(target?.label || ''), [target]);
+  if (!target) {
+    return null;
+  }
+
+  const resourceName = `${target.kind[0].toUpperCase()}${target.kind.slice(1)}`;
+  return (
+    <Dialog onOpenChange={onOpenChange} open>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename {target.kind}</DialogTitle>
+          <DialogDescription>The new name is stored by the Herdr engine.</DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const nextLabel = label.trim();
+            if (nextLabel) {
+              onSave(target, nextLabel);
+            }
+          }}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="resource-name">{resourceName} name</Label>
+            <Input
+              autoFocus
+              id="resource-name"
+              onChange={(event) => setLabel(event.target.value)}
+              value={label}
+            />
+          </div>
+          <DialogFooter>
+            <Button disabled={!label.trim()} type="submit">
+              Save {target.kind} name
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CloseResourceDialog({
+  target,
+  onOpenChange,
+  onConfirm,
+}: {
+  target: NamedResourceTarget | null;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (target: NamedResourceTarget) => void;
+}) {
+  if (!target) {
+    return null;
+  }
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Close {target.kind}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Herdr will close “{target.label}” and its live terminal resources. This cannot be undone
+            from the desktop app.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={() => onConfirm(target)}>
+            Close {target.kind}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function StartAgentDialog({
+  pane,
+  busy,
+  onStart,
+}: {
+  pane?: PaneInfo;
+  busy: boolean;
+  onStart: (
+    paneId: string,
+    name: string,
+    kind: AgentKind,
+    args: string[],
+    timeoutMs: number,
+  ) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [kind, setKind] = useState<AgentKind>('codex');
+  const [args, setArgs] = useState('');
+  const [timeoutSeconds, setTimeoutSeconds] = useState('30');
+  const startupTimeout = Number(timeoutSeconds);
+  const validTimeout =
+    Number.isInteger(startupTimeout) && startupTimeout > 3 && startupTimeout <= 300;
+  const parsedArgs =
+    args.match(/"(?:\\.|[^"\\])*"|'[^']*'|[^\s]+/g)?.map((argument) => {
+      const quoted =
+        (argument.startsWith('"') && argument.endsWith('"')) ||
+        (argument.startsWith("'") && argument.endsWith("'"));
+      return quoted ? argument.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\') : argument;
+    }) || [];
+
+  return (
+    <Dialog onOpenChange={setOpen} open={open}>
+      <DialogTrigger asChild>
+        <Button className="w-full" disabled={!pane} variant="neutral">
+          <Rocket aria-hidden="true" /> Launch agent
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Start an agent</DialogTitle>
+          <DialogDescription>
+            Herdr starts the supported agent inside {pane?.pane_id || 'the focused pane'} and waits
+            until it is interactive.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!pane || !/^[a-z][a-z0-9_-]{0,31}$/.test(name)) {
+              return;
+            }
+            if (!validTimeout) {
+              return;
+            }
+            onStart(pane.pane_id, name, kind, parsedArgs, startupTimeout * 1_000);
+            setOpen(false);
+            setName('');
+            setArgs('');
+            setTimeoutSeconds('30');
+          }}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="agent-name">Agent name</Label>
+            <Input
+              autoFocus
+              id="agent-name"
+              onChange={(event) => setName(event.target.value)}
+              pattern="[a-z][a-z0-9_-]{0,31}"
+              placeholder="reviewer"
+              value={name}
+            />
+            <p className="text-xs opacity-70">
+              Lowercase letters, numbers, hyphens, and underscores.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="agent-kind">Agent kind</Label>
+            <Select onValueChange={(value) => setKind(value as AgentKind)} value={kind}>
+              <SelectTrigger aria-label="Agent kind" id="agent-kind">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {AGENT_KINDS.map((agentKind) => (
+                  <SelectItem key={agentKind} value={agentKind}>
+                    {agentKind}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="agent-arguments">Agent arguments</Label>
+            <Input
+              id="agent-arguments"
+              onChange={(event) => setArgs(event.target.value)}
+              placeholder="--model gpt-5"
+              value={args}
+            />
+            <p className="text-xs opacity-70">
+              Optional native arguments, with quoted values supported.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="agent-timeout">Startup timeout in seconds</Label>
+            <Input
+              id="agent-timeout"
+              inputMode="numeric"
+              max={300}
+              min={4}
+              onChange={(event) => setTimeoutSeconds(event.target.value)}
+              type="number"
+              value={timeoutSeconds}
+            />
+            <p className="text-xs opacity-70">Herdr accepts 4–300 seconds.</p>
+          </div>
+          <DialogFooter>
+            <Button
+              disabled={busy || !validTimeout || !/^[a-z][a-z0-9_-]{0,31}$/.test(name)}
+              type="submit"
+            >
+              Start agent
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PaneStage({
+  pane,
+  panes,
+  layout,
+  busy,
+  onFocus,
+  onSplit,
+  onZoom,
+  onRename,
+  onOpenControls,
+  onClose,
+  onSetSplitRatio,
+  onPrompt,
+  readOutput,
+  chatSessions,
+  onChatSessionChange,
+  showPaneLabels,
+}: {
+  pane?: PaneInfo;
+  panes: PaneInfo[];
+  layout?: PaneLayoutSnapshot;
+  busy: boolean;
+  onFocus: (paneId: string) => void;
+  onSplit: (paneId: string, direction: 'right' | 'down') => void;
+  onZoom: (paneId: string) => void;
+  onRename: (pane: PaneInfo) => void;
+  onOpenControls: (pane: PaneInfo) => void;
+  onClose: (pane: PaneInfo) => void;
+  onSetSplitRatio: (tabId: string, path: boolean[], ratio: number) => void;
+  onPrompt: (target: string, text: string) => void | Promise<void>;
+  readOutput: (paneId: string) => Promise<Extract<HerdrQueryResult, { type: 'pane-output' }>>;
+  chatSessions: Readonly<Record<string, ChatSessionState>>;
+  onChatSessionChange: (paneId: string, update: ChatSessionUpdate) => void;
+  showPaneLabels: boolean;
+}) {
+  const [viewByPane, setViewByPane] = useState<Record<string, 'chat' | 'terminal'>>({});
+  if (!pane) {
+    return (
+      <div className="grid min-h-0 flex-1 place-items-center p-8">
+        <p>No pane is available in this tab.</p>
+      </div>
+    );
+  }
+
+  const area = layout?.area;
+  const paneRects = new Map(layout?.panes.map((item) => [item.pane_id, item.rect]) || []);
+  const styleFor = (item: PaneInfo): CSSProperties => {
+    if (layout?.zoomed) {
+      return { inset: 0 };
+    }
+    const rect = paneRects.get(item.pane_id);
+    if (!area || !rect || area.width <= 0 || area.height <= 0) {
+      return { inset: 0 };
+    }
+    return {
+      left: `${((rect.x - area.x) / area.width) * 100}%`,
+      top: `${((rect.y - area.y) / area.height) * 100}%`,
+      width: `${(rect.width / area.width) * 100}%`,
+      height: `${(rect.height / area.height) * 100}%`,
+    };
+  };
+
+  return (
+    <div className="relative min-h-0 flex-1 overflow-hidden p-2">
+      {panes.map((item) => {
+        const focused = item.pane_id === pane.pane_id;
+        const hiddenByZoom = Boolean(layout?.zoomed && !focused);
+        const hasAgent = Boolean(item.agent || item.display_agent);
+        const view = hasAgent ? viewByPane[item.pane_id] || 'chat' : 'terminal';
+        return (
+          <div
+            aria-hidden={hiddenByZoom || undefined}
+            className={cn('absolute p-1', hiddenByZoom && 'hidden')}
+            key={item.pane_id}
+            style={styleFor(item)}
+          >
+            <Card
+              className={cn(
+                'h-full gap-0 overflow-hidden bg-secondary-background py-0 shadow-none',
+                focused && 'shadow-shadow',
+              )}
+              onMouseDown={() => !focused && onFocus(item.pane_id)}
+            >
+              <div
+                className={cn(
+                  'flex h-10 shrink-0 items-center gap-2 border-b-2 border-border px-3',
+                  focused ? 'bg-main' : 'bg-secondary-background',
+                )}
+              >
+                {view === 'chat' ? (
+                  <MessageSquare aria-hidden="true" className="size-4" />
+                ) : (
+                  <SquareTerminal aria-hidden="true" className="size-4" />
+                )}
+                {showPaneLabels ? (
+                  <>
+                    <span className="min-w-0 truncate text-xs font-heading">
+                      {item.label || item.title || item.pane_id}
+                    </span>
+                    <Badge className="ml-auto shrink-0" variant="neutral">
+                      {item.pane_id}
+                    </Badge>
+                  </>
+                ) : null}
+                {focused ? (
+                  <div className="ml-auto flex shrink-0 gap-2">
+                    {hasAgent ? (
+                      <fieldset
+                        aria-label="Pane view"
+                        className="m-0 flex min-w-0 overflow-hidden rounded-base border-2 border-border bg-secondary-background p-0"
+                      >
+                        <Button
+                          aria-label="Chat view"
+                          aria-pressed={view === 'chat'}
+                          className={cn(
+                            'h-7 rounded-none border-0 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
+                            view === 'chat' && 'bg-main',
+                          )}
+                          onClick={() =>
+                            setViewByPane((current) => ({
+                              ...current,
+                              [item.pane_id]: 'chat',
+                            }))
+                          }
+                          size="sm"
+                          variant="neutral"
+                        >
+                          <MessageSquare aria-hidden="true" />
+                          <span className="hidden xl:inline">Chat</span>
+                        </Button>
+                        <Button
+                          aria-label="Terminal view"
+                          aria-pressed={view === 'terminal'}
+                          className={cn(
+                            'h-7 rounded-none border-0 border-l-2 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
+                            view === 'terminal' && 'bg-main',
+                          )}
+                          onClick={() =>
+                            setViewByPane((current) => ({
+                              ...current,
+                              [item.pane_id]: 'terminal',
+                            }))
+                          }
+                          size="sm"
+                          variant="neutral"
+                        >
+                          <SquareTerminal aria-hidden="true" />
+                          <span className="hidden xl:inline">Terminal</span>
+                        </Button>
+                      </fieldset>
+                    ) : null}
+                    <Button
+                      aria-label={layout?.zoomed ? 'Exit pane zoom' : 'Zoom pane'}
+                      className="size-7"
+                      disabled={busy}
+                      onClick={() => onZoom(item.pane_id)}
+                      size="icon"
+                      variant="neutral"
+                    >
+                      {layout?.zoomed ? (
+                        <Minimize2 aria-hidden="true" />
+                      ) : (
+                        <Maximize2 aria-hidden="true" />
+                      )}
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          aria-label="Pane actions"
+                          className="size-7"
+                          disabled={busy}
+                          size="icon"
+                          variant="neutral"
+                        >
+                          <MoreHorizontal aria-hidden="true" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => onOpenControls(item)}>
+                          <SlidersHorizontal aria-hidden="true" /> More pane controls
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onSelect={() => onRename(item)}>
+                          <Pencil aria-hidden="true" /> Rename pane
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onSelect={() => onClose(item)}>
+                          <Trash2 aria-hidden="true" /> Close pane
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Button
+                      aria-label="Split pane right"
+                      className="size-7"
+                      disabled={busy}
+                      onClick={() => onSplit(item.pane_id, 'right')}
+                      size="icon"
+                      variant="neutral"
+                    >
+                      <PanelRight aria-hidden="true" />
+                    </Button>
+                    <Button
+                      aria-label="Split pane down"
+                      className="size-7"
+                      disabled={busy}
+                      onClick={() => onSplit(item.pane_id, 'down')}
+                      size="icon"
+                      variant="neutral"
+                    >
+                      <PanelBottom aria-hidden="true" />
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+              {view === 'chat' ? (
+                <ChatPanel
+                  onOpenTerminal={() =>
+                    setViewByPane((current) => ({
+                      ...current,
+                      [item.pane_id]: 'terminal',
+                    }))
+                  }
+                  onPrompt={onPrompt}
+                  onSessionChange={(update) => onChatSessionChange(item.pane_id, update)}
+                  pane={item}
+                  readOutput={readOutput}
+                  session={chatSessions[item.pane_id]}
+                />
+              ) : (
+                <TerminalPanel
+                  onOpenExternal={(url) => void window.herdr.openExternal(url)}
+                  onScrollRequest={(request) =>
+                    void window.herdr.terminal.scroll({
+                      paneId: request.paneId,
+                      direction: request.direction,
+                      lines:
+                        request.unit === 'page'
+                          ? (item.scroll?.viewport_rows || 24) * request.amount
+                          : request.amount,
+                      source: request.unit === 'page' ? 'page_key' : 'wheel',
+                    })
+                  }
+                  pane={item}
+                />
+              )}
+            </Card>
+          </div>
+        );
+      })}
+      {layout && !layout.zoomed ? (
+        <SplitHandles
+          disabled={busy}
+          layout={layout}
+          onRatioChange={({ splitId, ratio }) => {
+            const encodedPath = splitId.split('_').at(-1);
+            const path =
+              encodedPath === 'root'
+                ? []
+                : encodedPath && /^[01]+$/.test(encodedPath)
+                  ? [...encodedPath].map((part) => part === '1')
+                  : null;
+            if (path) {
+              onSetSplitRatio(layout.tab_id, path, ratio);
+            }
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ConnectedShell({
+  result,
+  onRefresh,
+  onCommand,
+  onNavigator,
+  onPlugins,
+  onSettings,
+  onShortcuts,
+  preferences,
+  onPreferencesChange,
+  connectionState,
+  busy,
+}: {
+  result: Extract<EngineBootstrap, { state: 'connected' }>;
+  onRefresh: () => void;
+  onCommand: (command: HerdrCommand) => void;
+  onNavigator: () => void;
+  onPlugins: () => void;
+  onSettings: () => void;
+  onShortcuts: () => void;
+  preferences: DesktopPreferences;
+  onPreferencesChange: (preferences: DesktopPreferences) => void;
+  connectionState: HerdrEventConnectionState;
+  busy: boolean;
+}) {
+  const { snapshot, status } = result;
+  const [workspaceId, setWorkspaceId] = useState(
+    snapshot.focused_workspace_id || snapshot.workspaces[0]?.workspace_id,
+  );
+  const workspace =
+    snapshot.workspaces.find((item) => item.workspace_id === workspaceId) || snapshot.workspaces[0];
+  const workspaceTabs = useMemo(
+    () => snapshot.tabs.filter((tab) => tab.workspace_id === workspace?.workspace_id),
+    [snapshot.tabs, workspace?.workspace_id],
+  );
+  const [tabByWorkspace, setTabByWorkspace] = useState<Record<string, string>>({});
+  const activeTabId =
+    (workspace && tabByWorkspace[workspace.workspace_id]) ||
+    workspace?.active_tab_id ||
+    workspaceTabs[0]?.tab_id;
+  const activeTab = workspaceTabs.find((item) => item.tab_id === activeTabId) || workspaceTabs[0];
+  const panes = snapshot.panes.filter((pane) => pane.tab_id === activeTabId);
+  const pane = panes.find((item) => item.pane_id === snapshot.focused_pane_id) || panes[0];
+  const layout = snapshot.layouts.find((item) => item.tab_id === activeTabId);
+  const agents = snapshot.agents;
+  const [renameTarget, setRenameTarget] = useState<NamedResourceTarget | null>(null);
+  const [closeTarget, setCloseTarget] = useState<NamedResourceTarget | null>(null);
+  const [createWorktreeSource, setCreateWorktreeSource] = useState<WorkspaceInfo | null>(null);
+  const [openWorktreeSource, setOpenWorktreeSource] = useState<WorkspaceInfo | null>(null);
+  const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<WorkspaceInfo | null>(null);
+  const [paneControlsTarget, setPaneControlsTarget] = useState<PaneInfo | null>(null);
+  const [mobileSwitcherOpen, setMobileSwitcherOpen] = useState(false);
+  const [mobileSection, setMobileSection] = useState<MobileSwitcherSection>('agents');
+  const [chatSessions, setChatSessions] = useState<Record<string, ChatSessionState>>({});
+  const updateChatSession = useCallback((paneId: string, update: ChatSessionUpdate) => {
+    setChatSessions((current) => {
+      const previous = current[paneId] || createChatSessionState();
+      const next = update(previous);
+      return next === previous ? current : { ...current, [paneId]: next };
+    });
+  }, []);
+  const readPaneOutput = useCallback(async (paneId: string) => {
+    const output = await window.herdr.query({ type: 'read-pane-output', paneId, lines: 500 });
+    if (output.type !== 'pane-output') {
+      throw new Error('Herdr returned an unexpected pane output response.');
+    }
+    return output;
+  }, []);
+  const controlsPane = paneControlsTarget
+    ? snapshot.panes.find((item) => item.pane_id === paneControlsTarget.pane_id) ||
+      paneControlsTarget
+    : undefined;
+
+  useEffect(() => {
+    if (snapshot.focused_workspace_id) {
+      setWorkspaceId(snapshot.focused_workspace_id);
+    }
+    if (snapshot.focused_workspace_id && snapshot.focused_tab_id) {
+      setTabByWorkspace((current) => ({
+        ...current,
+        [snapshot.focused_workspace_id as string]: snapshot.focused_tab_id as string,
+      }));
+    }
+  }, [snapshot.focused_tab_id, snapshot.focused_workspace_id]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || !/^[1-9]$/.test(event.key)) {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.matches('input, textarea, select'))
+      ) {
+        return;
+      }
+      const targetWorkspace = snapshot.workspaces[Number(event.key) - 1];
+      if (!targetWorkspace || targetWorkspace.workspace_id === workspaceId) {
+        return;
+      }
+      event.preventDefault();
+      setWorkspaceId(targetWorkspace.workspace_id);
+      onCommand({ type: 'focus-workspace', workspaceId: targetWorkspace.workspace_id });
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [onCommand, snapshot.workspaces, workspaceId]);
+
+  if (!workspace) {
+    return (
+      <div className="flex h-full flex-col bg-background">
+        <WindowChrome busy={busy} onRefresh={onRefresh} onSettings={onSettings} />
+        <main className="grid flex-1 place-items-center p-8">
+          <Card className="max-w-md bg-secondary-background text-center">
+            <CardHeader>
+              <CardTitle>No workspaces yet</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <p>Create the first workspace here. Herdr will own its terminal and session state.</p>
+              <CreateWorkspaceDialog
+                busy={busy}
+                onCreate={(cwd, label) => onCommand({ type: 'create-workspace', cwd, label })}
+              />
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <WindowChrome
+        busy={busy}
+        onPlugins={onPlugins}
+        onRefresh={onRefresh}
+        onSettings={onSettings}
+      />
+      <div
+        className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[var(--spaces-width)_minmax(0,1fr)_var(--agents-width)]"
+        style={
+          {
+            '--spaces-width': preferences.spacesCollapsed ? '64px' : '280px',
+            '--agents-width': preferences.agentsCollapsed ? '64px' : '280px',
+          } as CSSProperties
+        }
+      >
+        <aside className="hidden min-h-0 flex-col border-r-2 border-border bg-secondary-background xl:flex">
+          <div className="flex h-14 items-center gap-2 border-b-2 border-border px-3">
+            {preferences.spacesCollapsed ? (
+              <Blocks aria-hidden="true" className="size-4 shrink-0" />
+            ) : null}
+            {!preferences.spacesCollapsed ? (
+              <>
+                <span className="min-w-0 flex-1 truncate text-sm font-heading">WORKSPACES</span>
+                <Badge className="ml-auto">{snapshot.workspaces.length}</Badge>
+                <ReorderControls
+                  canMoveDown={snapshot.workspaces.at(-1)?.workspace_id !== workspace.workspace_id}
+                  canMoveUp={snapshot.workspaces[0]?.workspace_id !== workspace.workspace_id}
+                  label={workspace.label}
+                  onMove={(direction) => {
+                    const intent = planWorkspaceMove(
+                      snapshot.workspaces,
+                      workspace.workspace_id,
+                      direction,
+                    );
+                    if (intent) {
+                      onCommand({
+                        type: 'move-workspace',
+                        workspaceId: intent.workspaceId,
+                        insertIndex: intent.insertIndex,
+                      });
+                    }
+                  }}
+                />
+              </>
+            ) : null}
+            <Button
+              aria-label={
+                preferences.spacesCollapsed
+                  ? 'Expand workspace sidebar'
+                  : 'Collapse workspace sidebar'
+              }
+              className={cn('size-7', preferences.spacesCollapsed && 'ml-auto')}
+              onClick={() =>
+                onPreferencesChange({
+                  ...preferences,
+                  spacesCollapsed: !preferences.spacesCollapsed,
+                })
+              }
+              size="icon"
+              variant="neutral"
+            >
+              {preferences.spacesCollapsed ? (
+                <ChevronRight aria-hidden="true" />
+              ) : (
+                <ChevronLeft aria-hidden="true" />
+              )}
+            </Button>
+          </div>
+          {!preferences.spacesCollapsed ? (
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="p-3">
+                <WorktreeSpaces
+                  defaultExpandedRepoKeys={snapshot.workspaces.flatMap((item) =>
+                    item.worktree ? [item.worktree.repo_key] : [],
+                  )}
+                  onCreateWorktree={setCreateWorktreeSource}
+                  onFocusWorkspace={(targetWorkspaceId) => {
+                    setWorkspaceId(targetWorkspaceId);
+                    onCommand({ type: 'focus-workspace', workspaceId: targetWorkspaceId });
+                  }}
+                  onOpenWorktree={setOpenWorktreeSource}
+                  onRemoveWorktree={setRemoveWorktreeTarget}
+                  workspaces={snapshot.workspaces}
+                />
+              </div>
+            </ScrollArea>
+          ) : null}
+          {!preferences.spacesCollapsed ? (
+            <div className="border-t-2 border-border p-3">
+              <CreateWorkspaceDialog
+                busy={busy}
+                onCreate={(cwd, label) => onCommand({ type: 'create-workspace', cwd, label })}
+              />
+            </div>
+          ) : null}
+        </aside>
+
+        <main className="flex min-h-0 min-w-0 flex-col">
+          <div className="flex h-20 shrink-0 items-center gap-4 border-b-2 border-border bg-secondary-background px-5">
+            <div
+              className="grid size-10 shrink-0 place-items-center rounded-base border-2 border-border bg-main shadow-none"
+              data-slot="workspace-mark"
+            >
+              <FolderGit2 aria-hidden="true" className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="truncate text-xl">{workspace.label}</h1>
+              <div className="mt-1 flex items-center gap-2 text-xs">
+                <GitBranch aria-hidden="true" className="size-3" />
+                <span className="truncate">
+                  {workspace.worktree?.checkout_path || pane?.cwd || 'Herdr workspace'}
+                </span>
+              </div>
+            </div>
+            {status.update.restart_needed || status.server.restart_needed ? (
+              <Badge className="hidden sm:inline-flex">RESTART NEEDED</Badge>
+            ) : null}
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                aria-label="Open session switcher"
+                className="xl:hidden"
+                onClick={() => setMobileSwitcherOpen(true)}
+                size="icon"
+                variant="neutral"
+              >
+                <Blocks aria-hidden="true" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button aria-label="Workspace actions" size="icon" variant="neutral">
+                    <MoreHorizontal aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      setRenameTarget({
+                        kind: 'workspace',
+                        id: workspace.workspace_id,
+                        label: workspace.label,
+                      })
+                    }
+                  >
+                    <Pencil aria-hidden="true" /> Rename workspace
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      setCloseTarget({
+                        kind: 'workspace',
+                        id: workspace.workspace_id,
+                        label: workspace.label,
+                      })
+                    }
+                  >
+                    <Trash2 aria-hidden="true" /> Close workspace
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          <Tabs
+            className="flex min-h-0 flex-1 flex-col"
+            onValueChange={(tabId) => {
+              setTabByWorkspace((current) => ({
+                ...current,
+                [workspace.workspace_id]: tabId,
+              }));
+              onCommand({ type: 'focus-tab', tabId });
+            }}
+            value={activeTabId}
+          >
+            <div className="flex h-12 shrink-0 items-center border-b-2 border-border bg-background px-4">
+              <TabsList className="h-auto gap-2 bg-transparent p-0">
+                {workspaceTabs.map((tab) => (
+                  <TabsTrigger className="gap-2" key={tab.tab_id} value={tab.tab_id}>
+                    <PanelTop aria-hidden="true" className="size-3" />
+                    {tab.label}
+                    <StatusDot status={tab.agent_status} style={preferences.indicatorStyle} />
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <div className="ml-2 flex shrink-0 items-center gap-1" data-slot="tab-actions">
+                <CreateTabDialog
+                  busy={busy}
+                  onCreate={(label, cwd) =>
+                    onCommand({
+                      type: 'create-tab',
+                      workspaceId: workspace.workspace_id,
+                      label,
+                      cwd,
+                    })
+                  }
+                />
+                {activeTab ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="Tab actions"
+                        className="size-8"
+                        size="icon"
+                        variant="neutral"
+                      >
+                        <MoreHorizontal aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setRenameTarget({
+                            kind: 'tab',
+                            id: activeTab.tab_id,
+                            label: activeTab.label,
+                          })
+                        }
+                      >
+                        <Pencil aria-hidden="true" /> Rename tab
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setCloseTarget({
+                            kind: 'tab',
+                            id: activeTab.tab_id,
+                            label: activeTab.label,
+                          })
+                        }
+                      >
+                        <Trash2 aria-hidden="true" /> Close tab
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+                {activeTab ? (
+                  <ReorderControls
+                    canMoveDown={workspaceTabs.at(-1)?.tab_id !== activeTab.tab_id}
+                    canMoveUp={workspaceTabs[0]?.tab_id !== activeTab.tab_id}
+                    label={activeTab.label}
+                    onMove={(direction) => {
+                      const intent = planTabMove(
+                        snapshot.tabs,
+                        workspace.workspace_id,
+                        activeTab.tab_id,
+                        direction,
+                      );
+                      if (intent) {
+                        onCommand({
+                          type: 'move-tab',
+                          tabId: intent.tabId,
+                          insertIndex: intent.insertIndex,
+                        });
+                      }
+                    }}
+                  />
+                ) : null}
+              </div>
+            </div>
+            <PaneStage
+              busy={busy}
+              chatSessions={chatSessions}
+              layout={layout}
+              onChatSessionChange={updateChatSession}
+              onClose={(item) =>
+                setCloseTarget({
+                  kind: 'pane',
+                  id: item.pane_id,
+                  label: item.label || item.title || item.pane_id,
+                })
+              }
+              onFocus={(paneId) => onCommand({ type: 'focus-pane', paneId })}
+              onRename={(item) =>
+                setRenameTarget({
+                  kind: 'pane',
+                  id: item.pane_id,
+                  label: item.label || item.title || item.pane_id,
+                })
+              }
+              onOpenControls={setPaneControlsTarget}
+              onSplit={(paneId, direction) => onCommand({ type: 'split-pane', paneId, direction })}
+              onSetSplitRatio={(tabId, path, ratio) =>
+                onCommand({ type: 'set-split-ratio', tabId, path, ratio })
+              }
+              onPrompt={(target, text) => onCommand({ type: 'prompt-agent', target, text })}
+              onZoom={(paneId) => onCommand({ type: 'zoom-pane', paneId, mode: 'toggle' })}
+              pane={pane}
+              panes={panes}
+              readOutput={readPaneOutput}
+              showPaneLabels={preferences.paneLabels}
+            />
+          </Tabs>
+        </main>
+
+        <aside className="hidden min-h-0 flex-col border-l-2 border-border bg-secondary-background xl:flex">
+          <div className="flex h-14 items-center gap-2 border-b-2 border-border px-3">
+            <Bot aria-hidden="true" className="size-4 shrink-0" />
+            {!preferences.agentsCollapsed ? (
+              <>
+                <span className="min-w-0 flex-1 truncate text-sm font-heading">AGENTS</span>
+                <Badge className="ml-auto" variant="neutral">
+                  {agents.length}
+                </Badge>
+              </>
+            ) : null}
+            <Button
+              aria-label={
+                preferences.agentsCollapsed ? 'Expand agent sidebar' : 'Collapse agent sidebar'
+              }
+              className={cn('size-7', preferences.agentsCollapsed && 'ml-auto')}
+              onClick={() =>
+                onPreferencesChange({
+                  ...preferences,
+                  agentsCollapsed: !preferences.agentsCollapsed,
+                })
+              }
+              size="icon"
+              variant="neutral"
+            >
+              {preferences.agentsCollapsed ? (
+                <ChevronLeft aria-hidden="true" />
+              ) : (
+                <ChevronRight aria-hidden="true" />
+              )}
+            </Button>
+          </div>
+          {!preferences.agentsCollapsed ? (
+            <ScrollArea className="min-h-0 flex-1">
+              <AgentSidebar
+                agents={agents}
+                onFocus={(agent) => {
+                  setWorkspaceId(agent.workspace_id);
+                  setTabByWorkspace((current) => ({
+                    ...current,
+                    [agent.workspace_id]: agent.tab_id,
+                  }));
+                  onCommand({ type: 'focus-pane', paneId: agent.pane_id });
+                }}
+                onPrompt={(target, text) => onCommand({ type: 'prompt-agent', target, text })}
+                onRename={(target, name) => onCommand({ type: 'rename-agent', target, name })}
+                onSortChange={(agentSort) => onPreferencesChange({ ...preferences, agentSort })}
+                sort={preferences.agentSort}
+              />
+            </ScrollArea>
+          ) : null}
+          {!preferences.agentsCollapsed ? (
+            <div className="border-t-2 border-border p-3">
+              <StartAgentDialog
+                busy={busy}
+                onStart={(paneId, name, kind, args, timeoutMs) =>
+                  onCommand({ type: 'start-agent', paneId, name, kind, args, timeoutMs })
+                }
+                pane={pane}
+              />
+            </div>
+          ) : null}
+          {!preferences.agentsCollapsed ? (
+            <div className="border-t-2 border-border p-3 text-xs">
+              <div className="mb-2 flex items-center gap-2 font-heading">
+                <Wifi aria-hidden="true" className="size-3" /> Engine {connectionState}
+              </div>
+              <p className="truncate opacity-70">
+                v{status.server.version} · protocol {status.server.protocol}
+              </p>
+            </div>
+          ) : null}
+        </aside>
+      </div>
+      <RenameResourceDialog
+        onOpenChange={(open) => !open && setRenameTarget(null)}
+        onSave={(target, label) => {
+          onCommand(
+            target.kind === 'workspace'
+              ? { type: 'rename-workspace', workspaceId: target.id, label }
+              : target.kind === 'tab'
+                ? { type: 'rename-tab', tabId: target.id, label }
+                : { type: 'rename-pane', paneId: target.id, label },
+          );
+          setRenameTarget(null);
+        }}
+        target={renameTarget}
+      />
+      <CloseResourceDialog
+        onConfirm={(target) => {
+          onCommand(
+            target.kind === 'workspace'
+              ? { type: 'close-workspace', workspaceId: target.id }
+              : target.kind === 'tab'
+                ? { type: 'close-tab', tabId: target.id }
+                : { type: 'close-pane', paneId: target.id },
+          );
+          setCloseTarget(null);
+        }}
+        onOpenChange={(open) => !open && setCloseTarget(null)}
+        target={closeTarget}
+      />
+      {createWorktreeSource ? (
+        <CreateWorktreeDialog
+          busy={busy}
+          onOpenChange={(open) => !open && setCreateWorktreeSource(null)}
+          onSubmit={(intent) => {
+            onCommand({
+              type: 'create-worktree',
+              workspaceId: intent.workspaceId,
+              branch: intent.branch,
+              path: intent.path,
+              label: intent.label,
+              focus: true,
+            });
+            setCreateWorktreeSource(null);
+          }}
+          open
+          sourceWorkspace={createWorktreeSource}
+        />
+      ) : null}
+      {openWorktreeSource ? (
+        <OpenWorktreeDialog
+          busy={busy}
+          onOpenChange={(open) => !open && setOpenWorktreeSource(null)}
+          onSubmit={(intent) => {
+            onCommand({
+              type: 'open-worktree',
+              workspaceId: intent.workspaceId,
+              path: intent.path,
+              focus: true,
+            });
+            setOpenWorktreeSource(null);
+          }}
+          open
+          sourceWorkspace={openWorktreeSource}
+        />
+      ) : null}
+      {removeWorktreeTarget ? (
+        <RemoveWorktreeDialog
+          busy={busy}
+          onConfirm={(intent) => {
+            onCommand({
+              type: 'remove-worktree',
+              workspaceId: intent.workspaceId,
+              force: intent.force,
+            });
+            setRemoveWorktreeTarget(null);
+          }}
+          onOpenChange={(open) => !open && setRemoveWorktreeTarget(null)}
+          open
+          workspace={removeWorktreeTarget}
+        />
+      ) : null}
+      <Dialog
+        onOpenChange={(open) => !open && setPaneControlsTarget(null)}
+        open={Boolean(controlsPane)}
+      >
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Pane controls and details</DialogTitle>
+            <DialogDescription>
+              Every action is sent through Herdr’s public pane API; the engine remains
+              authoritative.
+            </DialogDescription>
+          </DialogHeader>
+          {controlsPane ? (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+              <PaneControls
+                busy={busy}
+                onClearName={(paneId) => onCommand({ type: 'rename-pane', paneId })}
+                onClose={(paneId) => {
+                  const targetPane = snapshot.panes.find((item) => item.pane_id === paneId);
+                  if (targetPane) {
+                    setCloseTarget({
+                      kind: 'pane',
+                      id: paneId,
+                      label: targetPane.label || targetPane.title || paneId,
+                    });
+                  }
+                  setPaneControlsTarget(null);
+                }}
+                onFocusDirection={({ paneId, direction }) =>
+                  onCommand({ type: 'focus-pane-direction', paneId, direction })
+                }
+                onMove={(intent: PaneMoveIntent) =>
+                  onCommand({
+                    type: 'move-pane',
+                    paneId: intent.paneId,
+                    destination: intent.destination,
+                    focus: true,
+                  })
+                }
+                onRename={(paneId) => {
+                  const targetPane = snapshot.panes.find((item) => item.pane_id === paneId);
+                  if (targetPane) {
+                    setRenameTarget({
+                      kind: 'pane',
+                      id: paneId,
+                      label: targetPane.label || targetPane.title || paneId,
+                    });
+                  }
+                  setPaneControlsTarget(null);
+                }}
+                onResizeDirection={({ paneId, direction, amount }) =>
+                  onCommand({ type: 'resize-pane', paneId, direction, amount })
+                }
+                onSplit={({ paneId, direction }) =>
+                  onCommand({ type: 'split-pane', paneId, direction })
+                }
+                onSwapDirection={({ paneId, direction }) =>
+                  onCommand({ type: 'swap-pane', paneId, direction })
+                }
+                onZoom={(paneId) => onCommand({ type: 'zoom-pane', paneId, mode: 'toggle' })}
+                pane={controlsPane}
+                tabs={snapshot.tabs}
+                workspaces={snapshot.workspaces}
+              />
+              <PaneDetails pane={controlsPane} />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+      <Dialog onOpenChange={setMobileSwitcherOpen} open={mobileSwitcherOpen}>
+        <DialogContent className="max-h-[90vh] max-w-xl overflow-hidden p-0">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Session switcher</DialogTitle>
+            <DialogDescription>
+              Navigate the canonical Herdr session on a compact screen.
+            </DialogDescription>
+          </DialogHeader>
+          <MobileSwitcher
+            activeSection={mobileSection}
+            onFocusPane={(paneId) => {
+              onCommand({ type: 'focus-pane', paneId });
+              setMobileSwitcherOpen(false);
+            }}
+            onFocusTab={(tabId) => {
+              onCommand({ type: 'focus-tab', tabId });
+              setMobileSwitcherOpen(false);
+            }}
+            onFocusWorkspace={(targetWorkspaceId) => {
+              onCommand({ type: 'focus-workspace', workspaceId: targetWorkspaceId });
+              setMobileSwitcherOpen(false);
+            }}
+            onNewTab={(targetWorkspaceId) => {
+              onCommand({ type: 'create-tab', workspaceId: targetWorkspaceId });
+              setMobileSwitcherOpen(false);
+            }}
+            onNewWorkspace={() => {
+              onCommand({ type: 'create-workspace' });
+              setMobileSwitcherOpen(false);
+            }}
+            onOpenNavigator={() => {
+              setMobileSwitcherOpen(false);
+              onNavigator();
+            }}
+            onOpenSettings={() => {
+              setMobileSwitcherOpen(false);
+              onSettings();
+            }}
+            onOpenShortcuts={() => {
+              setMobileSwitcherOpen(false);
+              onShortcuts();
+            }}
+            onSectionChange={setMobileSection}
+            snapshot={snapshot}
+          />
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function installedPluginView(plugin: InstalledPluginInfo): InstalledPluginViewModel {
+  return {
+    id: plugin.plugin_id,
+    name: plugin.name,
+    version: plugin.version,
+    description: plugin.description,
+    state: plugin.enabled ? 'enabled' : 'disabled',
+    warnings: plugin.warnings,
+    paneEntrypoints: plugin.panes.map((pane) => ({ id: pane.id, title: pane.title })),
+  };
+}
+
+function pluginActionView(action: PluginActionInfo): PluginActionViewModel {
+  return {
+    pluginId: action.plugin_id,
+    id: action.action_id,
+    title: action.title,
+    description: action.description,
+    contexts: action.contexts,
+  };
+}
+
+function AppContent() {
+  const [result, setResult] = useState<EngineBootstrap | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [pluginStatus, setPluginStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [plugins, setPlugins] = useState<InstalledPluginViewModel[]>([]);
+  const [pluginActions, setPluginActions] = useState<PluginActionViewModel[]>([]);
+  const [pluginError, setPluginError] = useState<string>();
+  const [manifestStatus, setManifestStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [manifests, setManifests] = useState<AgentManifestInfo[]>([]);
+  const [connectionState, setConnectionState] = useState<HerdrEventConnectionState>('connecting');
+  const [preferences, setPreferences] = useState<DesktopPreferences>(DEFAULT_DESKTOP_PREFERENCES);
+  const previousAgents = useRef<
+    Extract<EngineBootstrap, { state: 'connected' }>['snapshot']['agents']
+  >([]);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      const next = await window.herdr.bootstrap();
+      setResult(next);
+      setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const startServer = useCallback(async () => {
+    setBusy(true);
+    try {
+      setResult(await window.herdr.startServer());
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const runCommand = useCallback(async (command: HerdrCommand) => {
+    setBusy(true);
+    try {
+      const next = await window.herdr.command(command);
+      if (next.state === 'connected') {
+        setResult(next);
+      } else {
+        toast.error(
+          next.state === 'error' || next.state === 'missing'
+            ? next.message
+            : 'Herdr command failed.',
+          {
+            description: next.state === 'error' ? next.details : undefined,
+          },
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const chooseBinary = useCallback(async () => {
+    setBusy(true);
+    try {
+      const next = await window.herdr.chooseHerdrBinary();
+      if (next) {
+        setResult(next);
+      }
+    } catch (error) {
+      toast.error('The selected file cannot run as Herdr.', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const resetBinary = useCallback(async () => {
+    setBusy(true);
+    try {
+      setResult(await window.herdr.resetHerdrBinary());
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    void window.herdr
+      .readPreferences()
+      .then(setPreferences)
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const dark =
+        preferences.appearance === 'dark' ||
+        (preferences.appearance === 'system' && Boolean(media?.matches));
+      root.classList.toggle('dark', dark);
+    };
+    apply();
+    media?.addEventListener('change', apply);
+    return () => media?.removeEventListener('change', apply);
+  }, [preferences.appearance]);
+
+  const savePreferences = useCallback(async (next: DesktopPreferences) => {
+    try {
+      setPreferences(await window.herdr.writePreferences(next));
+    } catch (error) {
+      toast.error('Desktop settings could not be saved.', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  }, []);
+
+  const loadPlugins = useCallback(async () => {
+    setPluginStatus('loading');
+    setPluginError(undefined);
+    try {
+      const [installed, actions] = await Promise.all([
+        window.herdr.query({ type: 'list-plugins' }),
+        window.herdr.query({ type: 'list-plugin-actions' }),
+      ]);
+      if (installed.type !== 'plugin-list' || actions.type !== 'plugin-action-list') {
+        throw new Error('Herdr returned an unexpected plugin response.');
+      }
+      setPlugins(installed.plugins.map(installedPluginView));
+      setPluginActions(actions.actions.map(pluginActionView));
+      setPluginStatus('ready');
+    } catch (error) {
+      setPluginStatus('error');
+      setPluginError(error instanceof Error ? error.message : 'Herdr plugin query failed.');
+    }
+  }, []);
+
+  const openPlugins = useCallback(() => {
+    setPluginsOpen(true);
+    void loadPlugins();
+  }, [loadPlugins]);
+
+  const loadManifests = useCallback(async () => {
+    setManifestStatus('loading');
+    try {
+      const response = await window.herdr.query({ type: 'get-agent-manifests' });
+      if (response.type !== 'agent-manifests') {
+        throw new Error('Herdr returned an unexpected manifest response.');
+      }
+      setManifests(response.manifests);
+      setManifestStatus('ready');
+    } catch {
+      setManifestStatus('error');
+    }
+  }, []);
+
+  const openSettings = useCallback(() => {
+    setSettingsOpen(true);
+    void loadManifests();
+  }, [loadManifests]);
+
+  useEffect(() => {
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = window.herdr.onSessionEvent((event) => {
+      if (event.event === 'desktop.connection_state') {
+        const state = event.data.state;
+        if (
+          state === 'connecting' ||
+          state === 'connected' ||
+          state === 'reconnecting' ||
+          state === 'disconnected'
+        ) {
+          setConnectionState(state);
+        }
+        return;
+      }
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => void load(), 120);
+    });
+    return () => {
+      clearTimeout(refreshTimer);
+      unsubscribe();
+    };
+  }, [load]);
+
+  const handleDesktopAction = useCallback(
+    (action: DesktopAction) => {
+      if (action === 'open-settings') {
+        openSettings();
+        return;
+      }
+      if (action === 'open-navigator') {
+        setNavigatorOpen(true);
+        return;
+      }
+      if (action === 'open-shortcuts') {
+        setShortcutsOpen(true);
+        return;
+      }
+      if (action === 'open-whats-new') {
+        setWhatsNewOpen(true);
+        return;
+      }
+      if (action === 'open-plugins') {
+        openPlugins();
+        return;
+      }
+      if (action === 'refresh') {
+        void load();
+        return;
+      }
+      if (result?.state !== 'connected') {
+        return;
+      }
+
+      const { snapshot } = result;
+      const activeWorkspace = snapshot.workspaces.find(
+        (workspace) => workspace.workspace_id === snapshot.focused_workspace_id,
+      );
+      const activeTab = snapshot.tabs.find((tab) => tab.tab_id === snapshot.focused_tab_id);
+      const focusedPaneId = snapshot.focused_pane_id;
+      if (action === 'reload-config') {
+        void runCommand({ type: 'reload-server-config' });
+      } else if (action === 'new-workspace') {
+        void runCommand({ type: 'create-workspace' });
+      } else if (action === 'new-tab' && activeWorkspace) {
+        void runCommand({ type: 'create-tab', workspaceId: activeWorkspace.workspace_id });
+      } else if (
+        (action === 'previous-workspace' || action === 'next-workspace') &&
+        activeWorkspace
+      ) {
+        const ordered = [...snapshot.workspaces].sort((left, right) => left.number - right.number);
+        const index = ordered.findIndex(
+          (workspace) => workspace.workspace_id === activeWorkspace.workspace_id,
+        );
+        const offset = action === 'previous-workspace' ? -1 : 1;
+        const target = ordered[(index + offset + ordered.length) % ordered.length];
+        if (target) {
+          void runCommand({ type: 'focus-workspace', workspaceId: target.workspace_id });
+        }
+      } else if ((action === 'previous-tab' || action === 'next-tab') && activeTab) {
+        const ordered = snapshot.tabs
+          .filter((tab) => tab.workspace_id === activeTab.workspace_id)
+          .sort((left, right) => left.number - right.number);
+        const index = ordered.findIndex((tab) => tab.tab_id === activeTab.tab_id);
+        const offset = action === 'previous-tab' ? -1 : 1;
+        const target = ordered[(index + offset + ordered.length) % ordered.length];
+        if (target) {
+          void runCommand({ type: 'focus-tab', tabId: target.tab_id });
+        }
+      } else if (focusedPaneId && action.startsWith('focus-pane-')) {
+        void runCommand({
+          type: 'focus-pane-direction',
+          paneId: focusedPaneId,
+          direction: action.slice('focus-pane-'.length) as 'left' | 'right' | 'up' | 'down',
+        });
+      } else if (focusedPaneId && action === 'split-pane-right') {
+        void runCommand({ type: 'split-pane', paneId: focusedPaneId, direction: 'right' });
+      } else if (focusedPaneId && action === 'split-pane-down') {
+        void runCommand({ type: 'split-pane', paneId: focusedPaneId, direction: 'down' });
+      } else if (focusedPaneId && action === 'toggle-pane-zoom') {
+        void runCommand({ type: 'zoom-pane', paneId: focusedPaneId, mode: 'toggle' });
+      }
+    },
+    [load, openPlugins, openSettings, result, runCommand],
+  );
+
+  useEffect(() => window.herdr.onDesktopAction(handleDesktopAction), [handleDesktopAction]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) {
+        return;
+      }
+      if (event.key === ',') {
+        event.preventDefault();
+        openSettings();
+        return;
+      }
+      if (event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setNavigatorOpen(true);
+        return;
+      }
+      if (event.key === '?') {
+        event.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (event.key.toLowerCase() === 'r' && !event.shiftKey) {
+        event.preventDefault();
+        void load();
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [load, openSettings]);
+
+  useEffect(() => {
+    if (result?.state !== 'connected') {
+      previousAgents.current = [];
+      return;
+    }
+    const notifications = agentNotifications(
+      previousAgents.current,
+      result.snapshot.agents,
+      result.snapshot.focused_pane_id,
+    );
+    previousAgents.current = result.snapshot.agents;
+    if (preferences.notificationDelivery === 'off') {
+      return;
+    }
+    for (const notification of notifications) {
+      const openPane = () => void runCommand({ type: 'focus-pane', paneId: notification.paneId });
+      if (preferences.notificationDelivery === 'system') {
+        void deliverSystemNotification({
+          title: notification.title,
+          body: notification.description,
+          sound: preferences.sound,
+          onOpen: openPane,
+        }).then((delivered) => {
+          if (!delivered) {
+            toast(notification.title, {
+              description: notification.description,
+              action: { label: 'Open', onClick: openPane },
+            });
+          }
+        });
+        continue;
+      }
+      toast(notification.title, {
+        description: notification.description,
+        action: { label: 'Open', onClick: openPane },
+      });
+    }
+  }, [preferences.notificationDelivery, preferences.sound, result, runCommand]);
+
+  if (!result) {
+    return <LoadingScreen />;
+  }
+
+  const binary = 'status' in result ? result.status.client.binary : 'Herdr from PATH';
+  const settings = (
+    <SettingsDialog
+      binary={binary}
+      busy={busy}
+      integrations={INTEGRATION_TARGETS.map((target) => ({
+        id: target,
+        label: target,
+        status: 'available' as const,
+        detail:
+          'Herdr can install or repair this integration. Structured status is not public yet.',
+      }))}
+      manifestStatus={manifestStatus}
+      manifests={manifests}
+      onChooseBinary={() => void chooseBinary()}
+      onInstallIntegration={(target) =>
+        void runCommand({
+          type: 'install-integration',
+          target: target as (typeof INTEGRATION_TARGETS)[number],
+        })
+      }
+      onOpenChange={setSettingsOpen}
+      onPreferencesChange={(next) => void savePreferences(next)}
+      onReloadConfig={() => void runCommand({ type: 'reload-server-config' })}
+      onReloadManifests={() =>
+        void runCommand({ type: 'reload-agent-manifests' }).then(loadManifests)
+      }
+      onResetBinary={() => void resetBinary()}
+      onUninstallIntegration={(target) =>
+        void runCommand({
+          type: 'uninstall-integration',
+          target: target as (typeof INTEGRATION_TARGETS)[number],
+        })
+      }
+      open={settingsOpen}
+      preferences={preferences}
+    />
+  );
+
+  if (result.state !== 'connected') {
+    return (
+      <>
+        <OnboardingScreen
+          busy={busy}
+          onRetry={() => void load()}
+          onSettings={openSettings}
+          onStart={() => void startServer()}
+          result={result}
+        />
+        {settings}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <ConnectedShell
+        busy={busy}
+        connectionState={connectionState}
+        onCommand={(command) => void runCommand(command)}
+        onNavigator={() => setNavigatorOpen(true)}
+        onPlugins={openPlugins}
+        onPreferencesChange={(next) => void savePreferences(next)}
+        onRefresh={() => void load()}
+        onSettings={openSettings}
+        onShortcuts={() => setShortcutsOpen(true)}
+        preferences={preferences}
+        result={result}
+      />
+      {settings}
+      <Dialog onOpenChange={setNavigatorOpen} open={navigatorOpen}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden p-0">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Session navigator</DialogTitle>
+            <DialogDescription>Search Herdr workspaces, tabs, and panes.</DialogDescription>
+          </DialogHeader>
+          <Navigator
+            onFocusPane={(paneId) => {
+              void runCommand({ type: 'focus-pane', paneId });
+              setNavigatorOpen(false);
+            }}
+            onFocusTab={(tabId) => {
+              void runCommand({ type: 'focus-tab', tabId });
+              setNavigatorOpen(false);
+            }}
+            onFocusWorkspace={(workspaceId) => {
+              void runCommand({ type: 'focus-workspace', workspaceId });
+              setNavigatorOpen(false);
+            }}
+            snapshot={result.snapshot}
+          />
+        </DialogContent>
+      </Dialog>
+      <Dialog onOpenChange={setPluginsOpen} open={pluginsOpen}>
+        <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Herdr plugins</DialogTitle>
+            <DialogDescription>
+              Installed plugins, public actions, and panes exposed by the running Herdr engine.
+            </DialogDescription>
+          </DialogHeader>
+          <PluginCenter
+            actions={pluginActions}
+            errorMessage={pluginError}
+            onClosePane={({ paneId }) => void runCommand({ type: 'close-plugin-pane', paneId })}
+            onFocusPane={({ paneId }) => void runCommand({ type: 'focus-plugin-pane', paneId })}
+            onInvokeAction={({ pluginId, actionId }) =>
+              void runCommand({
+                type: 'invoke-plugin-action',
+                pluginId,
+                actionId,
+                context: {
+                  workspaceId: result.snapshot.focused_workspace_id,
+                  tabId: result.snapshot.focused_tab_id,
+                  focusedPaneId: result.snapshot.focused_pane_id,
+                  invocationSource: 'desktop-plugin-center',
+                },
+              })
+            }
+            onOpenPane={({ pluginId, entrypoint, placement }) =>
+              void runCommand({
+                type: 'open-plugin-pane',
+                pluginId,
+                entrypoint,
+                placement,
+                workspaceId: result.snapshot.focused_workspace_id,
+                targetPaneId: result.snapshot.focused_pane_id,
+                direction: placement === 'split' ? 'right' : undefined,
+                focus: true,
+              })
+            }
+            onSetPluginEnabled={({ pluginId, enabled }) => {
+              void runCommand({
+                type: enabled ? 'enable-plugin' : 'disable-plugin',
+                pluginId,
+              }).then(loadPlugins);
+            }}
+            panes={[]}
+            plugins={plugins}
+            status={pluginStatus}
+          />
+        </DialogContent>
+      </Dialog>
+      <ShortcutHelpDialog onOpenChange={setShortcutsOpen} open={shortcutsOpen} />
+      <WhatsNewDialog
+        canLiveHandoff={Boolean(result.status.server.capabilities?.live_handoff)}
+        onLiveHandoff={() =>
+          void runCommand({
+            type: 'live-handoff-server',
+            importExe: result.status.client.binary,
+            expectedProtocol: result.snapshot.protocol,
+            expectedVersion: result.status.client.version,
+          })
+        }
+        onOpenChange={setWhatsNewOpen}
+        open={whatsNewOpen}
+        restartNeeded={Boolean(
+          result.status.update.restart_needed || result.status.server.restart_needed,
+        )}
+        version={packageMetadata.version}
+      />
+    </>
+  );
+}
+
+export function App() {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <AppContent />
+      <Toaster position="bottom-right" />
+    </TooltipProvider>
+  );
+}

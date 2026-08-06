@@ -1,0 +1,380 @@
+import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { Terminal } from '@xterm/xterm';
+import { ArrowDownToLine, ChevronDown, ChevronUp, Copy, RefreshCw, Search, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { decodeTerminalBytes } from '@/renderer/terminal/terminal-codec';
+import type { PaneInfo } from '@/shared/herdr';
+
+interface TerminalPanelProps {
+  pane: PaneInfo;
+  onOpenExternal?: (url: string) => void;
+  onScrollRequest?: (request: TerminalScrollRequest) => void;
+}
+
+export interface TerminalScrollRequest {
+  paneId: string;
+  direction: 'up' | 'down';
+  unit: 'line' | 'page';
+  amount: number;
+}
+
+function isHttpUrl(candidate: string): boolean {
+  try {
+    const protocol = new URL(candidate).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: TerminalPanelProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchAddonRef = useRef<SearchAddon>(null);
+  const terminalRef = useRef<Terminal>(null);
+  const openExternalRef = useRef(onOpenExternal);
+  openExternalRef.current = onOpenExternal;
+  const scrollRequestRef = useRef(onScrollRequest);
+  scrollRequestRef.current = onScrollRequest;
+  const [state, setState] = useState<'attaching' | 'attached' | 'closed' | 'error'>('attaching');
+  const [message, setMessage] = useState('Attaching through Herdr…');
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [hasSelection, setHasSelection] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState('');
+
+  const closeSearch = () => {
+    searchAddonRef.current?.clearDecorations();
+    setSearchQuery('');
+    setSearchOpen(false);
+  };
+
+  const copySelection = async () => {
+    const selection = terminalRef.current?.getSelection();
+    if (!selection) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(selection);
+      setCopyFeedback('Selection copied');
+    } catch {
+      setCopyFeedback('Could not copy selection');
+    }
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    setState('attaching');
+    setMessage(connectionAttempt ? 'Reconnecting through Herdr…' : 'Attaching through Herdr…');
+    const terminal = new Terminal({
+      allowProposedApi: false,
+      cursorBlink: true,
+      cursorStyle: 'block',
+      fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
+      fontSize: 13,
+      lineHeight: 1.2,
+      screenReaderMode: true,
+      scrollback: 10_000,
+      theme: {
+        background: '#000000',
+        foreground: '#f7f7f7',
+        cursor: '#6e91ff',
+        cursorAccent: '#000000',
+        selectionBackground: '#6e91ff88',
+      },
+    });
+    terminalRef.current = terminal;
+    const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon();
+    const webLinksAddon = new WebLinksAddon((event, uri) => {
+      if ((event.metaKey || event.ctrlKey) && isHttpUrl(uri)) {
+        event.preventDefault();
+        openExternalRef.current?.(uri);
+      }
+    });
+    terminal.loadAddon(fitAddon);
+    terminal.loadAddon(searchAddon);
+    terminal.loadAddon(webLinksAddon);
+    searchAddonRef.current = searchAddon;
+    terminal.open(container);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (
+        event.type === 'keydown' &&
+        (event.key === 'PageUp' || event.key === 'PageDown') &&
+        scrollRequestRef.current
+      ) {
+        scrollRequestRef.current({
+          paneId: pane.pane_id,
+          direction: event.key === 'PageUp' ? 'up' : 'down',
+          unit: 'page',
+          amount: 1,
+        });
+        return false;
+      }
+      if (
+        event.type === 'keydown' &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'f'
+      ) {
+        setSearchOpen(true);
+        return false;
+      }
+      return true;
+    });
+
+    const fitTerminal = () => {
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        fitAddon.fit();
+      }
+    };
+    fitTerminal();
+
+    const stopEvents = window.herdr.terminal.onEvent((event) => {
+      if (event.paneId !== pane.pane_id) {
+        return;
+      }
+      if (event.type === 'terminal.frame') {
+        setState('attached');
+        setMessage('Live control through Herdr');
+        terminal.write(decodeTerminalBytes(event.bytes));
+      } else if (event.type === 'terminal.closed') {
+        setState('closed');
+        setMessage(event.reason);
+      } else {
+        setState('error');
+        setMessage(event.message);
+      }
+    });
+    const input = terminal.onData((value) => {
+      void window.herdr.terminal.input({ paneId: pane.pane_id, text: value });
+    });
+    const resize = terminal.onResize(({ cols, rows }) => {
+      void window.herdr.terminal.resize({ paneId: pane.pane_id, cols, rows });
+    });
+    const selection = terminal.onSelectionChange(() => setHasSelection(terminal.hasSelection()));
+    const observer = new ResizeObserver(fitTerminal);
+    observer.observe(container);
+
+    void window.herdr.terminal
+      .open({ paneId: pane.pane_id, cols: terminal.cols, rows: terminal.rows })
+      .catch((error: unknown) => {
+        setState('error');
+        setMessage(error instanceof Error ? error.message : 'Terminal attachment failed.');
+      });
+
+    return () => {
+      observer.disconnect();
+      stopEvents();
+      input.dispose();
+      resize.dispose();
+      selection.dispose();
+      terminal.dispose();
+      if (terminalRef.current === terminal) {
+        terminalRef.current = null;
+      }
+      if (searchAddonRef.current === searchAddon) {
+        searchAddonRef.current = null;
+      }
+      void window.herdr.terminal.close(pane.pane_id);
+    };
+  }, [connectionAttempt, pane.pane_id]);
+
+  return (
+    <div className="relative min-h-0 flex-1 bg-foreground">
+      <section
+        aria-label={`Terminal output ${pane.pane_id}`}
+        className="h-full w-full p-3"
+        onWheelCapture={(event) => {
+          const onScroll = scrollRequestRef.current;
+          if (!onScroll || event.deltaY === 0) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          onScroll({
+            paneId: pane.pane_id,
+            direction: event.deltaY < 0 ? 'up' : 'down',
+            unit: 'line',
+            amount: 1,
+          });
+        }}
+        ref={containerRef}
+      />
+      <div className="absolute right-3 top-3 flex items-center gap-2">
+        {onScrollRequest ? (
+          <>
+            <Button
+              aria-label="Scroll terminal one page up"
+              className="size-8"
+              onClick={() =>
+                scrollRequestRef.current?.({
+                  paneId: pane.pane_id,
+                  direction: 'up',
+                  unit: 'page',
+                  amount: 1,
+                })
+              }
+              size="icon"
+              variant="neutral"
+            >
+              <ChevronUp aria-hidden="true" />
+            </Button>
+            <Button
+              aria-label="Scroll terminal one page down"
+              className="size-8"
+              onClick={() =>
+                scrollRequestRef.current?.({
+                  paneId: pane.pane_id,
+                  direction: 'down',
+                  unit: 'page',
+                  amount: 1,
+                })
+              }
+              size="icon"
+              variant="neutral"
+            >
+              <ChevronDown aria-hidden="true" />
+            </Button>
+          </>
+        ) : null}
+        <Button
+          aria-label="Scroll terminal to bottom"
+          className="size-8"
+          onClick={() => terminalRef.current?.scrollToBottom()}
+          size="icon"
+          variant="neutral"
+        >
+          <ArrowDownToLine aria-hidden="true" />
+        </Button>
+        <Button
+          aria-label="Copy terminal selection"
+          className="size-8"
+          disabled={!hasSelection}
+          onClick={() => void copySelection()}
+          size="icon"
+          variant="neutral"
+        >
+          <Copy aria-hidden="true" />
+        </Button>
+        {searchOpen ? (
+          <div className="flex items-center gap-1 rounded-base border-2 border-border bg-secondary-background p-1 shadow-shadow">
+            <Input
+              aria-label="Search terminal text"
+              autoFocus
+              className="h-8 w-52 bg-background text-foreground"
+              onChange={(event) => {
+                const query = event.target.value;
+                setSearchQuery(query);
+                if (query) {
+                  searchAddonRef.current?.findNext(query, { incremental: true });
+                } else {
+                  searchAddonRef.current?.clearDecorations();
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  closeSearch();
+                  return;
+                }
+                if (event.key !== 'Enter' || !searchQuery) {
+                  return;
+                }
+                event.preventDefault();
+                if (event.shiftKey) {
+                  searchAddonRef.current?.findPrevious(searchQuery);
+                } else {
+                  searchAddonRef.current?.findNext(searchQuery);
+                }
+              }}
+              type="search"
+              value={searchQuery}
+            />
+            <Button
+              aria-label="Previous search result"
+              className="size-8"
+              onClick={() => searchQuery && searchAddonRef.current?.findPrevious(searchQuery)}
+              size="icon"
+              variant="neutral"
+            >
+              <ChevronUp aria-hidden="true" />
+            </Button>
+            <Button
+              aria-label="Next search result"
+              className="size-8"
+              onClick={() => searchQuery && searchAddonRef.current?.findNext(searchQuery)}
+              size="icon"
+              variant="neutral"
+            >
+              <ChevronDown aria-hidden="true" />
+            </Button>
+            <Button
+              aria-label="Close terminal search"
+              className="size-8"
+              onClick={closeSearch}
+              size="icon"
+              variant="neutral"
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </div>
+        ) : (
+          <Button
+            aria-label="Search terminal"
+            className="size-8"
+            onClick={() => setSearchOpen(true)}
+            size="icon"
+            variant="neutral"
+          >
+            <Search aria-hidden="true" />
+          </Button>
+        )}
+      </div>
+      {copyFeedback ? (
+        <div className="sr-only" role="status">
+          {copyFeedback}
+        </div>
+      ) : null}
+      <div className="absolute bottom-3 right-3 flex max-w-[80%] items-center gap-2">
+        <Badge
+          className="pointer-events-none min-w-0 truncate"
+          variant={state === 'attached' ? 'default' : 'neutral'}
+        >
+          <span
+            aria-hidden="true"
+            className={
+              state === 'attached'
+                ? 'size-2 rounded-full bg-chart-4'
+                : state === 'error'
+                  ? 'size-2 rounded-full bg-chart-2'
+                  : 'size-2 animate-pulse rounded-full bg-chart-3'
+            }
+          />
+          {message}
+        </Badge>
+        {state === 'closed' || state === 'error' ? (
+          <Button
+            aria-label={`Reconnect ${pane.pane_id}`}
+            className="h-7 shrink-0 px-2 text-xs"
+            onClick={() => setConnectionAttempt((attempt) => attempt + 1)}
+            size="sm"
+            variant="neutral"
+          >
+            <RefreshCw aria-hidden="true" /> Reconnect
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
