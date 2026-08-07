@@ -153,10 +153,13 @@ function remoteFailureMessage(result: EngineBootstrap): string {
  * status for a target that was already superseded.
  */
 let remoteApplyGeneration = 0;
+let engineGeneration = 0;
 async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngineStatus> {
   const generation = ++remoteApplyGeneration;
   // The engine target is changing: existing terminal controllers were spawned
-  // against the old engine and must reattach through the new one.
+  // against the old engine. closeAll() deliberately suppresses their
+  // terminal.closed events (the generation guard in TerminalController), so
+  // the renderer is told explicitly to attach again once the target is final.
   terminalControllers.closeAll();
   const status = await remoteTunnel.apply(target);
   if (generation !== remoteApplyGeneration) {
@@ -164,6 +167,7 @@ async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngi
   }
   if (status.state === 'off') {
     delete process.env.HERDR_SOCKET_PATH;
+    publishEngineChanged();
     return status;
   }
   if (status.socketPath) {
@@ -176,9 +180,21 @@ async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngi
   if (result.state !== 'connected') {
     delete process.env.HERDR_SOCKET_PATH;
     await remoteTunnel.stop();
-    return remoteTunnel.setConnected(false, remoteFailureMessage(result));
+    const failed = remoteTunnel.setConnected(false, remoteFailureMessage(result));
+    publishEngineChanged();
+    return failed;
   }
-  return remoteTunnel.setConnected(true);
+  const connected = remoteTunnel.setConnected(true);
+  publishEngineChanged();
+  return connected;
+}
+
+function publishEngineChanged(): void {
+  engineGeneration += 1;
+  publishSessionEvent({
+    event: 'desktop.engine_changed',
+    data: { generation: engineGeneration },
+  });
 }
 
 function assertTrustedSender(url: string | undefined): void {
@@ -441,10 +457,10 @@ if (!started) {
 
 app.on('will-quit', (event) => {
   // Never leave the SSH process or the bridge socket behind after quitting.
-  if (remoteTunnel.active) {
-    event.preventDefault();
-    void remoteTunnel.stop().finally(() => app.quit());
-  }
+  // stop() is queued behind any in-flight apply, so a quit during bridge
+  // creation cannot be raced by a late tunnel install.
+  event.preventDefault();
+  void remoteTunnel.stop().finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {

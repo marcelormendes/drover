@@ -47,7 +47,7 @@ interface SettingsDialogProps {
   onReloadManifests: () => void;
   onInstallIntegration: (id: string) => void;
   onUninstallIntegration: (id: string) => void;
-  onApplyRemoteEngine: (target: RemoteEngineTarget) => void;
+  onApplyRemoteEngine: (target: RemoteEngineTarget) => Promise<RemoteEngineStatus>;
   remoteStatus: RemoteEngineStatus;
 }
 
@@ -84,7 +84,7 @@ export function SettingsDialog({
   const [applying, setApplying] = useState(false);
   const apply = (target: RemoteEngineTarget) => {
     setApplying(true);
-    void Promise.resolve(onApplyRemoteEngine(target)).finally(() => setApplying(false));
+    void onApplyRemoteEngine(target).finally(() => setApplying(false));
   };
 
   return (

@@ -2275,9 +2275,10 @@ function AppContent() {
         })
       }
       onApplyRemoteEngine={(target) =>
-        void window.herdr.applyRemoteEngine(target).then((status) => {
+        window.herdr.applyRemoteEngine(target).then((status) => {
           setRemoteStatus(status);
           void load();
+          return status;
         })
       }
       onOpenChange={setSettingsOpen}
