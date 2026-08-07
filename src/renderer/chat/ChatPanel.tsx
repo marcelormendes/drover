@@ -13,6 +13,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -574,8 +575,10 @@ export function ChatPanel({
   const [slashMenuSelectedIndex, setSlashMenuSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [slashMenuLocked, setSlashMenuLocked] = useState(false);
+  const slashMenuId = useId();
   const lastSelectedDraftRef = useRef('');
   const previousDraftRef = useRef(draft);
+  const slashMenuListRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Mirrors the CLIs' own command menus: open while the draft is a bare
@@ -593,6 +596,17 @@ export function ChatPanel({
     const selectedIndex = Math.min(slashMenuSelectedIndex, Math.max(0, options.length - 1));
     return { options, selectedIndex };
   }, [draft, onSendInput, pane.agent, slashMenuDismissed, slashMenuLocked, slashMenuSelectedIndex]);
+  const selectedSlashMenuIndex = commandMenu?.selectedIndex;
+
+  useEffect(() => {
+    if (selectedSlashMenuIndex === undefined) {
+      return;
+    }
+    slashMenuListRef.current
+      ?.querySelectorAll<HTMLElement>('[role="option"]')
+      .item(selectedSlashMenuIndex)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [selectedSlashMenuIndex]);
 
   // Fresh keystrokes reset navigation and dismissal; a selection locks the
   // menu shut until the draft changes again.
@@ -959,6 +973,8 @@ export function ChatPanel({
             <div
               aria-label="Slash commands"
               className="absolute bottom-full left-0 right-0 mb-2 max-h-64 overflow-y-auto rounded-base border-2 border-border bg-background shadow-shadow"
+              id={slashMenuId}
+              ref={slashMenuListRef}
               role="listbox"
             >
               {commandMenu.options.length === 0 ? (
@@ -971,6 +987,7 @@ export function ChatPanel({
                       'flex w-full items-baseline gap-2 px-3 py-1.5 text-left font-mono text-xs',
                       index === commandMenu.selectedIndex && 'bg-secondary-background',
                     )}
+                    id={`${slashMenuId}-${command.name}`}
                     key={command.name}
                     onClick={() => selectSlashCommand(command)}
                     role="option"
@@ -987,6 +1004,15 @@ export function ChatPanel({
           ) : null}
           <div className="flex items-end gap-2">
             <Textarea
+              aria-activedescendant={
+                commandMenu?.options.length
+                  ? `${slashMenuId}-${commandMenu.options[commandMenu.selectedIndex].name}`
+                  : undefined
+              }
+              aria-autocomplete="list"
+              aria-controls={commandMenu ? slashMenuId : undefined}
+              aria-expanded={Boolean(commandMenu)}
+              aria-haspopup="listbox"
               aria-label={`Message ${agentName}`}
               className="min-h-12 resize-none bg-background shadow-none"
               disabled={sending}
@@ -995,6 +1021,9 @@ export function ChatPanel({
                 updateSession((current) => ({ ...current, draft: text }));
               }}
               onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) {
+                  return;
+                }
                 if (commandMenu) {
                   if (event.key === 'ArrowDown') {
                     event.preventDefault();
@@ -1023,7 +1052,7 @@ export function ChatPanel({
                     return;
                   }
                 }
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
                   event.currentTarget.form?.requestSubmit();
                 }

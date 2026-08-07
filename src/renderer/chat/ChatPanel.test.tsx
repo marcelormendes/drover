@@ -1097,8 +1097,27 @@ describe('ChatPanel thinking color at completion', () => {
       const listbox = await screen.findByRole('listbox', { name: 'Slash commands' });
       expect(listbox).toBeInTheDocument();
       expect(options().length).toBeGreaterThan(8);
-      expect(screen.getByRole('option', { name: /clear/ })).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: /compact/ })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /^\/clear\b/ })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /^\/compact\b/ })).toBeInTheDocument();
+    });
+
+    it('exposes the open menu and active option to assistive technology', async () => {
+      const user = userEvent.setup();
+      renderChat();
+
+      await user.type(textbox(), '/');
+      const listbox = await screen.findByRole('listbox', { name: 'Slash commands' });
+      const selected = options().find((option) => option.getAttribute('aria-selected') === 'true');
+
+      expect(listbox.id).not.toBe('');
+      expect(selected?.id).not.toBe('');
+      expect(textbox()).toHaveAttribute('aria-controls', listbox.id);
+      expect(textbox()).toHaveAttribute('aria-expanded', 'true');
+      expect(textbox()).toHaveAttribute('aria-activedescendant', selected?.id);
+
+      await user.keyboard('{Escape}');
+      expect(textbox()).toHaveAttribute('aria-expanded', 'false');
+      expect(textbox()).not.toHaveAttribute('aria-activedescendant');
     });
 
     it('filters commands as the user types after the slash', async () => {
@@ -1108,7 +1127,7 @@ describe('ChatPanel thinking color at completion', () => {
       await user.type(textbox(), '/co');
       const names = options().map((option) => option.textContent ?? '');
       expect(names.some((name) => name.includes('/compact'))).toBe(true);
-      expect(names.some((name) => name.includes('/cost'))).toBe(true);
+      expect(names.some((name) => name.includes('/copy'))).toBe(true);
       expect(names.some((name) => name.includes('/model'))).toBe(false);
     });
 
@@ -1120,12 +1139,30 @@ describe('ChatPanel thinking color at completion', () => {
       await screen.findByRole('listbox');
       await user.keyboard('{ArrowDown}');
       const selected = options().find((option) => option.getAttribute('aria-selected') === 'true');
-      expect(selected?.textContent).toContain('/clear');
+      expect(selected?.textContent).toContain('/new');
       await user.keyboard('{Enter}');
 
-      expect(textbox().value).toBe('/clear');
+      expect(textbox().value).toBe('/new');
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
       expect(onSendInput).not.toHaveBeenCalled();
+    });
+
+    it('keeps the keyboard-selected command visible while navigating a long list', async () => {
+      const user = userEvent.setup();
+      renderChat();
+
+      await user.type(textbox(), '/');
+      await screen.findByRole('listbox');
+      const target = options()[12];
+      const scrollIntoView = vi.fn();
+      target.scrollIntoView = scrollIntoView;
+
+      for (let index = 0; index < 12; index += 1) {
+        await user.keyboard('{ArrowDown}');
+      }
+
+      expect(target).toHaveAttribute('aria-selected', 'true');
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
     });
 
     it('leaves a trailing space when the command takes an argument', async () => {
@@ -1153,13 +1190,26 @@ describe('ChatPanel thinking color at completion', () => {
       expect(screen.getByRole('listbox', { name: 'Slash commands' })).toBeInTheDocument();
     });
 
+    it('does not select a command while the user is composing text', async () => {
+      const user = userEvent.setup();
+      const { onSendInput } = renderChat();
+
+      await user.type(textbox(), '/');
+      await screen.findByRole('listbox');
+      fireEvent.keyDown(textbox(), { key: 'Enter', isComposing: true });
+
+      expect(textbox().value).toBe('/');
+      expect(screen.getByRole('listbox', { name: 'Slash commands' })).toBeInTheDocument();
+      expect(onSendInput).not.toHaveBeenCalled();
+    });
+
     it('selects a command by clicking and keeps focus in the composer', async () => {
       const user = userEvent.setup();
       renderChat();
 
       await user.type(textbox(), '/');
       await screen.findByRole('listbox');
-      await user.click(screen.getByRole('option', { name: /compact/ }));
+      await user.click(screen.getByRole('option', { name: /^\/compact\b/ }));
 
       expect(textbox().value).toBe('/compact');
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument();

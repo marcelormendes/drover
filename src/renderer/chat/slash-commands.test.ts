@@ -24,14 +24,110 @@ describe('slashCommandsForAgent', () => {
     expect(Object.keys(SLASH_COMMAND_SETS).sort()).toEqual(['claude', 'codex', 'pi']);
   });
 
-  it('includes the core session commands for every agent', () => {
-    for (const agent of ['pi', 'codex', 'claude']) {
-      const names = new Set(slashCommandsForAgent(agent).map((command) => command.name));
-      expect(names.has('model')).toBe(true);
-      expect(names.has('compact')).toBe(true);
-      expect(names.has('clear')).toBe(true);
-      expect(names.has('help')).toBe(true);
+  it('lists exactly the commands the installed pi 0.83 binary registers', () => {
+    // Verified against the installed pi package's slash-commands module; pi
+    // has no /help or /clear — those would fall through as ordinary prompts.
+    expect(
+      slashCommandsForAgent('pi')
+        .map((command) => command.name)
+        .sort(),
+    ).toEqual([
+      'changelog',
+      'clone',
+      'compact',
+      'copy',
+      'export',
+      'fork',
+      'hotkeys',
+      'import',
+      'login',
+      'logout',
+      'model',
+      'name',
+      'new',
+      'quit',
+      'reload',
+      'resume',
+      'scoped-models',
+      'session',
+      'settings',
+      'share',
+      'tree',
+      'trust',
+    ]);
+  });
+
+  it('advertises current documented codex commands without stale entries', () => {
+    const codex = new Set(slashCommandsForAgent('codex').map((command) => command.name));
+    for (const name of [
+      'clear',
+      'compact',
+      'model',
+      'fast',
+      'plan',
+      'review',
+      'init',
+      'agent',
+      'permissions',
+      'approve',
+      'status',
+      'usage',
+      'mcp',
+      'resume',
+      'new',
+      'fork',
+      'logout',
+      'exit',
+    ]) {
+      expect(codex.has(name)).toBe(true);
     }
+    for (const name of ['help', 'agents', 'cost', 'search', 'login']) {
+      expect(codex.has(name)).toBe(false);
+    }
+  });
+
+  it('advertises current documented claude commands without stale entries', () => {
+    const claude = new Set(slashCommandsForAgent('claude').map((command) => command.name));
+    for (const name of [
+      'help',
+      'clear',
+      'compact',
+      'context',
+      'model',
+      'effort',
+      'agents',
+      'memory',
+      'mcp',
+      'permissions',
+      'usage',
+      'plan',
+      'review',
+      'init',
+      'add-dir',
+      'rewind',
+      'resume',
+      'fork',
+      'diff',
+      'tasks',
+      'export',
+      'doctor',
+      'login',
+      'logout',
+      'quit',
+    ]) {
+      expect(claude.has(name)).toBe(true);
+    }
+    for (const name of ['setcwd', 'todo']) {
+      expect(claude.has(name)).toBe(false);
+    }
+  });
+
+  it('does not advertise commands the installed CLIs do not implement', () => {
+    const pi = new Set(slashCommandsForAgent('pi').map((command) => command.name));
+    expect(pi.has('help')).toBe(false);
+    expect(pi.has('clear')).toBe(false);
+    expect(pi.has('agents')).toBe(false);
+    expect(pi.has('memory')).toBe(false);
   });
 
   it('falls back to a generic set for unknown agents', () => {
@@ -48,6 +144,9 @@ describe('slashCommandsForAgent', () => {
     expect(model?.takesArgument).toBe(true);
     const clear = claude.find((command) => command.name === 'clear');
     expect(clear?.takesArgument).toBeFalsy();
+
+    const pi = slashCommandsForAgent('pi');
+    expect(pi.find((command) => command.name === 'login')?.takesArgument).toBe(true);
   });
 });
 
@@ -62,7 +161,7 @@ describe('filterSlashCommands', () => {
   it('matches by name prefix', () => {
     const names = filterSlashCommands(commands, 'co').map((command) => command.name);
     expect(names).toContain('compact');
-    expect(names).toContain('cost');
+    expect(names).toContain('copy');
     expect(names).not.toContain('model');
   });
 
