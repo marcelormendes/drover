@@ -1737,6 +1737,10 @@ function pluginActionView(action: PluginActionInfo): PluginActionViewModel {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function AppContent() {
   const [result, setResult] = useState<EngineBootstrap | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2055,6 +2059,21 @@ function AppContent() {
       refreshTimer = setTimeout(() => void runRefresh(), wait);
     };
     const unsubscribe = window.herdr.onSessionEvent((event) => {
+      if (event.event === 'desktop.remote_engine_state') {
+        const candidate = event.data.status;
+        if (
+          isRecord(candidate) &&
+          (candidate.state === 'off' ||
+            candidate.state === 'starting' ||
+            candidate.state === 'connected' ||
+            candidate.state === 'error') &&
+          typeof candidate.host === 'string' &&
+          typeof candidate.port === 'number'
+        ) {
+          setRemoteStatus(candidate as unknown as RemoteEngineStatus);
+        }
+        return;
+      }
       if (event.event === 'desktop.connection_state') {
         const state = event.data.state;
         if (

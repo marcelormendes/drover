@@ -140,6 +140,7 @@ describe('SettingsDialog remote engine section', () => {
       host: '',
       port: 22025,
     });
+    expect(screen.queryByRole('button', { name: /Reconnect/ })).not.toBeInTheDocument();
   });
 
   it('applies edited host and port with the reconnect button', async () => {
