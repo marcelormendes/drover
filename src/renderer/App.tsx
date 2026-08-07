@@ -1748,64 +1748,84 @@ function AppContent() {
   const [manifests, setManifests] = useState<AgentManifestInfo[]>([]);
   const [connectionState, setConnectionState] = useState<HerdrEventConnectionState>('connecting');
   const [preferences, setPreferences] = useState<DesktopPreferences>(DEFAULT_DESKTOP_PREFERENCES);
+  const resultRequestSequence = useRef(0);
   const previousAgents = useRef<
     Extract<EngineBootstrap, { state: 'connected' }>['snapshot']['agents']
   >([]);
 
-  const load = useCallback(async (quiet = false) => {
-    // Background refreshes (driven by the session event stream) must not
-    // flash the toolbar's busy state; only user-initiated reloads do.
-    if (!quiet) {
-      setBusy(true);
+  const applyLatestResult = useCallback((sequence: number, next: EngineBootstrap) => {
+    if (sequence !== resultRequestSequence.current) {
+      return false;
     }
-    try {
-      const next = await window.herdr.bootstrap();
-      setResult(next);
-      setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
-    } finally {
-      if (!quiet) {
-        setBusy(false);
-      }
-    }
+    setResult(next);
+    return true;
   }, []);
+
+  const load = useCallback(
+    async (quiet = false) => {
+      const sequence = ++resultRequestSequence.current;
+      // Background refreshes (driven by the session event stream) must not
+      // flash the toolbar's busy state; only user-initiated reloads do.
+      if (!quiet) {
+        setBusy(true);
+      }
+      try {
+        const next = await window.herdr.bootstrap();
+        if (applyLatestResult(sequence, next)) {
+          setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
+        }
+      } finally {
+        if (!quiet) {
+          setBusy(false);
+        }
+      }
+    },
+    [applyLatestResult],
+  );
 
   const startServer = useCallback(async () => {
+    const sequence = ++resultRequestSequence.current;
     setBusy(true);
     try {
-      setResult(await window.herdr.startServer());
+      applyLatestResult(sequence, await window.herdr.startServer());
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyLatestResult]);
 
-  const runCommand = useCallback(async (command: HerdrCommand) => {
-    setBusy(true);
-    try {
-      const next = await window.herdr.command(command);
-      if (next.state === 'connected') {
-        setResult(next);
-      } else {
-        toast.error(
-          next.state === 'error' || next.state === 'missing'
-            ? next.message
-            : 'Herdr command failed.',
-          {
-            description: next.state === 'error' ? next.details : undefined,
-          },
-        );
+  const runCommand = useCallback(
+    async (command: HerdrCommand) => {
+      const sequence = ++resultRequestSequence.current;
+      setBusy(true);
+      try {
+        const next = await window.herdr.command(command);
+        if (next.state === 'connected') {
+          applyLatestResult(sequence, next);
+        } else {
+          toast.error(
+            next.state === 'error' || next.state === 'missing'
+              ? next.message
+              : 'Herdr command failed.',
+            {
+              description: next.state === 'error' ? next.details : undefined,
+            },
+          );
+        }
+        return next;
+      } finally {
+        setBusy(false);
       }
-      return next;
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+    },
+    [applyLatestResult],
+  );
 
   const chooseBinary = useCallback(async () => {
+    const sequence = ++resultRequestSequence.current;
     setBusy(true);
     try {
       const next = await window.herdr.chooseHerdrBinary();
       if (next) {
-        setResult(next);
+        applyLatestResult(sequence, next);
       }
     } catch (error) {
       toast.error('The selected file cannot run as Herdr.', {
@@ -1814,16 +1834,17 @@ function AppContent() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyLatestResult]);
 
   const resetBinary = useCallback(async () => {
+    const sequence = ++resultRequestSequence.current;
     setBusy(true);
     try {
-      setResult(await window.herdr.resetHerdrBinary());
+      applyLatestResult(sequence, await window.herdr.resetHerdrBinary());
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyLatestResult]);
 
   useEffect(() => {
     void load();
