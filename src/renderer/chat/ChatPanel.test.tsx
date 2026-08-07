@@ -156,6 +156,7 @@ describe('ChatPanel', () => {
 
     scrollTo.mockClear();
     viewport.scrollTop = 500;
+    fireEvent.wheel(viewport, { deltaY: -300 });
     fireEvent.scroll(viewport);
     currentText = 'Third line while reading history';
     currentRevision = 3;
@@ -164,6 +165,64 @@ describe('ChatPanel', () => {
     });
     await screen.findByText(currentText);
     expect(scrollTo).not.toHaveBeenCalled();
+    window.herdr = originalHerdr;
+  });
+
+  it('keeps following after content growth emits a scroll event', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    const originalHerdr = window.herdr;
+    window.herdr = {
+      onSessionEvent: vi.fn((listener) => {
+        sessionEvent = listener;
+        return () => undefined;
+      }),
+    } as unknown as typeof window.herdr;
+    let currentText = 'First line';
+    let currentRevision = 1;
+    const readOutput = vi.fn(async () => ({
+      type: 'pane-output' as const,
+      paneId: 'w1:p1',
+      workspaceId: 'w1',
+      tabId: 'w1:t1',
+      text: currentText,
+      revision: currentRevision,
+      truncated: false,
+    }));
+
+    render(
+      <ChatPanel
+        onPrompt={vi.fn()}
+        pane={{ ...pane, agent_status: 'idle' }}
+        readOutput={readOutput}
+      />,
+    );
+    await screen.findByText('First line');
+    const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!viewport) {
+      throw new Error('Chat scroll viewport was not rendered.');
+    }
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 800, writable: true },
+    });
+    const scrollTo = vi.fn();
+    viewport.scrollTo = scrollTo;
+
+    // Chromium can emit scroll while streamed content changes its layout.
+    // Without user scroll intent, that must not disable auto-follow.
+    viewport.scrollTop = 500;
+    fireEvent.scroll(viewport);
+    currentText = 'Second line after a large streamed layout change';
+    currentRevision = 2;
+    act(() => {
+      sessionEvent?.({ event: 'pane.scroll_changed', data: { pane_id: 'w1:p1' } });
+    });
+
+    await screen.findByText(currentText);
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1_000 }));
     window.herdr = originalHerdr;
   });
 
