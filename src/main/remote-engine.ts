@@ -73,22 +73,40 @@ export function createTcpBridge(socketPath: string, port: number): Promise<Tunne
  * quit proceed once cleanup finished, so the app can always finish quitting.
  */
 export function createWillQuitHandler(options: {
-  isActive: () => boolean;
   stop: () => Promise<void>;
   quit: () => void;
 }): (event: { preventDefault(): void }) => void {
   let quitting = false;
+  let cleanupDone = false;
   return (event) => {
-    if (quitting && !options.isActive()) {
-      return; // cleanup finished; allow the retried quit
+    if (quitting && cleanupDone) {
+      return; // cleanup settled (even on failure); allow the retried quit
     }
     event.preventDefault();
     if (quitting) {
       return; // still cleaning up; dedupe this repeat
     }
     quitting = true;
-    void options.stop().finally(() => options.quit());
+    void options
+      .stop()
+      .catch(() => undefined)
+      .finally(() => {
+        cleanupDone = true;
+        options.quit();
+      });
   };
+}
+
+/**
+ * Decides whether a stale local-engine fallback may commit: only when no
+ * newer remote-engine apply superseded it and no tunnel is active.
+ */
+export function shouldApplyLocalFallback(
+  generation: number,
+  currentGeneration: number,
+  tunnelActive: boolean,
+): boolean {
+  return generation === currentGeneration && !tunnelActive;
 }
 
 /**
@@ -232,7 +250,7 @@ export class RemoteEngineTunnel {
       this.bridge = null;
       bridge.close();
     }
-    await rm(this.socketPath, { force: true });
+    await rm(this.socketPath, { force: true }).catch(() => undefined);
   }
 
   private setStatus(
