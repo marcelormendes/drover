@@ -21,12 +21,14 @@ function setup() {
   const sshSpawn = vi.fn<SpawnCall>(() => fakeChild());
   const bridgeClose = vi.fn();
   const createBridge = vi.fn(async () => ({ close: bridgeClose }));
+  const onStatusChange = vi.fn();
   const tunnel = new RemoteEngineTunnel({
     createBridge,
+    onStatusChange,
     socketPath: '/tmp/herdr-test-remote.sock',
     sshSpawn,
   });
-  return { bridgeClose, createBridge, sshSpawn, tunnel };
+  return { bridgeClose, createBridge, onStatusChange, sshSpawn, tunnel };
 }
 
 const target = { enabled: true, host: 'user@host', port: 22025 };
@@ -96,13 +98,16 @@ describe('RemoteEngineTunnel', () => {
     expect(sshSpawn).not.toHaveBeenCalled();
   });
 
-  it('reports an error when the SSH process exits unexpectedly', async () => {
-    const { sshSpawn, tunnel } = setup();
+  it('reports an error when the SSH process exits unexpectedly and cleans up', async () => {
+    const { bridgeClose, sshSpawn, tunnel } = setup();
     await tunnel.apply(target);
     const child = sshSpawn.mock.results[0].value;
     child.emit('exit', 255);
-    expect(tunnel.status.state).toBe('error');
+    await vi.waitFor(() => expect(tunnel.status.state).toBe('error'));
     expect(tunnel.status.message).toMatch(/SSH tunnel exited/);
+    expect(bridgeClose).toHaveBeenCalled();
+    expect(tunnel.active).toBe(false);
+    expect(tunnel.status.socketPath).toBeUndefined();
   });
 
   it('marks the tunnel connected after a successful bootstrap', async () => {
@@ -140,5 +145,74 @@ describe('RemoteEngineTunnel', () => {
     expect(first.kill).toHaveBeenCalled();
     expect(sshSpawn).toHaveBeenCalledTimes(2);
     expect(sshSpawn.mock.calls[1][1]).toContain('other@host');
+  });
+});
+
+describe('RemoteEngineTunnel lifecycle hardening', () => {
+  it('removes the socket file and closes the bridge when the SSH process dies', async () => {
+    const { writeFile, rm } = await import('node:fs/promises');
+    const socketPath = '/tmp/herdr-test-remote-failure.sock';
+    await writeFile(socketPath, 'stale');
+    const bridgeClose = vi.fn();
+    const sshSpawn = vi.fn<SpawnCall>(() => fakeChild());
+    const tunnel = new RemoteEngineTunnel({
+      createBridge: vi.fn(async () => ({ close: bridgeClose })),
+      socketPath,
+      sshSpawn,
+    });
+    await tunnel.apply(target);
+    const child = sshSpawn.mock.results[0].value;
+    child.emit('exit', 255);
+    await vi.waitFor(() => expect(bridgeClose).toHaveBeenCalled());
+    await expect(
+      import('node:fs/promises').then(({ access }) => access(socketPath)),
+    ).rejects.toThrow();
+    await rm(socketPath, { force: true }).catch(() => undefined);
+  });
+
+  it('serializes concurrent applies so the newest request wins', async () => {
+    let releaseBridge!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseBridge = resolve;
+    });
+    const sshSpawn = vi.fn<SpawnCall>(() => fakeChild());
+    const tunnel = new RemoteEngineTunnel({
+      createBridge: vi.fn(async () => {
+        await gate;
+        return { close: vi.fn() };
+      }),
+      socketPath: '/tmp/herdr-test-remote.sock',
+      sshSpawn,
+    });
+    const first = tunnel.apply({ ...target, host: 'slow@host' });
+    const second = tunnel.apply({ enabled: false, host: 'slow@host', port: 22025 });
+    releaseBridge();
+    await Promise.all([first, second]);
+    expect(sshSpawn).toHaveBeenCalledTimes(1);
+    expect(tunnel.status.state).toBe('off');
+    expect(tunnel.active).toBe(false);
+  });
+
+  it('notifies the status listener on every transition', async () => {
+    const { onStatusChange, sshSpawn, tunnel } = setup();
+    await tunnel.apply(target);
+    expect(onStatusChange).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'starting' }));
+    tunnel.setConnected(true);
+    expect(onStatusChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'connected' }),
+    );
+    await tunnel.stop();
+    expect(onStatusChange).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'off' }));
+    const child = sshSpawn.mock.results[0].value;
+    child.emit('exit', 0);
+    expect(tunnel.status.state).toBe('off');
+  });
+
+  it('stop is idempotent', async () => {
+    const { tunnel } = setup();
+    await tunnel.apply(target);
+    await tunnel.stop();
+    await tunnel.stop();
+    expect(tunnel.status.state).toBe('off');
   });
 });

@@ -57,13 +57,29 @@ let herdrBinary = defaultHerdrBinary();
 let engine = createEngine(herdrBinary);
 let binaryPreference: HerdrBinaryPreference | null = null;
 let desktopPreferences: DesktopPreferencesStore | null = null;
-const remoteTunnel = new RemoteEngineTunnel();
+const remoteTunnel = new RemoteEngineTunnel({
+  onStatusChange: (status) => {
+    publishSessionEvent({ event: 'desktop.remote_engine_state', data: { status } });
+    if (status.state === 'error') {
+      // Async tunnel failures must not leave the app pointing at a dead
+      // bridge: clear the override and fall back to the local engine.
+      delete process.env.HERDR_SOCKET_PATH;
+      void engine.bootstrap().then((result) => {
+        if (result.state === 'connected') {
+          trackConnectedSession(result);
+        }
+      });
+    }
+  },
+});
 const terminalControllers = new TerminalControllerPool(
   () => new TerminalController(undefined, herdrBinary),
 );
 function publishSessionEvent(event: { event: string; data: Record<string, unknown> }): void {
   for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.send(IPC_CHANNELS.sessionEvent, event);
+    if (!window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.sessionEvent, event);
+    }
   }
 }
 
@@ -133,9 +149,19 @@ function remoteFailureMessage(result: EngineBootstrap): string {
  * bridge, points HERDR_SOCKET_PATH at the tunnel while active, and confirms
  * reachability by bootstrapping through it. On failure the tunnel is torn
  * down and the env override removed so the local engine keeps working.
+ * Applies are generation-guarded so a stale bootstrap can never commit a
+ * status for a target that was already superseded.
  */
+let remoteApplyGeneration = 0;
 async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngineStatus> {
+  const generation = ++remoteApplyGeneration;
+  // The engine target is changing: existing terminal controllers were spawned
+  // against the old engine and must reattach through the new one.
+  terminalControllers.closeAll();
   const status = await remoteTunnel.apply(target);
+  if (generation !== remoteApplyGeneration) {
+    return remoteTunnel.status;
+  }
   if (status.state === 'off') {
     delete process.env.HERDR_SOCKET_PATH;
     return status;
@@ -144,6 +170,9 @@ async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngi
     process.env.HERDR_SOCKET_PATH = status.socketPath;
   }
   const result = await engine.bootstrap();
+  if (generation !== remoteApplyGeneration) {
+    return remoteTunnel.status;
+  }
   if (result.state !== 'connected') {
     delete process.env.HERDR_SOCKET_PATH;
     await remoteTunnel.stop();
@@ -409,6 +438,14 @@ if (!started) {
     });
   });
 }
+
+app.on('will-quit', (event) => {
+  // Never leave the SSH process or the bridge socket behind after quitting.
+  if (remoteTunnel.active) {
+    event.preventDefault();
+    void remoteTunnel.stop().finally(() => app.quit());
+  }
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

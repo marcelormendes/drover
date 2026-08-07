@@ -34,6 +34,8 @@ export interface RemoteEngineTunnelOptions {
   createBridge?: (socketPath: string, port: number) => Promise<TunnelBridge>;
   /** Local Unix socket the tunnel exposes; defaults to a temp path. */
   socketPath?: string;
+  /** Fired on every status transition so the caller can publish/fall back. */
+  onStatusChange?: (status: RemoteEngineStatus) => void;
 }
 
 export function defaultTunnelSocketPath(): string {
@@ -70,11 +72,17 @@ export function createTcpBridge(socketPath: string, port: number): Promise<Tunne
  * another machine look like the local engine. When active, the caller sets
  * HERDR_SOCKET_PATH to `status.socketPath` so spawned herdr binaries and the
  * API/event clients talk through the tunnel.
+ *
+ * Applies are serialized (a queue) so an enable that pauses during bridge
+ * creation cannot resurrect itself after a newer disable. Async SSH failures
+ * tear the bridge and socket down and surface an error status; the caller
+ * decides how to fall back.
  */
 export class RemoteEngineTunnel {
   private readonly sshSpawn: NonNullable<RemoteEngineTunnelOptions['sshSpawn']>;
   private readonly createBridge: NonNullable<RemoteEngineTunnelOptions['createBridge']>;
   private readonly socketPath: string;
+  private readonly onStatusChange: RemoteEngineTunnelOptions['onStatusChange'];
   private ssh: TunnelChildProcess | null = null;
   private bridge: TunnelBridge | null = null;
   private current: RemoteEngineStatus = {
@@ -82,11 +90,13 @@ export class RemoteEngineTunnel {
     host: '',
     port: 22025,
   };
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(options: RemoteEngineTunnelOptions = {}) {
     this.sshSpawn = options.sshSpawn ?? spawn;
     this.createBridge = options.createBridge ?? createTcpBridge;
     this.socketPath = options.socketPath ?? defaultTunnelSocketPath();
+    this.onStatusChange = options.onStatusChange;
   }
 
   get status(): RemoteEngineStatus {
@@ -97,8 +107,14 @@ export class RemoteEngineTunnel {
     return this.current.state === 'starting' || this.current.state === 'connected';
   }
 
-  async apply({ enabled, host, port }: RemoteEngineTarget): Promise<RemoteEngineStatus> {
-    await this.stop();
+  apply(target: RemoteEngineTarget): Promise<RemoteEngineStatus> {
+    const run = this.queue.then(() => this.doApply(target));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async doApply({ enabled, host, port }: RemoteEngineTarget): Promise<RemoteEngineStatus> {
+    await this.teardown();
     const trimmedHost = host.trim();
     this.current = { ...this.current, host: trimmedHost, port };
     if (!enabled) {
@@ -135,13 +151,13 @@ export class RemoteEngineTunnel {
     child.once('error', (error) => {
       if (this.ssh === child) {
         this.ssh = null;
-        this.setStatus('error', `Could not start the SSH tunnel: ${error.message}`);
+        void this.fail(`Could not start the SSH tunnel: ${error.message}`);
       }
     });
     child.once('exit', (code) => {
       if (this.ssh === child) {
         this.ssh = null;
-        this.setStatus('error', `SSH tunnel exited (code ${code ?? 'unknown'}).`);
+        void this.fail(`SSH tunnel exited (code ${code ?? 'unknown'}).`);
       }
     });
     this.ssh = child;
@@ -157,6 +173,17 @@ export class RemoteEngineTunnel {
   }
 
   async stop(): Promise<void> {
+    await this.teardown();
+    this.setStatus('off');
+  }
+
+  /** Async SSH failure path: full cleanup, then an error status. */
+  private async fail(message: string): Promise<void> {
+    await this.teardown();
+    this.setStatus('error', message);
+  }
+
+  private async teardown(): Promise<void> {
     if (this.ssh) {
       const child = this.ssh;
       this.ssh = null;
@@ -168,7 +195,6 @@ export class RemoteEngineTunnel {
       bridge.close();
     }
     await rm(this.socketPath, { force: true });
-    this.setStatus('off');
   }
 
   private setStatus(
@@ -183,6 +209,7 @@ export class RemoteEngineTunnel {
       ...(socketPath ? { socketPath } : {}),
       ...(message !== undefined ? { message } : {}),
     };
+    this.onStatusChange?.(this.current);
     return this.current;
   }
 }

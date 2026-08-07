@@ -1,5 +1,5 @@
 import { PlugZap, RefreshCw, Wrench } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -81,6 +81,11 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const update = <Key extends keyof DesktopPreferences>(key: Key, value: DesktopPreferences[Key]) =>
     onPreferencesChange({ ...preferences, [key]: value });
+  const [applying, setApplying] = useState(false);
+  const apply = (target: RemoteEngineTarget) => {
+    setApplying(true);
+    void Promise.resolve(onApplyRemoteEngine(target)).finally(() => setApplying(false));
+  };
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -337,13 +342,14 @@ export function SettingsDialog({
                   <Switch
                     aria-label="Use a remote Herdr engine"
                     checked={preferences.remoteEngine.enabled}
+                    disabled={applying}
                     id="remote-engine-switch"
                     onCheckedChange={(checked) => {
                       update('remoteEngine', {
                         ...preferences.remoteEngine,
                         enabled: checked,
                       });
-                      onApplyRemoteEngine({
+                      apply({
                         enabled: checked,
                         host: preferences.remoteEngine.host,
                         port: preferences.remoteEngine.port,
@@ -387,20 +393,21 @@ export function SettingsDialog({
                     />
                   </div>
                   <div className="flex items-center gap-3">
-                    <Button
-                      disabled={busy}
-                      onClick={() =>
-                        onApplyRemoteEngine({
-                          enabled: preferences.remoteEngine.enabled,
-                          host: preferences.remoteEngine.host,
-                          port: preferences.remoteEngine.port,
-                        })
-                      }
-                      variant="neutral"
-                    >
-                      <PlugZap aria-hidden="true" />
-                      {preferences.remoteEngine.enabled ? 'Reconnect' : 'Test connection'}
-                    </Button>
+                    {preferences.remoteEngine.enabled ? (
+                      <Button
+                        disabled={busy || applying}
+                        onClick={() =>
+                          apply({
+                            enabled: true,
+                            host: preferences.remoteEngine.host,
+                            port: preferences.remoteEngine.port,
+                          })
+                        }
+                        variant="neutral"
+                      >
+                        <PlugZap aria-hidden="true" /> Reconnect
+                      </Button>
+                    ) : null}
                     <p
                       aria-live="polite"
                       className={
