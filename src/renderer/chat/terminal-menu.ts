@@ -5,6 +5,7 @@ export interface TerminalMenu {
 }
 
 const MARKER_LINE = /^(\s*)(?:→|❯|›|▸|➤)\s(\S.*)$/;
+const EMPTY_MARKER_LINE = /^\s*(?:>|→|❯|›|▸|➤)\s*$/;
 const COUNTER_LINE = /^\s*\((\d+)\/(\d+)\)\s*$/;
 const BORDER_LINE = /^[\s─━═│╭╮╰╯┌┐└┘|+-]*$/;
 
@@ -41,6 +42,11 @@ function scanOptions(lines: string[], start: number, step: 1 | -1, indent: strin
 export function detectTerminalMenu(text: string): TerminalMenu | null {
   const lines = text.split('\n');
   for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (EMPTY_MARKER_LINE.test(lines[index])) {
+      // An empty composer prompt is newer than anything above it. Older
+      // wrapped prompts can resemble a selected option plus sibling rows.
+      return null;
+    }
     const marker = lines[index].match(MARKER_LINE);
     if (!marker) {
       continue;
