@@ -380,6 +380,120 @@ describe('App', () => {
     });
   });
 
+  it('keeps a newly created worktree focused when an older background refresh finishes', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    let resolveStaleRefresh: ((result: EngineBootstrap) => void) | undefined;
+    const staleRefresh = new Promise<EngineBootstrap>((resolve) => {
+      resolveStaleRefresh = resolve;
+    });
+    const reviewerPane = {
+      ...snapshot.panes[0],
+      pane_id: 'w1:p2',
+      terminal_id: 'terminal-reviewer',
+      label: 'Reviewer',
+      display_agent: undefined,
+      focused: false,
+    };
+    const reviewerSnapshot: SessionSnapshot = {
+      ...snapshot,
+      workspaces: snapshot.workspaces.map((workspace) =>
+        workspace.workspace_id === 'w1' ? { ...workspace, pane_count: 2 } : workspace,
+      ),
+      tabs: snapshot.tabs.map((tab) => (tab.tab_id === 'w1:t1' ? { ...tab, pane_count: 2 } : tab)),
+      panes: [...snapshot.panes, reviewerPane],
+    };
+    const reviewerResult: EngineBootstrap = { ...connected, snapshot: reviewerSnapshot };
+    const worktreeSnapshot: SessionSnapshot = {
+      ...reviewerSnapshot,
+      focused_workspace_id: 'w3',
+      focused_tab_id: 'w3:t1',
+      focused_pane_id: 'w3:p1',
+      workspaces: [
+        ...reviewerSnapshot.workspaces.map((workspace) => ({ ...workspace, focused: false })),
+        {
+          workspace_id: 'w3',
+          number: 3,
+          label: 'bug-reviewer',
+          focused: true,
+          pane_count: 1,
+          tab_count: 1,
+          active_tab_id: 'w3:t1',
+          agent_status: 'working',
+          tokens: {},
+        },
+      ],
+      tabs: [
+        ...reviewerSnapshot.tabs.map((tab) => ({ ...tab, focused: false })),
+        {
+          tab_id: 'w3:t1',
+          workspace_id: 'w3',
+          number: 1,
+          label: '1',
+          focused: true,
+          pane_count: 1,
+          agent_status: 'working',
+        },
+      ],
+      panes: [
+        ...reviewerSnapshot.panes.map((pane) => ({ ...pane, focused: false })),
+        {
+          ...snapshot.panes[0],
+          pane_id: 'w3:p1',
+          terminal_id: 'terminal-worktree',
+          workspace_id: 'w3',
+          tab_id: 'w3:t1',
+          cwd: '/worktrees/bug-reviewer',
+          label: 'Worktree agent',
+          focused: true,
+        },
+      ],
+    };
+    const worktreeResult: EngineBootstrap = { ...connected, snapshot: worktreeSnapshot };
+    window.herdr.bootstrap = vi
+      .fn<() => Promise<EngineBootstrap>>()
+      .mockResolvedValueOnce(reviewerResult)
+      .mockReturnValueOnce(staleRefresh)
+      .mockResolvedValue(worktreeResult);
+    window.herdr.command = vi.fn(async (command) =>
+      command.type === 'create-worktree' ? worktreeResult : reviewerResult,
+    );
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+
+    vi.useFakeTimers();
+    try {
+      render(<App />);
+      await act(async () => {});
+      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getAllByText('Reviewer')).not.toHaveLength(0);
+
+      act(() => sessionEvent?.({ event: 'layout.updated', data: {} }));
+      act(() => vi.advanceTimersByTime(1_000));
+      await act(async () => {});
+      expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2);
+
+      fireEvent.click(screen.getByRole('button', { name: 'New worktree' }));
+      fireEvent.change(screen.getByLabelText('Branch name'), {
+        target: { value: 'bug-reviewer' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Create worktree' }));
+      await act(async () => {});
+      expect(screen.getByRole('heading', { name: 'bug-reviewer' })).toBeInTheDocument();
+      expect(screen.queryAllByText('Reviewer')).toHaveLength(0);
+
+      await act(async () => resolveStaleRefresh?.(reviewerResult));
+
+      expect(screen.getByRole('heading', { name: 'bug-reviewer' })).toBeInTheDocument();
+      expect(screen.queryAllByText('Reviewer')).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('creates another worktree from the repository root when a linked workspace is active', async () => {
     window.herdr.bootstrap = vi.fn(async () => ({
       ...connected,
