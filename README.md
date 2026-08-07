@@ -65,6 +65,10 @@ npm audit --omit=dev
 
 All dependency versions are saved exactly. Stable releases are used; prerelease package lines are excluded.
 
+## Contributing
+
+Contributions are welcome through pull requests. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development checks, review requirements, and repository security rules. All changes to `main` require passing CI and code-owner review.
+
 ## Desktop shortcuts
 
 | Action | Shortcut |
