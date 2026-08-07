@@ -333,6 +333,85 @@ describe('applyPaneRead thinking capture', () => {
       thinkingLines: ['Second draft.'],
     });
   });
+
+  it('keeps the richer captured set when a completion frame only recolors part of it', () => {
+    const submitted = submitUserMessage(createChatTranscript(), {
+      submissionId: 'turn-1',
+      text: 'Fix the layout.',
+    });
+    const text = 'The user wants the layout fixed.\nA second thought.\nHere is the fix.';
+    const streamed = applyPaneRead(submitted, {
+      text,
+      revision: 42,
+      status: 'working',
+      thinkingLines: ['The user wants the layout fixed.', 'A second thought.'],
+    });
+
+    // The CLI kept one thinking line muted but recolored the other to the
+    // answer foreground in its final frame; a strict subset must not shrink
+    // the captured set or that paragraph would render white.
+    const completed = applyPaneRead(streamed, {
+      text,
+      revision: 43,
+      status: 'idle',
+      thinkingLines: ['The user wants the layout fixed.'],
+    });
+
+    expect(completed.messages[1]).toMatchObject({
+      thinkingLines: ['The user wants the layout fixed.', 'A second thought.'],
+    });
+  });
+
+  it('merges fresh captures with existing lines that survive in the text', () => {
+    const submitted = submitUserMessage(createChatTranscript(), {
+      submissionId: 'turn-1',
+      text: 'Fix the layout.',
+    });
+    const streamed = applyPaneRead(submitted, {
+      text: 'First draft.\nSecond draft.\nThird draft.',
+      revision: 42,
+      status: 'working',
+      thinkingLines: ['First draft.', 'Second draft.'],
+    });
+
+    // The next frame still mutes First draft., now also mutes Third draft.,
+    // and lost Second draft.'s markers. Second draft. survives in the text,
+    // so its captured occurrence must not be dropped.
+    const next = applyPaneRead(streamed, {
+      text: 'First draft.\nSecond draft.\nThird draft.',
+      revision: 43,
+      status: 'working',
+      thinkingLines: ['First draft.', 'Third draft.'],
+    });
+
+    expect(next.messages[1]).toMatchObject({
+      thinkingLines: ['First draft.', 'Second draft.', 'Third draft.'],
+    });
+  });
+
+  it('preserves the higher occurrence count for repeated lines', () => {
+    const submitted = submitUserMessage(createChatTranscript(), {
+      submissionId: 'turn-1',
+      text: 'Fix the layout.',
+    });
+    const streamed = applyPaneRead(submitted, {
+      text: 'Same\nSame',
+      revision: 42,
+      status: 'working',
+      thinkingLines: ['Same'],
+    });
+
+    const next = applyPaneRead(streamed, {
+      text: 'Same\nSame',
+      revision: 43,
+      status: 'working',
+      thinkingLines: ['Same', 'Same'],
+    });
+
+    expect(next.messages[1]).toMatchObject({
+      thinkingLines: ['Same', 'Same'],
+    });
+  });
 });
 
 describe('extractPaneResponse collapse handling', () => {
@@ -425,6 +504,91 @@ describe('extractPaneResponse collapse handling', () => {
       [previous, '', 'The reviewer found two edge cases.', '', 'Checking one final scenario.'].join(
         '\n',
       ),
+    );
+  });
+
+  it('keeps streaming when the rolled window extends the previous final line', () => {
+    const prompt = 'Find why the desktop chat stops updating.';
+    const previous = [
+      'The first diagnostic pass found a busy event stream.',
+      '',
+      'Let me measure the inter-event gaps before changing anything.',
+      '',
+      'The subscription',
+    ].join('\n');
+    const rolledFrame = [
+      'Let me measure the inter-event gaps before changing anything.',
+      '',
+      'The subscription itself is still healthy.',
+      '',
+      'The pane output continued after the prompt rolled away.',
+    ].join('\n');
+
+    expect(extractPaneResponse('Ready', rolledFrame, prompt, previous, false)).toBe(
+      [
+        'The first diagnostic pass found a busy event stream.',
+        '',
+        'Let me measure the inter-event gaps before changing anything.',
+        '',
+        'The subscription itself is still healthy.',
+        '',
+        'The pane output continued after the prompt rolled away.',
+      ].join('\n'),
+    );
+  });
+
+  it('keeps streaming when a volatile working line follows the overlap', () => {
+    const prompt = 'Stream a long diagnostic response.';
+    const previous = [
+      '1. The response begins here.',
+      '2. This stable line remains in the rolled frame.',
+      '3. The current line is still being written.',
+      '⠸ Working...',
+    ].join('\n');
+    const rolledFrame = [
+      '2. This stable line remains in the rolled frame.',
+      '3. The current line is still being written.',
+      '4. DeepSeek produced this before the next pane read.',
+      '5. Chat must continue instead of freezing.',
+      '⠴ Working...',
+    ].join('\n');
+
+    expect(extractPaneResponse('Ready', rolledFrame, prompt, previous, false)).toBe(
+      [
+        '1. The response begins here.',
+        '2. This stable line remains in the rolled frame.',
+        '3. The current line is still being written.',
+        '4. DeepSeek produced this before the next pane read.',
+        '5. Chat must continue instead of freezing.',
+        '⠴ Working...',
+      ].join('\n'),
+    );
+  });
+
+  it('preserves the complete turn when a fast response rolls past 500 lines', () => {
+    const numberedLine = (number: number) => `${number}. Diagnostic line ${number}.`;
+    const previous = [
+      ...Array.from({ length: 480 }, (_, index) => numberedLine(index + 1)),
+      '⠸ Working...',
+    ].join('\n');
+    const rolledFrame = [
+      ...Array.from({ length: 491 }, (_, index) => numberedLine(index + 210)),
+      'HERDR_CHAT_STREAM_DONE',
+    ].join('\n');
+
+    expect(
+      extractPaneResponse(
+        'Ready',
+        rolledFrame,
+        'Stream exactly 700 numbered lines.',
+        previous,
+        true,
+      ),
+    ).toBe(
+      [
+        ...Array.from({ length: 700 }, (_, index) => numberedLine(index + 1)),
+        'HERDR_CHAT_STREAM_DONE',
+      ].join('\n'),
     );
   });
 });

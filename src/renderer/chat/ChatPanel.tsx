@@ -223,7 +223,9 @@ function AgentReply({
           <pre
             className={cn(
               'min-w-0 max-w-full overflow-x-auto rounded-base border-2 border-border bg-secondary-background p-3 font-mono text-xs leading-5',
-              muted ? 'text-thinking-foreground' : 'text-response-foreground',
+              muted || segment.tone === 'thinking'
+                ? 'text-thinking-foreground'
+                : 'text-response-foreground',
             )}
             key={segment.key}
           >
@@ -292,6 +294,8 @@ export function ChatPanel({
   const submissionSequenceRef = useRef(0);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const followOutputRef = useRef(true);
+  const userScrollIntentRef = useRef(false);
+  const pointerScrollingRef = useRef(false);
   const addAttachments = useCallback(
     (files: File[]) => {
       if (files.length === 0) {
@@ -400,12 +404,54 @@ export function ChatPanel({
     if (!viewport) {
       return;
     }
+    const markScrollIntent = () => {
+      userScrollIntentRef.current = true;
+    };
+    const startPointerScroll = () => {
+      pointerScrollingRef.current = true;
+      markScrollIntent();
+    };
+    const stopPointerScroll = () => {
+      pointerScrollingRef.current = false;
+      userScrollIntentRef.current = false;
+    };
+    const markKeyboardScrollIntent = (event: KeyboardEvent) => {
+      if (
+        event.key === 'ArrowUp' ||
+        event.key === 'ArrowDown' ||
+        event.key === 'PageUp' ||
+        event.key === 'PageDown' ||
+        event.key === 'Home' ||
+        event.key === 'End' ||
+        event.key === ' '
+      ) {
+        markScrollIntent();
+      }
+    };
     const updateFollowMode = () => {
+      if (!userScrollIntentRef.current && !pointerScrollingRef.current) {
+        return;
+      }
       const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       followOutputRef.current = distanceFromBottom <= 48;
+      if (!pointerScrollingRef.current) {
+        userScrollIntentRef.current = false;
+      }
     };
+    viewport.addEventListener('wheel', markScrollIntent, { passive: true });
+    viewport.addEventListener('pointerdown', startPointerScroll, { passive: true });
+    viewport.addEventListener('keydown', markKeyboardScrollIntent);
     viewport.addEventListener('scroll', updateFollowMode, { passive: true });
-    return () => viewport.removeEventListener('scroll', updateFollowMode);
+    window.addEventListener('pointerup', stopPointerScroll, { passive: true });
+    window.addEventListener('pointercancel', stopPointerScroll, { passive: true });
+    return () => {
+      viewport.removeEventListener('wheel', markScrollIntent);
+      viewport.removeEventListener('pointerdown', startPointerScroll);
+      viewport.removeEventListener('keydown', markKeyboardScrollIntent);
+      viewport.removeEventListener('scroll', updateFollowMode);
+      window.removeEventListener('pointerup', stopPointerScroll);
+      window.removeEventListener('pointercancel', stopPointerScroll);
+    };
   }, []);
 
   useLayoutEffect(() => {

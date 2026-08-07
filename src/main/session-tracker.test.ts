@@ -59,6 +59,8 @@ describe('ConnectedSessionTracker', () => {
     const tracker = new ConnectedSessionTracker(subscription);
 
     tracker.track(connected());
+    // Background refreshes re-bootstrap constantly; the subscription must
+    // not be torn down (and re-emit connecting/disconnected) for them.
     for (let index = 0; index < 10; index += 1) {
       tracker.track(connected());
     }
@@ -97,6 +99,7 @@ describe('ConnectedSessionTracker', () => {
     );
     expect(subscription.open).toHaveBeenCalledTimes(2);
 
+    // Order changes alone are not a new target.
     tracker.track(
       connected({
         snapshot: { panes: [{ pane_id: 'w1:p2' }, { pane_id: 'w1:p1' }, { pane_id: 'w1:p3' }] },

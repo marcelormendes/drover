@@ -11,9 +11,10 @@ interface SessionTarget {
 }
 
 /**
- * Keeps background bootstraps attached to the existing event subscription.
- * Reopening an unchanged target emits disconnected/connecting/connected and
- * makes the connection indicator blink even though the engine stayed healthy.
+ * Keeps the event subscription attached to the session the engine reports.
+ * Re-bootstrapping (background refreshes, commands) returns the same session
+ * every time; tearing the subscription down on each one would re-emit
+ * connecting/disconnected state and blink the connection pill.
  */
 export class ConnectedSessionTracker {
   private target: SessionTarget | null = null;

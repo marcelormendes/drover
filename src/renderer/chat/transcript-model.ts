@@ -96,43 +96,68 @@ function removedLines(previousResponse: string, response: string): string[] {
 function mergeRolledResponse(previousResponse: string, response: string): string | undefined {
   const previousLines = previousResponse.split('\n');
   const responseLines = response.split('\n');
-  const previousLastLine = previousLines.at(-1);
-  if (previousLastLine === undefined) {
+  if (previousLines.length === 0) {
     return undefined;
   }
 
+  // Agent TUIs redraw their spinner and may rewrite the line immediately
+  // above it. Search a small tail window instead of requiring the final line
+  // to survive verbatim. A fast model can otherwise advance a rolled pane
+  // between reads while the changing `Working...` line makes the substantial
+  // overlap just before it invisible.
+  const previousTailStart = Math.max(0, previousLines.length - 32);
   let bestOverlap = 0;
+  let bestPreviousEnd = -1;
   let bestResponseEnd = -1;
-  for (let responseEnd = 0; responseEnd < responseLines.length; responseEnd += 1) {
-    if (responseLines[responseEnd] !== previousLastLine) {
-      continue;
-    }
-    let overlap = 1;
-    while (
-      overlap < previousLines.length &&
-      overlap <= responseEnd &&
-      previousLines[previousLines.length - overlap - 1] === responseLines[responseEnd - overlap]
-    ) {
-      overlap += 1;
-    }
-    if (overlap > bestOverlap) {
-      bestOverlap = overlap;
-      bestResponseEnd = responseEnd;
+  for (
+    let previousEnd = previousLines.length - 1;
+    previousEnd >= previousTailStart;
+    previousEnd -= 1
+  ) {
+    const previousLine = previousLines[previousEnd];
+    for (let responseEnd = 0; responseEnd < responseLines.length; responseEnd += 1) {
+      if (!responseLines[responseEnd]?.startsWith(previousLine)) {
+        continue;
+      }
+      let overlap = 1;
+      while (
+        overlap <= previousEnd &&
+        overlap <= responseEnd &&
+        previousLines[previousEnd - overlap] === responseLines[responseEnd - overlap]
+      ) {
+        overlap += 1;
+      }
+      const meaningfulOverlap = previousLines
+        .slice(previousEnd - overlap + 1, previousEnd + 1)
+        .filter((line) => line.trim());
+      const rewritesTrailingLines = previousEnd < previousLines.length - 1;
+      if (
+        (rewritesTrailingLines && meaningfulOverlap.length < 2) ||
+        (meaningfulOverlap.length < 2 && meaningfulOverlap.join('\n').length < 40)
+      ) {
+        continue;
+      }
+      if (
+        previousEnd > bestPreviousEnd ||
+        (previousEnd === bestPreviousEnd && overlap > bestOverlap)
+      ) {
+        bestOverlap = overlap;
+        bestPreviousEnd = previousEnd;
+        bestResponseEnd = responseEnd;
+      }
     }
   }
 
-  if (bestOverlap === 0) {
+  if (bestPreviousEnd === -1) {
     return undefined;
   }
-  const meaningfulOverlap = previousLines.slice(-bestOverlap).filter((line) => line.trim());
-  if (meaningfulOverlap.length < 2 && meaningfulOverlap.join('\n').length < 40) {
-    return undefined;
-  }
-  const newLines = responseLines.slice(bestResponseEnd + 1);
-  if (newLines.every((line) => !line.trim())) {
-    return previousResponse;
-  }
-  return [previousResponse, ...newLines].join('\n').trim();
+  return [
+    ...previousLines.slice(0, bestPreviousEnd),
+    responseLines[bestResponseEnd],
+    ...responseLines.slice(bestResponseEnd + 1),
+  ]
+    .join('\n')
+    .trim();
 }
 
 function trimTerminalFooter(text: string): string {
@@ -270,13 +295,51 @@ export function applyPaneRead(
     return transcript;
   }
   // A final frame that collapsed or recolored the thinking block carries no
-  // markers; keep the set captured while the turn streamed.
-  const thinkingLines =
+  // (or fewer) markers; keep the set captured while the turn streamed. Only a
+  // read with genuinely new muted lines replaces it — a strict subset just
+  // means the CLI recolored part of the thinking to the answer foreground.
+  let thinkingLines =
     paneRead.thinkingLines && paneRead.thinkingLines.length > 0
       ? [...paneRead.thinkingLines]
       : currentResponse?.role === 'assistant'
         ? currentResponse.thinkingLines
         : undefined;
+  if (
+    paneRead.thinkingLines &&
+    paneRead.thinkingLines.length > 0 &&
+    currentResponse?.role === 'assistant' &&
+    currentResponse.thinkingLines &&
+    currentResponse.thinkingLines.length > 0
+  ) {
+    // Reconcile by occurrence instead of wholesale replace: keep captured
+    // lines that still survive in the read text even when the frame lost
+    // their markers, and take the higher count when a line repeats.
+    const textLines = new Set(
+      paneRead.text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== ''),
+    );
+    const countLines = (lines: readonly string[]): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const line of lines) {
+        counts.set(line, (counts.get(line) ?? 0) + 1);
+      }
+      return counts;
+    };
+    const merged = new Map<string, number>();
+    for (const [line, count] of countLines(currentResponse.thinkingLines)) {
+      if (textLines.has(line)) {
+        merged.set(line, Math.max(merged.get(line) ?? 0, count));
+      }
+    }
+    // Fresh muted lines come from the current frame itself, so they are in
+    // the text by construction; keep their counts as-is.
+    for (const [line, count] of countLines(paneRead.thinkingLines ?? [])) {
+      merged.set(line, Math.max(merged.get(line) ?? 0, count));
+    }
+    thinkingLines = [...merged].flatMap(([line, count]) => Array<string>(count).fill(line));
+  }
   const response: ChatAssistantMessage = {
     id: responseId,
     turnId,

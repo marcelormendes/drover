@@ -156,6 +156,7 @@ describe('ChatPanel', () => {
 
     scrollTo.mockClear();
     viewport.scrollTop = 500;
+    fireEvent.wheel(viewport, { deltaY: -300 });
     fireEvent.scroll(viewport);
     currentText = 'Third line while reading history';
     currentRevision = 3;
@@ -164,6 +165,64 @@ describe('ChatPanel', () => {
     });
     await screen.findByText(currentText);
     expect(scrollTo).not.toHaveBeenCalled();
+    window.herdr = originalHerdr;
+  });
+
+  it('keeps following after content growth emits a scroll event', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    const originalHerdr = window.herdr;
+    window.herdr = {
+      onSessionEvent: vi.fn((listener) => {
+        sessionEvent = listener;
+        return () => undefined;
+      }),
+    } as unknown as typeof window.herdr;
+    let currentText = 'First line';
+    let currentRevision = 1;
+    const readOutput = vi.fn(async () => ({
+      type: 'pane-output' as const,
+      paneId: 'w1:p1',
+      workspaceId: 'w1',
+      tabId: 'w1:t1',
+      text: currentText,
+      revision: currentRevision,
+      truncated: false,
+    }));
+
+    render(
+      <ChatPanel
+        onPrompt={vi.fn()}
+        pane={{ ...pane, agent_status: 'idle' }}
+        readOutput={readOutput}
+      />,
+    );
+    await screen.findByText('First line');
+    const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!viewport) {
+      throw new Error('Chat scroll viewport was not rendered.');
+    }
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 800, writable: true },
+    });
+    const scrollTo = vi.fn();
+    viewport.scrollTo = scrollTo;
+
+    // Chromium can emit scroll while streamed content changes its layout.
+    // Without user scroll intent, that must not disable auto-follow.
+    viewport.scrollTop = 500;
+    fireEvent.scroll(viewport);
+    currentText = 'Second line after a large streamed layout change';
+    currentRevision = 2;
+    act(() => {
+      sessionEvent?.({ event: 'pane.scroll_changed', data: { pane_id: 'w1:p1' } });
+    });
+
+    await screen.findByText(currentText);
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1_000 }));
     window.herdr = originalHerdr;
   });
 
@@ -1064,6 +1123,101 @@ describe('ChatPanel thinking color at completion', () => {
     const answer = screen.getByText(/- Here is the fix/);
     expect(answer.closest('p')).toHaveClass('text-response-foreground');
   });
+  it('keeps preformatted thinking blocks gray when the turn completes', async () => {
+    const user = userEvent.setup();
+    const gray = '\x1b[38;2;128;128;128m';
+    const reset = '\x1b[0m';
+    const table = '┌──────┐\n│ plan │\n└──────┘';
+    const readyOutput = {
+      type: 'pane-output' as const,
+      paneId: 'w1:p1',
+      workspaceId: 'w1',
+      tabId: 'w1:t1',
+      text: 'ready',
+      revision: 1,
+      truncated: false,
+    };
+    const workingOutput = {
+      type: 'pane-output' as const,
+      paneId: 'w1:p1',
+      workspaceId: 'w1',
+      tabId: 'w1:t1',
+      text: `ready\nFix the layout\n${gray}┌──────┐${reset}\n${gray}│ plan │${reset}\n${gray}└──────┘${reset}\n\n- Here is the fix.`,
+      revision: 3,
+      truncated: false,
+    };
+    const completedOutput = {
+      type: 'pane-output' as const,
+      paneId: 'w1:p1',
+      workspaceId: 'w1',
+      tabId: 'w1:t1',
+      // The final frame dropped the thinking markers but kept the table.
+      text: `ready\nFix the layout\n${table}\n\n- Here is the fix.`,
+      revision: 4,
+      truncated: false,
+    };
+    let phase: 'ready' | 'working' | 'completed' = 'ready';
+    let releaseWorking!: () => void;
+    let releaseCompleted!: () => void;
+    const workingGate = new Promise<void>((resolve) => {
+      releaseWorking = resolve;
+    });
+    const completedGate = new Promise<void>((resolve) => {
+      releaseCompleted = resolve;
+    });
+    const readOutput = vi.fn(async () => {
+      if (phase === 'ready') {
+        return readyOutput;
+      }
+      if (phase === 'working') {
+        await workingGate;
+        return workingOutput;
+      }
+      await completedGate;
+      return completedOutput;
+    });
+    const { rerender } = render(
+      <ChatPanel onPrompt={vi.fn(async () => undefined)} pane={pane} readOutput={readOutput} />,
+    );
+    await screen.findByText('ready');
+
+    await user.type(screen.getByRole('textbox', { name: 'Message Codex' }), 'Fix the layout');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    phase = 'working';
+    rerender(
+      <ChatPanel
+        onPrompt={vi.fn(async () => undefined)}
+        pane={{ ...pane, revision: 3 }}
+        readOutput={readOutput}
+      />,
+    );
+    await act(async () => {
+      releaseWorking();
+    });
+    await screen.findByText(/│ plan │/);
+
+    phase = 'completed';
+    rerender(
+      <ChatPanel
+        onPrompt={vi.fn(async () => undefined)}
+        pane={{ ...pane, agent_status: 'idle', revision: 4 }}
+        readOutput={readOutput}
+      />,
+    );
+    await act(async () => {
+      releaseCompleted();
+    });
+
+    // The completed turn's thinking table stays gray; only the answer turns
+    // white.
+    const tableBlock = await screen.findByText(/┌──────┐\s+│ plan │\s+└──────┘/);
+    expect(tableBlock.tagName).toBe('PRE');
+    expect(tableBlock).toHaveClass('text-thinking-foreground');
+    const answer = screen.getByText(/- Here is the fix/);
+    expect(answer.closest('p')).toHaveClass('text-response-foreground');
+  });
+
   describe('slash command menu', () => {
     const renderChat = (onSendInput = vi.fn(async () => undefined)) => {
       const readOutput = vi.fn(async () => ({
