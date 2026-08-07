@@ -2,6 +2,8 @@
 
 Herdr Desktop is a standalone graphical client for [Herdr](https://github.com/herdrdev/herdr). It provides the Herdr workspace, tab, pane, terminal, and agent experience as a native desktop interface while keeping Herdr as the only engine and runtime authority.
 
+[Website](https://marcelormendes.github.io/herdr-desktop/) · [macOS downloads](https://github.com/marcelormendes/herdr-desktop/releases/latest)
+
 The project is intentionally not a Herdr fork and not a Herdr plugin. It can track upstream Herdr without maintaining a parallel copy of its engine.
 
 ## What works
@@ -65,6 +67,10 @@ npm audit --omit=dev
 
 All dependency versions are saved exactly. Stable releases are used; prerelease package lines are excluded.
 
+## Contributing
+
+Contributions are welcome through pull requests. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development checks, review requirements, and repository security rules. All changes to `main` require passing CI and code-owner review.
+
 ## Desktop shortcuts
 
 | Action | Shortcut |
@@ -86,9 +92,11 @@ The complete interface uses the current [Neobrutalism Components](https://www.ne
 
 ## Distribution
 
-`npm run make` produces platform-appropriate Electron Forge artifacts. On macOS this includes a ZIP archive and DMG with the project icon. Build intermediates live in the operating system's temporary directory so macOS File Provider metadata cannot contaminate the app signature when the repository is inside Documents or iCloud Drive.
+`npm run make` produces platform-appropriate Electron Forge artifacts. On macOS this includes a ZIP archive and DMG with the Herdr Desktop icon. Build intermediates live in the operating system's temporary directory so macOS File Provider metadata cannot contaminate the app signature when the repository is inside Documents or iCloud Drive.
 
-Local macOS artifacts are ad-hoc signed and validated, but not notarized. Public distribution should add Developer ID signing and Apple notarization or Windows code signing in the release environment; credentials are deliberately not stored in this repository.
+Pushing a version tag such as `v0.1.5`, or manually running the **Release macOS** workflow for the same package version, builds separate Apple Silicon and Intel artifacts. The workflow signs the app with Developer ID, notarizes the app and DMG with Apple, staples the notarization ticket, validates Gatekeeper acceptance, generates SHA-256 checksums, and publishes the files in a GitHub Release. Credentials are held only as encrypted repository secrets.
+
+Windows release automation will be added separately. Local builds without release credentials remain ad-hoc signed and are intended for development only.
 
 ## Relationship to Herdr
 

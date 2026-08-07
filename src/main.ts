@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
 import started from 'electron-squirrel-startup';
+import { APP_NAME, configureApplicationBranding } from '@/main/app-branding';
 import { applicationMenuTemplate } from '@/main/application-menu';
 import { stageChatImages } from '@/main/chat-images';
 import { DesktopPreferencesStore } from '@/main/desktop-preferences';
@@ -240,7 +241,8 @@ function createWindow(): void {
     minHeight: 540,
     show: false,
     backgroundColor: '#e8effa',
-    title: 'Herdr Desktop',
+    icon: path.join(app.getAppPath(), 'resources', 'icon-1024.png'),
+    title: APP_NAME,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     trafficLightPosition: process.platform === 'darwin' ? { x: 18, y: 16 } : undefined,
     webPreferences: {
@@ -290,6 +292,11 @@ function configureApplicationMenu(): void {
 
 if (!started) {
   app.whenReady().then(async () => {
+    configureApplicationBranding(app, {
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      resourcesDirectory: path.join(app.getAppPath(), 'resources'),
+    });
     binaryPreference = new HerdrBinaryPreference(
       path.join(app.getPath('userData'), 'settings.json'),
     );

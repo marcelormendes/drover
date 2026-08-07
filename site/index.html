@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Herdr Desktop is the native workspace for Herdr-powered agents, terminals, worktrees, and live sessions."
+    />
+    <meta name="theme-color" content="#6e91ff" />
+    <meta property="og:title" content="Herdr Desktop" />
+    <meta
+      property="og:description"
+      content="Run the herd without living in the terminal."
+    />
+    <meta property="og:type" content="website" />
+    <title>Herdr Desktop — The herd, in a native workspace</title>
+    <link rel="icon" href="./icon.png" />
+    <link rel="apple-touch-icon" href="./icon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Herdr Desktop home">
+        <img src="./icon.png" width="44" height="44" alt="Herdr Desktop" />
+        <span>HERDR <b>DESKTOP</b></span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a
+          href="https://github.com/marcelormendes/herdr-desktop"
+          target="_blank"
+          rel="noreferrer"
+        >GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">NATIVE MACOS CLIENT · POWERED BY HERDR</p>
+          <h1>Run the herd without living in the terminal.</h1>
+          <p class="lede">
+            Herdr Desktop turns the Herdr workspace, agents, panes, and worktrees into one focused
+            graphical command center—while Herdr remains the engine and source of truth.
+          </p>
+          <div class="actions">
+            <a
+              class="button primary"
+              href="https://github.com/marcelormendes/herdr-desktop/releases/latest"
+            >Download for macOS</a>
+            <a
+              class="button"
+              href="https://github.com/marcelormendes/herdr-desktop"
+              target="_blank"
+              rel="noreferrer"
+            >View source</a>
+          </div>
+          <p class="fine-print">Apple Silicon and Intel builds · Herdr 0.8+ required</p>
+        </div>
+
+        <div
+          class="app-window"
+          role="img"
+          aria-label="Stylized preview of the Herdr Desktop application"
+        >
+          <div class="window-bar">
+            <span class="traffic red"></span>
+            <span class="traffic yellow"></span>
+            <span class="traffic green"></span>
+            <strong>HERDR</strong>
+            <span class="window-path">~/workspace</span>
+          </div>
+          <div class="window-body">
+            <aside class="mock-sidebar">
+              <span class="mock-label">WORKSPACES</span>
+              <div class="mock-item active">herdr-desktop</div>
+              <div class="mock-item">bug-reviewer</div>
+              <span class="mock-label agents-label">AGENTS</span>
+              <div class="agent-row"><i class="dot working"></i> Codex <b>working</b></div>
+              <div class="agent-row"><i class="dot ready"></i> Claude <b>ready</b></div>
+              <div class="engine-state"><i class="dot ready"></i> Engine connected</div>
+            </aside>
+            <section class="mock-chat">
+              <div class="chat-tabs"><b>Chat</b><span>Terminal</span></div>
+              <div class="message user-message">Review the macOS release workflow.</div>
+              <div class="message agent-message">
+                <span>Thinking</span>
+                The signing path is ready. CI validates both architectures before release.
+              </div>
+              <div class="composer">Message Codex… <kbd>↵</kbd></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature-section" id="features">
+        <div class="section-heading">
+          <p class="eyebrow">ONE DESKTOP. THE REAL ENGINE.</p>
+          <h2>Everything you need to steer parallel work.</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <span class="feature-number">01</span>
+            <h3>Herdr stays in charge</h3>
+            <p>Workspaces, PTYs, agents, layouts, and persistence remain owned by the upstream engine.</p>
+          </article>
+          <article class="feature-card blue">
+            <span class="feature-number">02</span>
+            <h3>Chat and terminal</h3>
+            <p>Use a polished conversation view, then drop into the real terminal without losing continuity.</p>
+          </article>
+          <article class="feature-card green">
+            <span class="feature-number">03</span>
+            <h3>Worktree control</h3>
+            <p>Create, open, focus, and safely remove linked worktrees from the same workspace.</p>
+          </article>
+          <article class="feature-card yellow">
+            <span class="feature-number">04</span>
+            <h3>Agent-aware commands</h3>
+            <p>Discover the slash commands supported by Codex, Claude Code, and Pi right in the composer.</p>
+          </article>
+          <article class="feature-card">
+            <span class="feature-number">05</span>
+            <h3>Live session awareness</h3>
+            <p>See readiness, focus, activity, connection health, and pane output as Herdr reports them.</p>
+          </article>
+          <article class="feature-card blue">
+            <span class="feature-number">06</span>
+            <h3>Secure by default</h3>
+            <p>A sandboxed renderer, narrow IPC, denied permissions, and signed releases keep the boundary tight.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="install-section" id="install">
+        <div>
+          <p class="eyebrow">READY IN THREE STEPS</p>
+          <h2>Bring your existing Herdr setup.</h2>
+        </div>
+        <ol class="steps">
+          <li><b>Install Herdr</b><span>Use the current stable Herdr CLI and start its local server.</span></li>
+          <li><b>Download the app</b><span>Choose the notarized DMG for Apple Silicon or Intel.</span></li>
+          <li><b>Start the herd</b><span>Herdr Desktop discovers the engine and opens your live workspace.</span></li>
+        </ol>
+        <a
+          class="button primary install-button"
+          href="https://github.com/marcelormendes/herdr-desktop/releases/latest"
+        >Get Herdr Desktop</a>
+      </section>
+    </main>
+
+    <footer>
+      <span>Herdr Desktop is an independent client for Herdr.</span>
+      <a href="https://github.com/herdrdev/herdr">Herdr engine</a>
+      <a href="https://github.com/marcelormendes/herdr-desktop">Source</a>
+    </footer>
+  </body>
+</html>

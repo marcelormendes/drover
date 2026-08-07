@@ -13,6 +13,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -29,6 +30,11 @@ import {
   stripEchoedPrompt,
   type ThinkingLines,
 } from '@/renderer/chat/reply-format';
+import {
+  filterSlashCommands,
+  type SlashCommand,
+  slashCommandsForAgent,
+} from '@/renderer/chat/slash-commands';
 import { detectTerminalMenu, menuSelectionKeys } from '@/renderer/chat/terminal-menu';
 import {
   advancePaneOutput,
@@ -612,7 +618,67 @@ export function ChatPanel({
     updateSession,
   ]);
 
-  const commandDraft = Boolean(onSendInput) && draft.trimStart().startsWith('/');
+  const [slashMenuSelectedIndex, setSlashMenuSelectedIndex] = useState(0);
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+  const [slashMenuLocked, setSlashMenuLocked] = useState(false);
+  const slashMenuId = useId();
+  const lastSelectedDraftRef = useRef('');
+  const previousDraftRef = useRef(draft);
+  const slashMenuListRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Mirrors the CLIs' own command menus: open while the draft is a bare
+  // slash command (no argument yet), filter by what is typed after the
+  // slash, and close once a space starts an argument.
+  const commandMenu = useMemo(() => {
+    if (!onSendInput || slashMenuLocked || slashMenuDismissed) {
+      return null;
+    }
+    const trimmed = draft.trimStart();
+    if (!trimmed.startsWith('/') || trimmed.includes(' ')) {
+      return null;
+    }
+    const options = filterSlashCommands(slashCommandsForAgent(pane.agent ?? ''), trimmed.slice(1));
+    const selectedIndex = Math.min(slashMenuSelectedIndex, Math.max(0, options.length - 1));
+    return { options, selectedIndex };
+  }, [draft, onSendInput, pane.agent, slashMenuDismissed, slashMenuLocked, slashMenuSelectedIndex]);
+  const selectedSlashMenuIndex = commandMenu?.selectedIndex;
+
+  useEffect(() => {
+    if (selectedSlashMenuIndex === undefined) {
+      return;
+    }
+    slashMenuListRef.current
+      ?.querySelectorAll<HTMLElement>('[role="option"]')
+      .item(selectedSlashMenuIndex)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [selectedSlashMenuIndex]);
+
+  // Fresh keystrokes reset navigation and dismissal; a selection locks the
+  // menu shut until the draft changes again.
+  useEffect(() => {
+    const previous = previousDraftRef.current;
+    previousDraftRef.current = draft;
+    if (draft === previous) {
+      return;
+    }
+    setSlashMenuSelectedIndex(0);
+    if (draft !== lastSelectedDraftRef.current) {
+      setSlashMenuLocked(false);
+      setSlashMenuDismissed(false);
+    }
+  }, [draft]);
+
+  const selectSlashCommand = (command: SlashCommand) => {
+    const selectedDraft = `/${command.name}${command.takesArgument ? ' ' : ''}`;
+    updateSession((current) => ({
+      ...current,
+      draft: selectedDraft,
+    }));
+    lastSelectedDraftRef.current = selectedDraft;
+    setSlashMenuLocked(true);
+    textareaRef.current?.focus();
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -912,11 +978,6 @@ export function ChatPanel({
         onDrop={handleDrop}
         onSubmit={submit}
       >
-        {commandDraft ? (
-          <p aria-live="polite" className="mx-auto mb-2 max-w-6xl font-mono text-[11px] text-main">
-            Slash command — runs in the {agentName} CLI, exactly like typing in the terminal
-          </p>
-        ) : null}
         {attachmentNotice ? (
           <p aria-live="polite" className="mx-auto mb-2 max-w-6xl text-xs opacity-75">
             {attachmentNotice}
@@ -953,39 +1014,115 @@ export function ChatPanel({
             ))}
           </div>
         ) : null}
-        <div className="mx-auto flex max-w-6xl items-end gap-2">
-          <Textarea
-            aria-label={`Message ${agentName}`}
-            className="min-h-12 resize-none bg-background shadow-none"
-            disabled={sending}
-            onChange={(event) => {
-              const text = event.target.value;
-              updateSession((current) => ({ ...current, draft: text }));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
+        <div className="relative mx-auto w-full max-w-6xl">
+          {commandMenu ? (
+            <div
+              aria-label="Slash commands"
+              className="absolute bottom-full left-0 right-0 mb-2 max-h-64 overflow-y-auto rounded-base border-2 border-border bg-background shadow-shadow"
+              id={slashMenuId}
+              ref={slashMenuListRef}
+              role="listbox"
+            >
+              {commandMenu.options.length === 0 ? (
+                <p className="px-3 py-2 font-mono text-[11px] opacity-60">No matching commands</p>
+              ) : (
+                commandMenu.options.map((command, index) => (
+                  <button
+                    aria-selected={index === commandMenu.selectedIndex}
+                    className={cn(
+                      'flex w-full items-baseline gap-2 px-3 py-1.5 text-left font-mono text-xs',
+                      index === commandMenu.selectedIndex && 'bg-secondary-background',
+                    )}
+                    id={`${slashMenuId}-${command.name}`}
+                    key={command.name}
+                    onClick={() => selectSlashCommand(command)}
+                    role="option"
+                    type="button"
+                  >
+                    <span className="shrink-0 text-main">/{command.name}</span>
+                    <span className="min-w-0 truncate text-[11px] opacity-50">
+                      {command.description}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+          <div className="flex items-end gap-2">
+            <Textarea
+              aria-activedescendant={
+                commandMenu?.options.length
+                  ? `${slashMenuId}-${commandMenu.options[commandMenu.selectedIndex].name}`
+                  : undefined
               }
-            }}
-            onPaste={handlePaste}
-            placeholder={`Message ${agentName}…`}
-            rows={2}
-            value={draft}
-          />
-          <Button
-            aria-label="Send message"
-            className="size-12 shrink-0"
-            disabled={sending || (!draft.trim() && attachments.length === 0)}
-            size="icon"
-            type="submit"
-          >
-            {sending ? (
-              <LoaderCircle aria-hidden="true" className="animate-spin" />
-            ) : (
-              <Send aria-hidden="true" />
-            )}
-          </Button>
+              aria-autocomplete="list"
+              aria-controls={commandMenu ? slashMenuId : undefined}
+              aria-expanded={Boolean(commandMenu)}
+              aria-haspopup="listbox"
+              aria-label={`Message ${agentName}`}
+              className="min-h-12 resize-none bg-background shadow-none"
+              disabled={sending}
+              onChange={(event) => {
+                const text = event.target.value;
+                updateSession((current) => ({ ...current, draft: text }));
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) {
+                  return;
+                }
+                if (commandMenu) {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    setSlashMenuSelectedIndex((index) =>
+                      Math.min(index + 1, commandMenu.options.length - 1),
+                    );
+                    return;
+                  }
+                  if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    setSlashMenuSelectedIndex((index) => Math.max(index - 1, 0));
+                    return;
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setSlashMenuDismissed(true);
+                    return;
+                  }
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    if (commandMenu.options.length > 0) {
+                      selectSlashCommand(commandMenu.options[commandMenu.selectedIndex]);
+                    } else {
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                    return;
+                  }
+                }
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              onPaste={handlePaste}
+              placeholder={`Message ${agentName}…`}
+              ref={textareaRef}
+              rows={2}
+              value={draft}
+            />
+            <Button
+              aria-label="Send message"
+              className="size-12 shrink-0"
+              disabled={sending || (!draft.trim() && attachments.length === 0)}
+              size="icon"
+              type="submit"
+            >
+              {sending ? (
+                <LoaderCircle aria-hidden="true" className="animate-spin" />
+              ) : (
+                <Send aria-hidden="true" />
+              )}
+            </Button>
+          </div>
         </div>
         <p className="mx-auto mt-2 max-w-6xl truncate font-mono text-[10px] opacity-50">
           Sent through Herdr · Terminal stays available
