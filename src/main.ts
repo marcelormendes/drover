@@ -1,6 +1,6 @@
-import { constants } from 'node:fs';
+import { accessSync, constants } from 'node:fs';
 import { access } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
@@ -9,6 +9,7 @@ import { APP_NAME, configureApplicationBranding } from '@/main/app-branding';
 import { applicationMenuTemplate } from '@/main/application-menu';
 import { stageChatImages } from '@/main/chat-images';
 import { DesktopPreferencesStore } from '@/main/desktop-preferences';
+import { resolveHerdrBinary } from '@/main/herdr/binary-locator';
 import { HerdrBinaryPreference } from '@/main/herdr/binary-preference';
 import { HerdrEngine, NodeHerdrCommandRunner, NodeHerdrServerLauncher } from '@/main/herdr/engine';
 import { HerdrEventSubscription } from '@/main/herdr/event-subscription';
@@ -31,7 +32,25 @@ import type { EngineBootstrap } from '@/shared/herdr';
 import { IPC_CHANNELS } from '@/shared/ipc';
 import { parseDesktopPreferences } from '@/shared/preferences';
 
-let herdrBinary = process.env.HERDR_DESKTOP_BIN || 'herdr';
+function defaultHerdrBinary(): string {
+  return (
+    resolveHerdrBinary({
+      envBinary: process.env.HERDR_DESKTOP_BIN,
+      home: homedir(),
+      pathEntries: (process.env.PATH ?? '').split(':'),
+      canExecute: (file) => {
+        try {
+          accessSync(file, constants.X_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    }) ?? 'herdr'
+  );
+}
+
+let herdrBinary = defaultHerdrBinary();
 let engine = createEngine(herdrBinary);
 let binaryPreference: HerdrBinaryPreference | null = null;
 let desktopPreferences: DesktopPreferencesStore | null = null;
@@ -180,7 +199,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.resetBinary, async (event) => {
     assertTrustedSender(event.senderFrame?.url);
     await binaryPreference?.clear();
-    configureHerdrBinary(process.env.HERDR_DESKTOP_BIN || 'herdr');
+    configureHerdrBinary(defaultHerdrBinary());
     return trackConnectedSession(await engine.bootstrap());
   });
 
