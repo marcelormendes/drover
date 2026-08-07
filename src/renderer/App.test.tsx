@@ -1211,4 +1211,57 @@ describe('App', () => {
       vi.useRealTimers();
     }
   });
+
+  it('refreshes during a nonstop event stream without overlapping bootstraps', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    const { unmount } = render(<App />);
+    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    const initialCalls = vi.mocked(window.herdr.bootstrap).mock.calls.length;
+    let resolveRefresh: ((value: EngineBootstrap) => void) | undefined;
+    vi.mocked(window.herdr.bootstrap)
+      .mockImplementationOnce(
+        () =>
+          new Promise<EngineBootstrap>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      )
+      .mockResolvedValue(connected);
+    vi.useFakeTimers();
+
+    const streamEvents = async (count: number) => {
+      for (let index = 0; index < count; index += 1) {
+        act(() => {
+          sessionEvent?.({ event: 'pane_focused', data: { pane_id: 'w1:p1' } });
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+      }
+    };
+
+    try {
+      await streamEvents(12);
+      expect(window.herdr.bootstrap).toHaveBeenCalledTimes(initialCalls + 1);
+
+      await streamEvents(12);
+      expect(window.herdr.bootstrap).toHaveBeenCalledTimes(initialCalls + 1);
+
+      await act(async () => {
+        resolveRefresh?.(connected);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(window.herdr.bootstrap).toHaveBeenCalledTimes(initialCalls + 2);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
 });

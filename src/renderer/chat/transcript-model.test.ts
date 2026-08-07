@@ -454,6 +454,36 @@ describe('extractPaneResponse collapse handling', () => {
       ),
     );
   });
+
+  it('keeps streaming when the rolled window extends the previous final line', () => {
+    const prompt = 'Find why the desktop chat stops updating.';
+    const previous = [
+      'The first diagnostic pass found a busy event stream.',
+      '',
+      'Let me measure the inter-event gaps before changing anything.',
+      '',
+      'The subscription',
+    ].join('\n');
+    const rolledFrame = [
+      'Let me measure the inter-event gaps before changing anything.',
+      '',
+      'The subscription itself is still healthy.',
+      '',
+      'The pane output continued after the prompt rolled away.',
+    ].join('\n');
+
+    expect(extractPaneResponse('Ready', rolledFrame, prompt, previous, false)).toBe(
+      [
+        'The first diagnostic pass found a busy event stream.',
+        '',
+        'Let me measure the inter-event gaps before changing anything.',
+        '',
+        'The subscription itself is still healthy.',
+        '',
+        'The pane output continued after the prompt rolled away.',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('extractPaneResponse shrink handling', () => {

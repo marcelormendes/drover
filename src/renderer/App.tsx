@@ -1946,31 +1946,49 @@ function AppContent() {
     const EVENT_REFRESH_MIN_INTERVAL_MS = 1_000;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     let scheduled = false;
+    let refreshing = false;
+    let refreshQueued = false;
+    let disposed = false;
     // The mount-time load() just ran; count it so the first event-driven
     // refresh respects the minimum interval too.
     let lastRefreshAt = Date.now();
+
     const refresh = async () => {
       scheduled = false;
-      const wait = EVENT_REFRESH_MIN_INTERVAL_MS - (Date.now() - lastRefreshAt);
-      if (wait > 0) {
-        scheduled = true;
-        refreshTimer = setTimeout(() => void refresh(), wait);
+      if (refreshing) {
+        refreshQueued = true;
         return;
       }
+      refreshing = true;
       lastRefreshAt = Date.now();
-      await load(true);
-      if (scheduled) {
-        // Events arrived while the refresh was in flight; run once more.
-        scheduled = false;
-        refreshTimer = setTimeout(() => void refresh(), 0);
+      try {
+        await load(true);
+      } finally {
+        refreshing = false;
+        if (!disposed && refreshQueued) {
+          refreshQueued = false;
+          scheduleRefresh();
+        }
       }
     };
+
     const scheduleRefresh = () => {
+      if (refreshing) {
+        refreshQueued = true;
+        return;
+      }
       if (scheduled) {
         return;
       }
       scheduled = true;
-      refreshTimer = setTimeout(() => void refresh(), EVENT_REFRESH_SETTLE_MS);
+      const minimumIntervalRemaining = Math.max(
+        0,
+        EVENT_REFRESH_MIN_INTERVAL_MS - (Date.now() - lastRefreshAt),
+      );
+      refreshTimer = setTimeout(
+        () => void refresh(),
+        Math.max(EVENT_REFRESH_SETTLE_MS, minimumIntervalRemaining),
+      );
     };
     const unsubscribe = window.herdr.onSessionEvent((event) => {
       if (event.event === 'desktop.connection_state') {
@@ -1988,6 +2006,7 @@ function AppContent() {
       scheduleRefresh();
     });
     return () => {
+      disposed = true;
       clearTimeout(refreshTimer);
       unsubscribe();
     };

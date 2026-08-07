@@ -103,8 +103,13 @@ function mergeRolledResponse(previousResponse: string, response: string): string
 
   let bestOverlap = 0;
   let bestResponseEnd = -1;
+  let bestExtendedSuffix = '';
   for (let responseEnd = 0; responseEnd < responseLines.length; responseEnd += 1) {
-    if (responseLines[responseEnd] !== previousLastLine) {
+    const responseLine = responseLines[responseEnd];
+    const extendedSuffix = responseLine?.startsWith(previousLastLine)
+      ? responseLine.slice(previousLastLine.length)
+      : undefined;
+    if (extendedSuffix === undefined) {
       continue;
     }
     let overlap = 1;
@@ -118,6 +123,7 @@ function mergeRolledResponse(previousResponse: string, response: string): string
     if (overlap > bestOverlap) {
       bestOverlap = overlap;
       bestResponseEnd = responseEnd;
+      bestExtendedSuffix = extendedSuffix;
     }
   }
 
@@ -130,9 +136,9 @@ function mergeRolledResponse(previousResponse: string, response: string): string
   }
   const newLines = responseLines.slice(bestResponseEnd + 1);
   if (newLines.every((line) => !line.trim())) {
-    return previousResponse;
+    return `${previousResponse}${bestExtendedSuffix}`;
   }
-  return [previousResponse, ...newLines].join('\n').trim();
+  return [`${previousResponse}${bestExtendedSuffix}`, ...newLines].join('\n').trim();
 }
 
 function trimTerminalFooter(text: string): string {
