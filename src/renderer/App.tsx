@@ -1752,14 +1752,20 @@ function AppContent() {
     Extract<EngineBootstrap, { state: 'connected' }>['snapshot']['agents']
   >([]);
 
-  const load = useCallback(async () => {
-    setBusy(true);
+  const load = useCallback(async (quiet = false) => {
+    // Background refreshes (driven by the session event stream) must not
+    // flash the toolbar's busy state; only user-initiated reloads do.
+    if (!quiet) {
+      setBusy(true);
+    }
     try {
       const next = await window.herdr.bootstrap();
       setResult(next);
       setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
     } finally {
-      setBusy(false);
+      if (!quiet) {
+        setBusy(false);
+      }
     }
   }, []);
 
@@ -1931,7 +1937,41 @@ function AppContent() {
   }, [loadManifests]);
 
   useEffect(() => {
+    // The engine streams a constant trickle of events (focus changes, layout
+    // updates, transient agent tabs). Re-bootstrapping per event spawns CLI
+    // processes and flashes the toolbar, so coalesce: refresh once the stream
+    // has settled for a beat, never more often than the minimum interval, and
+    // never overlap in-flight refreshes.
+    const EVENT_REFRESH_SETTLE_MS = 400;
+    const EVENT_REFRESH_MIN_INTERVAL_MS = 1_000;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let scheduled = false;
+    // The mount-time load() just ran; count it so the first event-driven
+    // refresh respects the minimum interval too.
+    let lastRefreshAt = Date.now();
+    const refresh = async () => {
+      scheduled = false;
+      const wait = EVENT_REFRESH_MIN_INTERVAL_MS - (Date.now() - lastRefreshAt);
+      if (wait > 0) {
+        scheduled = true;
+        refreshTimer = setTimeout(() => void refresh(), wait);
+        return;
+      }
+      lastRefreshAt = Date.now();
+      await load(true);
+      if (scheduled) {
+        // Events arrived while the refresh was in flight; run once more.
+        scheduled = false;
+        refreshTimer = setTimeout(() => void refresh(), 0);
+      }
+    };
+    const scheduleRefresh = () => {
+      if (scheduled) {
+        return;
+      }
+      scheduled = true;
+      refreshTimer = setTimeout(() => void refresh(), EVENT_REFRESH_SETTLE_MS);
+    };
     const unsubscribe = window.herdr.onSessionEvent((event) => {
       if (event.event === 'desktop.connection_state') {
         const state = event.data.state;
@@ -1945,8 +1985,7 @@ function AppContent() {
         }
         return;
       }
-      clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => void load(), 120);
+      scheduleRefresh();
     });
     return () => {
       clearTimeout(refreshTimer);

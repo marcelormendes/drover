@@ -1156,4 +1156,59 @@ describe('App', () => {
     expect(screen.getByText('Engine reconnecting')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
   });
+
+  it('coalesces background refreshes while session events stream', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    vi.useFakeTimers();
+    try {
+      render(<App />);
+      await act(async () => {});
+      await act(async () => {});
+      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
+
+      // A burst of events must not re-bootstrap per event: nothing runs while
+      // the stream is still settling.
+      act(() => {
+        sessionEvent?.({ event: 'layout.updated', data: {} });
+        sessionEvent?.({ event: 'pane.focused', data: {} });
+        sessionEvent?.({ event: 'tab.focused', data: {} });
+      });
+      act(() => {
+        vi.advanceTimersByTime(120);
+      });
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial);
+
+      // Once the stream settles, exactly one refresh runs, and the minimum
+      // interval (measured from the last refresh) is respected.
+      act(() => {
+        vi.advanceTimersByTime(900);
+      });
+      await act(async () => {});
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+
+      // A second burst cannot refresh again before the interval elapses.
+      act(() => {
+        sessionEvent?.({ event: 'layout.updated', data: {} });
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      await act(async () => {});
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      await act(async () => {});
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
