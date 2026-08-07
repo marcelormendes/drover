@@ -96,49 +96,68 @@ function removedLines(previousResponse: string, response: string): string[] {
 function mergeRolledResponse(previousResponse: string, response: string): string | undefined {
   const previousLines = previousResponse.split('\n');
   const responseLines = response.split('\n');
-  const previousLastLine = previousLines.at(-1);
-  if (previousLastLine === undefined) {
+  if (previousLines.length === 0) {
     return undefined;
   }
 
+  // Agent TUIs redraw their spinner and may rewrite the line immediately
+  // above it. Search a small tail window instead of requiring the final line
+  // to survive verbatim. A fast model can otherwise advance a rolled pane
+  // between reads while the changing `Working...` line makes the substantial
+  // overlap just before it invisible.
+  const previousTailStart = Math.max(0, previousLines.length - 32);
   let bestOverlap = 0;
+  let bestPreviousEnd = -1;
   let bestResponseEnd = -1;
-  let bestExtendedSuffix = '';
-  for (let responseEnd = 0; responseEnd < responseLines.length; responseEnd += 1) {
-    const responseLine = responseLines[responseEnd];
-    const extendedSuffix = responseLine?.startsWith(previousLastLine)
-      ? responseLine.slice(previousLastLine.length)
-      : undefined;
-    if (extendedSuffix === undefined) {
-      continue;
-    }
-    let overlap = 1;
-    while (
-      overlap < previousLines.length &&
-      overlap <= responseEnd &&
-      previousLines[previousLines.length - overlap - 1] === responseLines[responseEnd - overlap]
-    ) {
-      overlap += 1;
-    }
-    if (overlap > bestOverlap) {
-      bestOverlap = overlap;
-      bestResponseEnd = responseEnd;
-      bestExtendedSuffix = extendedSuffix;
+  for (
+    let previousEnd = previousLines.length - 1;
+    previousEnd >= previousTailStart;
+    previousEnd -= 1
+  ) {
+    const previousLine = previousLines[previousEnd];
+    for (let responseEnd = 0; responseEnd < responseLines.length; responseEnd += 1) {
+      if (!responseLines[responseEnd]?.startsWith(previousLine)) {
+        continue;
+      }
+      let overlap = 1;
+      while (
+        overlap <= previousEnd &&
+        overlap <= responseEnd &&
+        previousLines[previousEnd - overlap] === responseLines[responseEnd - overlap]
+      ) {
+        overlap += 1;
+      }
+      const meaningfulOverlap = previousLines
+        .slice(previousEnd - overlap + 1, previousEnd + 1)
+        .filter((line) => line.trim());
+      const rewritesTrailingLines = previousEnd < previousLines.length - 1;
+      if (
+        (rewritesTrailingLines && meaningfulOverlap.length < 2) ||
+        (meaningfulOverlap.length < 2 && meaningfulOverlap.join('\n').length < 40)
+      ) {
+        continue;
+      }
+      if (
+        previousEnd > bestPreviousEnd ||
+        (previousEnd === bestPreviousEnd && overlap > bestOverlap)
+      ) {
+        bestOverlap = overlap;
+        bestPreviousEnd = previousEnd;
+        bestResponseEnd = responseEnd;
+      }
     }
   }
 
-  if (bestOverlap === 0) {
+  if (bestPreviousEnd === -1) {
     return undefined;
   }
-  const meaningfulOverlap = previousLines.slice(-bestOverlap).filter((line) => line.trim());
-  if (meaningfulOverlap.length < 2 && meaningfulOverlap.join('\n').length < 40) {
-    return undefined;
-  }
-  const newLines = responseLines.slice(bestResponseEnd + 1);
-  if (newLines.every((line) => !line.trim())) {
-    return `${previousResponse}${bestExtendedSuffix}`;
-  }
-  return [`${previousResponse}${bestExtendedSuffix}`, ...newLines].join('\n').trim();
+  return [
+    ...previousLines.slice(0, bestPreviousEnd),
+    responseLines[bestResponseEnd],
+    ...responseLines.slice(bestResponseEnd + 1),
+  ]
+    .join('\n')
+    .trim();
 }
 
 function trimTerminalFooter(text: string): string {

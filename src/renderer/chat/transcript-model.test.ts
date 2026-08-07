@@ -536,6 +536,61 @@ describe('extractPaneResponse collapse handling', () => {
       ].join('\n'),
     );
   });
+
+  it('keeps streaming when a volatile working line follows the overlap', () => {
+    const prompt = 'Stream a long diagnostic response.';
+    const previous = [
+      '1. The response begins here.',
+      '2. This stable line remains in the rolled frame.',
+      '3. The current line is still being written.',
+      '⠸ Working...',
+    ].join('\n');
+    const rolledFrame = [
+      '2. This stable line remains in the rolled frame.',
+      '3. The current line is still being written.',
+      '4. DeepSeek produced this before the next pane read.',
+      '5. Chat must continue instead of freezing.',
+      '⠴ Working...',
+    ].join('\n');
+
+    expect(extractPaneResponse('Ready', rolledFrame, prompt, previous, false)).toBe(
+      [
+        '1. The response begins here.',
+        '2. This stable line remains in the rolled frame.',
+        '3. The current line is still being written.',
+        '4. DeepSeek produced this before the next pane read.',
+        '5. Chat must continue instead of freezing.',
+        '⠴ Working...',
+      ].join('\n'),
+    );
+  });
+
+  it('preserves the complete turn when a fast response rolls past 500 lines', () => {
+    const numberedLine = (number: number) => `${number}. Diagnostic line ${number}.`;
+    const previous = [
+      ...Array.from({ length: 480 }, (_, index) => numberedLine(index + 1)),
+      '⠸ Working...',
+    ].join('\n');
+    const rolledFrame = [
+      ...Array.from({ length: 491 }, (_, index) => numberedLine(index + 210)),
+      'HERDR_CHAT_STREAM_DONE',
+    ].join('\n');
+
+    expect(
+      extractPaneResponse(
+        'Ready',
+        rolledFrame,
+        'Stream exactly 700 numbered lines.',
+        previous,
+        true,
+      ),
+    ).toBe(
+      [
+        ...Array.from({ length: 700 }, (_, index) => numberedLine(index + 1)),
+        'HERDR_CHAT_STREAM_DONE',
+      ].join('\n'),
+    );
+  });
 });
 
 describe('extractPaneResponse shrink handling', () => {
