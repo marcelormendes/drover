@@ -26,7 +26,7 @@ import {
   parseTerminalResize,
   parseTerminalScroll,
 } from '@/main/ipc-validation';
-import { RemoteEngineTunnel } from '@/main/remote-engine';
+import { createWillQuitHandler, RemoteEngineTunnel } from '@/main/remote-engine';
 import { isAllowedExternalUrl, isTrustedRendererUrl } from '@/main/security';
 import { ConnectedSessionTracker } from '@/main/session-tracker';
 import { DEMO_BOOTSTRAP, demoQueryResult } from '@/shared/demo';
@@ -165,8 +165,12 @@ async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngi
   if (generation !== remoteApplyGeneration) {
     return remoteTunnel.status;
   }
-  if (status.state === 'off') {
-    delete process.env.HERDR_SOCKET_PATH;
+  if (status.state !== 'starting') {
+    // off: tunnel stopped cleanly. error: setup/validation/bridge failure —
+    // never let a healthy local bootstrap overwrite it with "connected".
+    if (status.state === 'off') {
+      delete process.env.HERDR_SOCKET_PATH;
+    }
     publishEngineChanged();
     return status;
   }
@@ -455,13 +459,18 @@ if (!started) {
   });
 }
 
-app.on('will-quit', (event) => {
-  // Never leave the SSH process or the bridge socket behind after quitting.
-  // stop() is queued behind any in-flight apply, so a quit during bridge
-  // creation cannot be raced by a late tunnel install.
-  event.preventDefault();
-  void remoteTunnel.stop().finally(() => app.quit());
-});
+// Never leave the SSH process or the bridge socket behind after quitting.
+// stop() is queued behind any in-flight apply, so a quit during bridge
+// creation cannot be raced by a late tunnel install; the coordinator lets
+// the retried quit proceed once cleanup finished.
+app.on(
+  'will-quit',
+  createWillQuitHandler({
+    isActive: () => remoteTunnel.active,
+    stop: () => remoteTunnel.stop(),
+    quit: () => app.quit(),
+  }),
+);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
