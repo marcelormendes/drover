@@ -93,6 +93,48 @@ function removedLines(previousResponse: string, response: string): string[] {
     .filter((line) => line && !kept.has(line));
 }
 
+function mergeRolledResponse(previousResponse: string, response: string): string | undefined {
+  const previousLines = previousResponse.split('\n');
+  const responseLines = response.split('\n');
+  const previousLastLine = previousLines.at(-1);
+  if (previousLastLine === undefined) {
+    return undefined;
+  }
+
+  let bestOverlap = 0;
+  let bestResponseEnd = -1;
+  for (let responseEnd = 0; responseEnd < responseLines.length; responseEnd += 1) {
+    if (responseLines[responseEnd] !== previousLastLine) {
+      continue;
+    }
+    let overlap = 1;
+    while (
+      overlap < previousLines.length &&
+      overlap <= responseEnd &&
+      previousLines[previousLines.length - overlap - 1] === responseLines[responseEnd - overlap]
+    ) {
+      overlap += 1;
+    }
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      bestResponseEnd = responseEnd;
+    }
+  }
+
+  if (bestOverlap === 0) {
+    return undefined;
+  }
+  const meaningfulOverlap = previousLines.slice(-bestOverlap).filter((line) => line.trim());
+  if (meaningfulOverlap.length < 2 && meaningfulOverlap.join('\n').length < 40) {
+    return undefined;
+  }
+  const newLines = responseLines.slice(bestResponseEnd + 1);
+  if (newLines.every((line) => !line.trim())) {
+    return previousResponse;
+  }
+  return [previousResponse, ...newLines].join('\n').trim();
+}
+
 function trimTerminalFooter(text: string): string {
   const lines = text.split('\n');
   const footerIndex = lines.findIndex((line, index) => {
@@ -167,6 +209,10 @@ export function extractPaneResponse(
   }
   if (previousResponse.includes(response)) {
     return previousResponse;
+  }
+  const mergedResponse = mergeRolledResponse(previousResponse, response);
+  if (mergedResponse) {
+    return mergedResponse;
   }
   if (turnComplete && response) {
     return response;

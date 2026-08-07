@@ -397,6 +397,36 @@ describe('extractPaneResponse collapse handling', () => {
       completedFrame,
     );
   });
+
+  it('keeps streaming an active response after the prompt rolls out of the pane window', () => {
+    const prompt = 'Send this to the reviewer and report the result.';
+    const previous = [
+      'The reviewer is still checking the changes.',
+      '',
+      '$ sleep 120 && herdr agent read w2:p5',
+      '',
+      'Elapsed 64.8s',
+      '',
+      'Working...',
+    ].join('\n');
+    const rolledFrame = [
+      '$ sleep 120 && herdr agent read w2:p5',
+      '',
+      'Elapsed 64.8s',
+      '',
+      'Working...',
+      '',
+      'The reviewer found two edge cases.',
+      '',
+      'Checking one final scenario.',
+    ].join('\n');
+
+    expect(extractPaneResponse('Ready', rolledFrame, prompt, previous, false)).toBe(
+      [previous, '', 'The reviewer found two edge cases.', '', 'Checking one final scenario.'].join(
+        '\n',
+      ),
+    );
+  });
 });
 
 describe('extractPaneResponse shrink handling', () => {
