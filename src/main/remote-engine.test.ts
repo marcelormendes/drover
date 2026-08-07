@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createWillQuitHandler,
   RemoteEngineTunnel,
+  shouldApplyLocalFallback,
   type TunnelChildProcess,
 } from '@/main/remote-engine';
 
@@ -304,8 +305,7 @@ describe('createWillQuitHandler', () => {
         }),
     );
     const quit = vi.fn();
-    const isActive = vi.fn(() => true);
-    const handler = createWillQuitHandler({ isActive, quit, stop });
+    const handler = createWillQuitHandler({ quit, stop });
     const event = { preventDefault: vi.fn() };
 
     handler(event);
@@ -319,7 +319,6 @@ describe('createWillQuitHandler', () => {
     expect(event2.preventDefault).toHaveBeenCalledTimes(1);
     expect(stop).toHaveBeenCalledTimes(1);
 
-    isActive.mockReturnValue(false);
     resolveStop();
     await vi.waitFor(() => expect(quit).toHaveBeenCalledTimes(1));
 
@@ -327,5 +326,26 @@ describe('createWillQuitHandler', () => {
     const event3 = { preventDefault: vi.fn() };
     handler(event3);
     expect(event3.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('still quits when the cleanup rejects', async () => {
+    const stop = vi.fn(async () => {
+      throw new Error('stop failed');
+    });
+    const quit = vi.fn();
+    const handler = createWillQuitHandler({ quit, stop });
+    handler({ preventDefault: vi.fn() });
+    await vi.waitFor(() => expect(quit).toHaveBeenCalledTimes(1));
+    const retry = { preventDefault: vi.fn() };
+    handler(retry);
+    expect(retry.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe('shouldApplyLocalFallback', () => {
+  it('only commits the local fallback when no newer apply superseded it', () => {
+    expect(shouldApplyLocalFallback(1, 1, false)).toBe(true);
+    expect(shouldApplyLocalFallback(1, 2, false)).toBe(false);
+    expect(shouldApplyLocalFallback(1, 1, true)).toBe(false);
   });
 });

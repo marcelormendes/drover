@@ -26,7 +26,11 @@ import {
   parseTerminalResize,
   parseTerminalScroll,
 } from '@/main/ipc-validation';
-import { createWillQuitHandler, RemoteEngineTunnel } from '@/main/remote-engine';
+import {
+  createWillQuitHandler,
+  RemoteEngineTunnel,
+  shouldApplyLocalFallback,
+} from '@/main/remote-engine';
 import { isAllowedExternalUrl, isTrustedRendererUrl } from '@/main/security';
 import { ConnectedSessionTracker } from '@/main/session-tracker';
 import { DEMO_BOOTSTRAP, demoQueryResult } from '@/shared/demo';
@@ -62,10 +66,16 @@ const remoteTunnel = new RemoteEngineTunnel({
     publishSessionEvent({ event: 'desktop.remote_engine_state', data: { status } });
     if (status.state === 'error') {
       // Async tunnel failures must not leave the app pointing at a dead
-      // bridge: clear the override and fall back to the local engine.
+      // bridge: clear the override and fall back to the local engine. The
+      // fallback is generation-guarded so a slow local bootstrap can never
+      // move the session back to local after a newer remote apply won.
+      const generation = remoteApplyGeneration;
       delete process.env.HERDR_SOCKET_PATH;
       void engine.bootstrap().then((result) => {
-        if (result.state === 'connected') {
+        if (
+          result.state === 'connected' &&
+          shouldApplyLocalFallback(generation, remoteApplyGeneration, remoteTunnel.active)
+        ) {
           trackConnectedSession(result);
         }
       });
@@ -466,7 +476,6 @@ if (!started) {
 app.on(
   'will-quit',
   createWillQuitHandler({
-    isActive: () => remoteTunnel.active,
     stop: () => remoteTunnel.stop(),
     quit: () => app.quit(),
   }),
