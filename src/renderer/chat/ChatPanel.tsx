@@ -217,7 +217,9 @@ function AgentReply({
           <pre
             className={cn(
               'min-w-0 max-w-full overflow-x-auto rounded-base border-2 border-border bg-secondary-background p-3 font-mono text-xs leading-5',
-              muted ? 'text-thinking-foreground' : 'text-response-foreground',
+              muted || segment.tone === 'thinking'
+                ? 'text-thinking-foreground'
+                : 'text-response-foreground',
             )}
             key={segment.key}
           >

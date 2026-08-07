@@ -339,8 +339,9 @@ describe('applyPaneRead thinking capture', () => {
       submissionId: 'turn-1',
       text: 'Fix the layout.',
     });
+    const text = 'The user wants the layout fixed.\nA second thought.\nHere is the fix.';
     const streamed = applyPaneRead(submitted, {
-      text: 'The user wants the layout fixed.\nHere is the fix.',
+      text,
       revision: 42,
       status: 'working',
       thinkingLines: ['The user wants the layout fixed.', 'A second thought.'],
@@ -350,7 +351,7 @@ describe('applyPaneRead thinking capture', () => {
     // answer foreground in its final frame; a strict subset must not shrink
     // the captured set or that paragraph would render white.
     const completed = applyPaneRead(streamed, {
-      text: 'The user wants the layout fixed.\nHere is the fix.',
+      text,
       revision: 43,
       status: 'idle',
       thinkingLines: ['The user wants the layout fixed.'],
@@ -358,6 +359,57 @@ describe('applyPaneRead thinking capture', () => {
 
     expect(completed.messages[1]).toMatchObject({
       thinkingLines: ['The user wants the layout fixed.', 'A second thought.'],
+    });
+  });
+
+  it('merges fresh captures with existing lines that survive in the text', () => {
+    const submitted = submitUserMessage(createChatTranscript(), {
+      submissionId: 'turn-1',
+      text: 'Fix the layout.',
+    });
+    const streamed = applyPaneRead(submitted, {
+      text: 'First draft.\nSecond draft.\nThird draft.',
+      revision: 42,
+      status: 'working',
+      thinkingLines: ['First draft.', 'Second draft.'],
+    });
+
+    // The next frame still mutes First draft., now also mutes Third draft.,
+    // and lost Second draft.'s markers. Second draft. survives in the text,
+    // so its captured occurrence must not be dropped.
+    const next = applyPaneRead(streamed, {
+      text: 'First draft.\nSecond draft.\nThird draft.',
+      revision: 43,
+      status: 'working',
+      thinkingLines: ['First draft.', 'Third draft.'],
+    });
+
+    expect(next.messages[1]).toMatchObject({
+      thinkingLines: ['First draft.', 'Second draft.', 'Third draft.'],
+    });
+  });
+
+  it('preserves the higher occurrence count for repeated lines', () => {
+    const submitted = submitUserMessage(createChatTranscript(), {
+      submissionId: 'turn-1',
+      text: 'Fix the layout.',
+    });
+    const streamed = applyPaneRead(submitted, {
+      text: 'Same\nSame',
+      revision: 42,
+      status: 'working',
+      thinkingLines: ['Same'],
+    });
+
+    const next = applyPaneRead(streamed, {
+      text: 'Same\nSame',
+      revision: 43,
+      status: 'working',
+      thinkingLines: ['Same', 'Same'],
+    });
+
+    expect(next.messages[1]).toMatchObject({
+      thinkingLines: ['Same', 'Same'],
     });
   });
 });

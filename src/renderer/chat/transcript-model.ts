@@ -286,16 +286,40 @@ export function applyPaneRead(
         ? currentResponse.thinkingLines
         : undefined;
   if (
-    thinkingLines &&
+    paneRead.thinkingLines &&
+    paneRead.thinkingLines.length > 0 &&
     currentResponse?.role === 'assistant' &&
     currentResponse.thinkingLines &&
     currentResponse.thinkingLines.length > 0
   ) {
-    const existing = new Set(currentResponse.thinkingLines);
-    const addsNewLines = thinkingLines.some((line) => !existing.has(line));
-    if (!addsNewLines) {
-      thinkingLines = [...currentResponse.thinkingLines];
+    // Reconcile by occurrence instead of wholesale replace: keep captured
+    // lines that still survive in the read text even when the frame lost
+    // their markers, and take the higher count when a line repeats.
+    const textLines = new Set(
+      paneRead.text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== ''),
+    );
+    const countLines = (lines: readonly string[]): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const line of lines) {
+        counts.set(line, (counts.get(line) ?? 0) + 1);
+      }
+      return counts;
+    };
+    const merged = new Map<string, number>();
+    for (const [line, count] of countLines(currentResponse.thinkingLines)) {
+      if (textLines.has(line)) {
+        merged.set(line, Math.max(merged.get(line) ?? 0, count));
+      }
     }
+    // Fresh muted lines come from the current frame itself, so they are in
+    // the text by construction; keep their counts as-is.
+    for (const [line, count] of countLines(paneRead.thinkingLines ?? [])) {
+      merged.set(line, Math.max(merged.get(line) ?? 0, count));
+    }
+    thinkingLines = [...merged].flatMap(([line, count]) => Array<string>(count).fill(line));
   }
   const response: ChatAssistantMessage = {
     id: responseId,

@@ -1752,16 +1752,29 @@ function AppContent() {
     Extract<EngineBootstrap, { state: 'connected' }>['snapshot']['agents']
   >([]);
 
+  const loadGeneration = useRef(0);
+  const streamStateRevision = useRef(0);
   const load = useCallback(async (quiet = false) => {
     // Background refreshes (driven by the session event stream) must not
     // flash the toolbar's busy state; only user-initiated reloads do.
     if (!quiet) {
       setBusy(true);
     }
+    const generation = ++loadGeneration.current;
+    const streamRevision = streamStateRevision.current;
     try {
       const next = await window.herdr.bootstrap();
+      // A newer load (user refresh, command, server start) superseded this
+      // one; drop its stale result entirely.
+      if (generation !== loadGeneration.current) {
+        return;
+      }
       setResult(next);
-      setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
+      // The event stream is authoritative for the connection pill once it
+      // has reported a state after this load started.
+      if (streamStateRevision.current === streamRevision) {
+        setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
+      }
     } finally {
       if (!quiet) {
         setBusy(false);
@@ -1940,55 +1953,71 @@ function AppContent() {
     // The engine streams a constant trickle of events (focus changes, layout
     // updates, transient agent tabs). Re-bootstrapping per event spawns CLI
     // processes and flashes the toolbar, so coalesce: refresh once the stream
-    // has settled for a beat, never more often than the minimum interval, and
-    // never overlap in-flight refreshes.
+    // has settled for a beat, never overlap an in-flight refresh, and never
+    // let the snapshot age past the freshness bound even under a flood.
     const EVENT_REFRESH_SETTLE_MS = 400;
-    const EVENT_REFRESH_MIN_INTERVAL_MS = 1_000;
+    const EVENT_REFRESH_MAX_WAIT_MS = 1_000;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    let scheduled = false;
-    let refreshing = false;
-    let refreshQueued = false;
+    let inFlight = false;
+    let dirty = false;
     let disposed = false;
-    // The mount-time load() just ran; count it so the first event-driven
-    // refresh respects the minimum interval too.
-    let lastRefreshAt = Date.now();
-
-    const refresh = async () => {
-      scheduled = false;
-      if (refreshing) {
-        refreshQueued = true;
-        return;
-      }
-      refreshing = true;
-      lastRefreshAt = Date.now();
-      try {
-        await load(true);
-      } finally {
-        refreshing = false;
-        if (!disposed && refreshQueued) {
-          refreshQueued = false;
-          scheduleRefresh();
-        }
+    // The mount-time load() just ran; count it as the last completion.
+    let lastCompletedAt = Date.now();
+    const clearTimer = () => {
+      if (refreshTimer !== undefined) {
+        clearTimeout(refreshTimer);
+        refreshTimer = undefined;
       }
     };
-
+    const runRefresh = async () => {
+      clearTimer();
+      if (disposed) {
+        return;
+      }
+      if (inFlight) {
+        // Events arrived while a bootstrap is still running; drain them
+        // exactly once when it finishes instead of overlapping.
+        dirty = true;
+        return;
+      }
+      inFlight = true;
+      try {
+        const sinceLast = Date.now() - lastCompletedAt;
+        if (sinceLast < EVENT_REFRESH_SETTLE_MS) {
+          refreshTimer = setTimeout(() => void runRefresh(), EVENT_REFRESH_SETTLE_MS - sinceLast);
+          return;
+        }
+        await load(true);
+      } finally {
+        inFlight = false;
+        lastCompletedAt = Date.now();
+      }
+      if (disposed) {
+        return;
+      }
+      if (dirty) {
+        dirty = false;
+        refreshTimer = setTimeout(() => void runRefresh(), 0);
+      }
+    };
     const scheduleRefresh = () => {
-      if (refreshing) {
-        refreshQueued = true;
+      if (disposed) {
         return;
       }
-      if (scheduled) {
+      clearTimer();
+      if (inFlight) {
+        dirty = true;
         return;
       }
-      scheduled = true;
-      const minimumIntervalRemaining = Math.max(
+      // Trailing settle: events reset the timer to 400ms of quiet. Under a
+      // continuous flood that would starve the snapshot, so cap the wait at
+      // the freshness bound.
+      const sinceLast = Date.now() - lastCompletedAt;
+      const wait = Math.max(
         0,
-        EVENT_REFRESH_MIN_INTERVAL_MS - (Date.now() - lastRefreshAt),
+        Math.min(EVENT_REFRESH_SETTLE_MS, EVENT_REFRESH_MAX_WAIT_MS - sinceLast),
       );
-      refreshTimer = setTimeout(
-        () => void refresh(),
-        Math.max(EVENT_REFRESH_SETTLE_MS, minimumIntervalRemaining),
-      );
+      refreshTimer = setTimeout(() => void runRefresh(), wait);
     };
     const unsubscribe = window.herdr.onSessionEvent((event) => {
       if (event.event === 'desktop.connection_state') {
@@ -1999,6 +2028,7 @@ function AppContent() {
           state === 'reconnecting' ||
           state === 'disconnected'
         ) {
+          streamStateRevision.current += 1;
           setConnectionState(state);
         }
         return;
@@ -2007,7 +2037,8 @@ function AppContent() {
     });
     return () => {
       disposed = true;
-      clearTimeout(refreshTimer);
+      dirty = false;
+      clearTimer();
       unsubscribe();
     };
   }, [load]);

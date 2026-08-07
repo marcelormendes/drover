@@ -1185,15 +1185,15 @@ describe('App', () => {
       });
       expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial);
 
-      // Once the stream settles, exactly one refresh runs, and the minimum
-      // interval (measured from the last refresh) is respected.
+      // Once the stream settles, exactly one quiet refresh runs.
       act(() => {
         vi.advanceTimersByTime(900);
       });
       await act(async () => {});
       expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
 
-      // A second burst cannot refresh again before the interval elapses.
+      // A second burst settles the trailing timer anew and refreshes 400ms
+      // after the last event of that burst.
       act(() => {
         sessionEvent?.({ event: 'layout.updated', data: {} });
       });
@@ -1201,12 +1201,80 @@ describe('App', () => {
         vi.advanceTimersByTime(500);
       });
       await act(async () => {});
-      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 2);
+
+      // With the stream quiet, no further refresh happens on its own.
       act(() => {
-        vi.advanceTimersByTime(600);
+        vi.advanceTimersByTime(1_000);
       });
       await act(async () => {});
       expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never runs overlapping background refreshes', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    const resolvers: Array<() => void> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    vi.mocked(window.herdr.bootstrap).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          resolvers.push(() => {
+            inFlight -= 1;
+            resolve(connected);
+          });
+        }),
+    );
+    vi.useFakeTimers();
+    try {
+      render(<App />);
+      await act(async () => {
+        resolvers.shift()?.();
+      });
+      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
+
+      // Start a background refresh and keep events flowing while it hangs.
+      act(() => {
+        sessionEvent?.({ event: 'layout.updated', data: {} });
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+      act(() => {
+        sessionEvent?.({ event: 'pane.focused', data: {} });
+        sessionEvent?.({ event: 'tab.focused', data: {} });
+      });
+      // Even after the settle window passes, no second bootstrap may start
+      // while the first is still in flight.
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+      expect(maxInFlight).toBe(1);
+
+      // Completing the in-flight refresh drains the queued events exactly once.
+      await act(async () => {
+        resolvers.shift()?.();
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      await act(async () => {});
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 2);
+      expect(maxInFlight).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -1261,6 +1329,160 @@ describe('App', () => {
       expect(window.herdr.bootstrap).toHaveBeenCalledTimes(initialCalls + 2);
     } finally {
       unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let a stale bootstrap completion clobber newer stream state', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    const resolvers: Array<() => void> = [];
+    vi.mocked(window.herdr.bootstrap).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(() => resolve(connected));
+        }),
+    );
+    vi.useFakeTimers();
+    try {
+      render(<App />);
+      await act(async () => {
+        resolvers.shift()?.();
+      });
+      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+
+      // A background refresh starts, then the stream reports reconnecting
+      // while that refresh is still in flight.
+      act(() => {
+        sessionEvent?.({ event: 'layout.updated', data: {} });
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      act(() => {
+        sessionEvent?.({ event: 'desktop.connection_state', data: { state: 'reconnecting' } });
+      });
+      expect(screen.getByText('Engine reconnecting')).toBeInTheDocument();
+
+      // The stale bootstrap completion must not flip the pill back.
+      await act(async () => {
+        resolvers.shift()?.();
+      });
+      expect(screen.getByText('Engine reconnecting')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves no orphan refreshes after unmounting mid-refresh', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    const resolvers: Array<() => void> = [];
+    vi.mocked(window.herdr.bootstrap).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(() => resolve(connected));
+        }),
+    );
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(<App />);
+      await act(async () => {
+        resolvers.shift()?.();
+      });
+      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
+
+      // A refresh starts, events keep coming, and the component unmounts
+      // while the bootstrap is still hanging.
+      act(() => {
+        sessionEvent?.({ event: 'layout.updated', data: {} });
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+      unmount();
+      await act(async () => {
+        resolvers.shift()?.();
+      });
+      // No trailing refresh may be scheduled after unmount.
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refreshes once when the stream resynchronizes', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    vi.useFakeTimers();
+    try {
+      render(<App />);
+      await act(async () => {});
+      await act(async () => {});
+      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
+
+      act(() => {
+        sessionEvent?.({ event: 'desktop.resynchronized', data: {} });
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      await act(async () => {});
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds refresh rate under a continuous event flood', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    vi.useFakeTimers();
+    try {
+      render(<App />);
+      await act(async () => {});
+      await act(async () => {});
+      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
+
+      // Events never stop: the trailing settle timer keeps resetting, and the
+      // refresh may fire at most once per freshness window (1s).
+      for (let step = 0; step < 26; step += 1) {
+        act(() => {
+          sessionEvent?.({ event: 'layout.updated', data: {} });
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(200);
+        });
+      }
+      expect(vi.mocked(window.herdr.bootstrap).mock.calls.length).toBe(initial + 5);
+    } finally {
       vi.useRealTimers();
     }
   });
