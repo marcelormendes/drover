@@ -66,6 +66,23 @@ describe('detectTerminalMenu', () => {
     ).toBeNull();
   });
 
+  it('does not treat a wrapped Claude prompt as a menu after the empty composer appears', () => {
+    expect(
+      detectTerminalMenu(
+        [
+          '❯ Test the MG3.0 changes with /Users/marcelorm/Downloads/Rentvine Test Report with',
+          '  utility columns 8_3_26 (1).csv',
+          '',
+          '⏺ Searching for patterns…',
+          '',
+          '────────────────',
+          '❯ ',
+          '────────────────',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+  });
+
   it('plans relative arrow presses toward the clicked option', () => {
     const menu = { options: ['a', 'b', 'c', 'd'], selectedIndex: 1 };
 
