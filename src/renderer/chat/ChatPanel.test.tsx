@@ -256,7 +256,7 @@ describe('ChatPanel', () => {
     );
 
     await user.type(screen.getByRole('textbox', { name: 'Message Codex' }), '/compact');
-    expect(screen.getByText(/Slash command/)).toBeInTheDocument();
+    expect(await screen.findByRole('listbox', { name: 'Slash commands' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Send message' }));
 
     expect(onSendInput).toHaveBeenCalledWith('w1:p1', { text: '/compact', keys: ['enter'] });
@@ -1063,5 +1063,121 @@ describe('ChatPanel thinking color at completion', () => {
     expect(thinking.closest('p')).toHaveClass('text-thinking-foreground');
     const answer = screen.getByText(/- Here is the fix/);
     expect(answer.closest('p')).toHaveClass('text-response-foreground');
+  });
+  describe('slash command menu', () => {
+    const renderChat = (onSendInput = vi.fn(async () => undefined)) => {
+      const readOutput = vi.fn(async () => ({
+        type: 'pane-output' as const,
+        paneId: 'w1:p1',
+        workspaceId: 'w1',
+        tabId: 'w1:t1',
+        text: 'ready',
+        revision: 1,
+        truncated: false,
+      }));
+      render(
+        <ChatPanel
+          onPrompt={vi.fn(async () => undefined)}
+          onSendInput={onSendInput}
+          pane={pane}
+          readOutput={readOutput}
+        />,
+      );
+      return { onSendInput };
+    };
+    const textbox = () =>
+      screen.getByRole('textbox', { name: 'Message Codex' }) as HTMLTextAreaElement;
+    const options = () => screen.queryAllByRole('option');
+
+    it('opens a command list when the draft starts with a slash', async () => {
+      const user = userEvent.setup();
+      renderChat();
+
+      await user.type(textbox(), '/');
+      const listbox = await screen.findByRole('listbox', { name: 'Slash commands' });
+      expect(listbox).toBeInTheDocument();
+      expect(options().length).toBeGreaterThan(8);
+      expect(screen.getByRole('option', { name: /clear/ })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /compact/ })).toBeInTheDocument();
+    });
+
+    it('filters commands as the user types after the slash', async () => {
+      const user = userEvent.setup();
+      renderChat();
+
+      await user.type(textbox(), '/co');
+      const names = options().map((option) => option.textContent ?? '');
+      expect(names.some((name) => name.includes('/compact'))).toBe(true);
+      expect(names.some((name) => name.includes('/cost'))).toBe(true);
+      expect(names.some((name) => name.includes('/model'))).toBe(false);
+    });
+
+    it('navigates with arrow keys and fills the draft on Enter', async () => {
+      const user = userEvent.setup();
+      const { onSendInput } = renderChat();
+
+      await user.type(textbox(), '/');
+      await screen.findByRole('listbox');
+      await user.keyboard('{ArrowDown}');
+      const selected = options().find((option) => option.getAttribute('aria-selected') === 'true');
+      expect(selected?.textContent).toContain('/clear');
+      await user.keyboard('{Enter}');
+
+      expect(textbox().value).toBe('/clear');
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      expect(onSendInput).not.toHaveBeenCalled();
+    });
+
+    it('leaves a trailing space when the command takes an argument', async () => {
+      const user = userEvent.setup();
+      renderChat();
+
+      await user.type(textbox(), '/mo');
+      await screen.findByRole('listbox');
+      await user.keyboard('{Enter}');
+
+      expect(textbox().value).toBe('/model ');
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    });
+
+    it('closes on Escape and reopens when the draft changes', async () => {
+      const user = userEvent.setup();
+      renderChat();
+
+      await user.type(textbox(), '/');
+      await screen.findByRole('listbox');
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+      await user.keyboard('c');
+      expect(screen.getByRole('listbox', { name: 'Slash commands' })).toBeInTheDocument();
+    });
+
+    it('selects a command by clicking and keeps focus in the composer', async () => {
+      const user = userEvent.setup();
+      renderChat();
+
+      await user.type(textbox(), '/');
+      await screen.findByRole('listbox');
+      await user.click(screen.getByRole('option', { name: /compact/ }));
+
+      expect(textbox().value).toBe('/compact');
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      expect(textbox()).toHaveFocus();
+    });
+
+    it('closes when the user types an argument and sends the raw command on Enter', async () => {
+      const user = userEvent.setup();
+      const { onSendInput } = renderChat();
+
+      await user.type(textbox(), '/model gpt-5.6');
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      await user.keyboard('{Enter}');
+
+      expect(onSendInput).toHaveBeenCalledWith('w1:p1', {
+        text: '/model gpt-5.6',
+        keys: ['enter'],
+      });
+    });
   });
 });
