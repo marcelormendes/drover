@@ -1,7 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
-import { RemoteEngineTunnel, type TunnelChildProcess } from '@/main/remote-engine';
+import {
+  createWillQuitHandler,
+  RemoteEngineTunnel,
+  type TunnelChildProcess,
+} from '@/main/remote-engine';
 
 type FakeChild = TunnelChildProcess & {
   emit: (event: string, ...args: unknown[]) => boolean;
@@ -261,5 +265,67 @@ describe('RemoteEngineTunnel shutdown and pending work', () => {
     await tunnel.stop();
     expect(sshSpawn.mock.calls.length).toBe(spawns);
     expect(tunnel.status.state).toBe('off');
+  });
+});
+
+describe('RemoteEngineTunnel status guards', () => {
+  it('never transitions a setup error into connected', async () => {
+    const { tunnel } = setup();
+    await tunnel.apply({ enabled: true, host: '   ', port: 22025 });
+    expect(tunnel.status.state).toBe('error');
+    const status = tunnel.setConnected(true);
+    expect(status.state).toBe('error');
+    expect(tunnel.active).toBe(false);
+  });
+
+  it('never transitions a bridge failure into connected', async () => {
+    const sshSpawn = vi.fn<SpawnCall>(() => fakeChild());
+    const tunnel = new RemoteEngineTunnel({
+      createBridge: vi.fn(async () => {
+        throw new Error('EADDRINUSE');
+      }),
+      socketPath: '/tmp/herdr-test-remote.sock',
+      sshSpawn,
+    });
+    await tunnel.apply(target);
+    expect(tunnel.status.state).toBe('error');
+    expect(tunnel.setConnected(true).state).toBe('error');
+    expect(sshSpawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('createWillQuitHandler', () => {
+  it('prevents the first quit, stops the tunnel, and quits after cleanup', async () => {
+    let resolveStop!: () => void;
+    const stop = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStop = resolve;
+        }),
+    );
+    const quit = vi.fn();
+    const isActive = vi.fn(() => true);
+    const handler = createWillQuitHandler({ isActive, quit, stop });
+    const event = { preventDefault: vi.fn() };
+
+    handler(event);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(quit).not.toHaveBeenCalled();
+
+    // A second quit while cleanup is still running is deduplicated.
+    const event2 = { preventDefault: vi.fn() };
+    handler(event2);
+    expect(event2.preventDefault).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    isActive.mockReturnValue(false);
+    resolveStop();
+    await vi.waitFor(() => expect(quit).toHaveBeenCalledTimes(1));
+
+    // Once cleanup finished, the retried quit proceeds without prevention.
+    const event3 = { preventDefault: vi.fn() };
+    handler(event3);
+    expect(event3.preventDefault).not.toHaveBeenCalled();
   });
 });

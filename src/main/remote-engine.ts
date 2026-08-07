@@ -68,6 +68,30 @@ export function createTcpBridge(socketPath: string, port: number): Promise<Tunne
 }
 
 /**
+ * Electron `will-quit` coordinator: prevents the first quit while the tunnel
+ * is stopped (deduplicating repeats during cleanup) and lets the retried
+ * quit proceed once cleanup finished, so the app can always finish quitting.
+ */
+export function createWillQuitHandler(options: {
+  isActive: () => boolean;
+  stop: () => Promise<void>;
+  quit: () => void;
+}): (event: { preventDefault(): void }) => void {
+  let quitting = false;
+  return (event) => {
+    if (quitting && !options.isActive()) {
+      return; // cleanup finished; allow the retried quit
+    }
+    event.preventDefault();
+    if (quitting) {
+      return; // still cleaning up; dedupe this repeat
+    }
+    quitting = true;
+    void options.stop().finally(() => options.quit());
+  };
+}
+
+/**
  * Owns the SSH tunnel + local socket bridge that make a herdr server on
  * another machine look like the local engine. When active, the caller sets
  * HERDR_SOCKET_PATH to `status.socketPath` so spawned herdr binaries and the
@@ -169,7 +193,10 @@ export class RemoteEngineTunnel {
 
   /** Confirms reachability after the caller bootstraps through the tunnel. */
   setConnected(connected: boolean, message?: string): RemoteEngineStatus {
-    if (connected && this.current.state === 'off') {
+    // Connected may only be committed from an in-flight (starting) tunnel;
+    // a setup/validation error must never be overwritten by a healthy local
+    // bootstrap.
+    if (connected && this.current.state !== 'starting') {
       return this.current;
     }
     return this.setStatus(connected ? 'connected' : 'error', message);
