@@ -68,7 +68,7 @@ export function ShortcutHelpDialog({ open, onOpenChange }: ShortcutHelpDialogPro
       }}
       open={open}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
@@ -93,7 +93,7 @@ export function ShortcutHelpDialog({ open, onOpenChange }: ShortcutHelpDialogPro
                   {shortcut.category}
                 </Badge>
                 <span className="min-w-0 flex-1 text-sm font-heading">{shortcut.action}</span>
-                <kbd className="rounded-base border-2 border-border bg-main px-2 py-1 font-mono text-xs shadow-[2px_2px_0_0_var(--border)]">
+                <kbd className="rounded-base border-2 border-border bg-main px-2 py-1 font-mono text-xs text-main-foreground shadow-[2px_2px_0_0_var(--border)]">
                   {shortcut.keys}
                 </kbd>
               </div>

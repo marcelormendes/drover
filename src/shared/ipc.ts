@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
   startServer: 'herdr:start-server',
   command: 'herdr:command',
   query: 'herdr:query',
+  stageChatImages: 'desktop:stage-chat-images',
   readPreferences: 'desktop:preferences-read',
   writePreferences: 'desktop:preferences-write',
   chooseBinary: 'herdr:choose-binary',

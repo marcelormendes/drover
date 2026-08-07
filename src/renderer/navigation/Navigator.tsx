@@ -151,7 +151,9 @@ export function Navigator({ snapshot, onFocusWorkspace, onFocusTab, onFocusPane 
                   aria-selected={selected}
                   className={cn(
                     'flex w-full items-center gap-3 rounded-base border-2 border-border bg-background p-3 text-left transition-all focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2',
-                    selected ? 'translate-x-0 translate-y-0 bg-main shadow-none' : 'shadow-shadow',
+                    selected
+                      ? 'translate-x-0 translate-y-0 bg-main text-main-foreground shadow-none'
+                      : 'shadow-shadow',
                     row.depth === 1 && 'ml-4 w-[calc(100%-1rem)]',
                     row.depth === 2 && 'ml-8 w-[calc(100%-2rem)]',
                   )}

@@ -302,6 +302,15 @@ function commandRequest(command: HerdrCommand): {
           ...(command.name === undefined ? {} : { name: command.name }),
         },
       };
+    case 'send-pane-input':
+      return {
+        method: 'pane.send_input',
+        params: {
+          pane_id: command.paneId,
+          ...(command.text === undefined ? {} : { text: command.text }),
+          ...(command.keys === undefined ? {} : { keys: command.keys }),
+        },
+      };
     case 'prompt-agent':
       return {
         method: 'agent.prompt',
@@ -472,7 +481,9 @@ function queryRequest(query: HerdrQuery): {
           pane_id: query.paneId,
           source: 'recent_unwrapped',
           format: 'text',
-          strip_ansi: true,
+          // ANSI colors carry the thinking-vs-answer distinction agent CLIs
+          // render; the chat surface keeps them and strips locally.
+          strip_ansi: !query.ansi,
           ...(query.lines === undefined ? {} : { lines: query.lines }),
         },
       };

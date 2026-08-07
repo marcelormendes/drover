@@ -1,10 +1,12 @@
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
 import started from 'electron-squirrel-startup';
 import { applicationMenuTemplate } from '@/main/application-menu';
+import { stageChatImages } from '@/main/chat-images';
 import { DesktopPreferencesStore } from '@/main/desktop-preferences';
 import { HerdrBinaryPreference } from '@/main/herdr/binary-preference';
 import { HerdrEngine, NodeHerdrCommandRunner, NodeHerdrServerLauncher } from '@/main/herdr/engine';
@@ -12,6 +14,7 @@ import { HerdrEventSubscription } from '@/main/herdr/event-subscription';
 import { TerminalController } from '@/main/herdr/terminal-controller';
 import { TerminalControllerPool } from '@/main/herdr/terminal-controller-pool';
 import {
+  parseChatImageDrafts,
   parseHerdrCommand,
   parseHerdrQuery,
   parsePaneId,
@@ -124,6 +127,14 @@ function registerIpcHandlers(): void {
       return demoQueryResult(parseHerdrQuery(candidate));
     }
     return engine.query(parseHerdrQuery(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.stageChatImages, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    return stageChatImages(
+      path.join(tmpdir(), 'herdr-desktop-chat-images'),
+      parseChatImageDrafts(candidate),
+    );
   });
 
   ipcMain.handle(IPC_CHANNELS.readPreferences, async (event) => {

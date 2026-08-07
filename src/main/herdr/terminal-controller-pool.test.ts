@@ -12,6 +12,7 @@ function fakeController(): TerminalSessionController {
     resize: vi.fn(),
     scroll: vi.fn(),
     close: vi.fn(),
+    kill: vi.fn(),
   };
 }
 
@@ -60,6 +61,45 @@ describe('TerminalControllerPool', () => {
     expect(first.close).toHaveBeenCalledOnce();
     expect(second.close).not.toHaveBeenCalled();
     expect(second.input).toHaveBeenCalledWith('still live');
+  });
+
+  it('kills a replaced controller instead of releasing it so the new takeover survives', () => {
+    const first = fakeController();
+    const second = fakeController();
+    const controllers = [first, second];
+    const pool = new TerminalControllerPool(() => controllers.shift() as TerminalSessionController);
+
+    pool.open({ paneId: 'w1:p1', cols: 80, rows: 24 }, vi.fn());
+    pool.open({ paneId: 'w1:p1', cols: 80, rows: 24 }, vi.fn());
+    pool.input('w1:p1', 'to the replacement');
+
+    expect(first.kill).toHaveBeenCalledOnce();
+    expect(first.close).not.toHaveBeenCalled();
+    expect(second.open).toHaveBeenCalledOnce();
+    expect(second.input).toHaveBeenCalledWith('to the replacement');
+  });
+
+  it('defers a reopen until the closing predecessor has fully exited', async () => {
+    let finishExit: () => void = () => {};
+    const first = fakeController();
+    vi.mocked(first.close).mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishExit = resolve;
+      }),
+    );
+    const second = fakeController();
+    const controllers = [first, second];
+    const pool = new TerminalControllerPool(() => controllers.shift() as TerminalSessionController);
+
+    pool.open({ paneId: 'w1:p1', cols: 80, rows: 24 }, vi.fn());
+    pool.close('w1:p1');
+    pool.open({ paneId: 'w1:p1', cols: 80, rows: 24 }, vi.fn());
+
+    expect(second.open).not.toHaveBeenCalled();
+    finishExit();
+    await vi.waitFor(() => {
+      expect(second.open).toHaveBeenCalledOnce();
+    });
   });
 
   it('releases all controllers when the desktop app exits', () => {

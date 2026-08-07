@@ -1,12 +1,31 @@
 import { ChevronDown, ChevronRight, FolderGit2, FolderOpen, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
+import { statusDotClass } from '@/renderer/status';
 import { buildSpaceGroups } from '@/renderer/worktrees/worktree-model';
-import type { WorkspaceInfo } from '@/shared/herdr';
+import type { AgentStatus, WorkspaceInfo } from '@/shared/herdr';
+
+function workspaceRowClass(focused?: boolean): string {
+  return cn(
+    'flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-base px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+    focused && 'bg-accent-surface text-main',
+  );
+}
+
+const ghostActionClass =
+  'inline-flex items-center gap-1 rounded-base px-2 py-1 font-mono text-[11px] opacity-60 hover:bg-accent-surface hover:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
+
+function WorkspaceStatus({ status }: { status: AgentStatus }) {
+  return (
+    <>
+      <span aria-hidden="true" className={statusDotClass(status)} />
+      <span className="sr-only">{status}</span>
+    </>
+  );
+}
 
 export interface WorktreeSpacesProps {
   workspaces: readonly WorkspaceInfo[];
@@ -84,23 +103,20 @@ export function WorktreeSpaces({
   };
 
   return (
-    <nav aria-label="Spaces" className="space-y-3">
+    <nav aria-label="Spaces" className="space-y-0.5">
       {groups.map((group) => {
         if (group.kind === 'workspace') {
           return (
-            <Button
+            <button
               aria-label={`Focus workspace ${group.workspace.label}`}
-              className="h-auto min-w-0 w-full justify-start overflow-hidden px-3 py-3 shadow-none! hover:translate-x-0! hover:translate-y-0!"
+              className={workspaceRowClass(group.workspace.focused)}
               key={group.id}
               onClick={() => onFocusWorkspace(group.workspace.workspace_id)}
-              variant={group.workspace.focused ? 'noShadow' : 'neutral'}
+              type="button"
             >
-              <FolderOpen aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate text-left font-heading">
-                {group.workspace.label}
-              </span>
-              <Badge variant="neutral">{group.workspace.agent_status}</Badge>
-            </Button>
+              <WorkspaceStatus status={group.workspace.agent_status} />
+              <span className="min-w-0 flex-1 truncate">{group.workspace.label}</span>
+            </button>
           );
         }
 
@@ -108,93 +124,89 @@ export function WorktreeSpaces({
         const rootWorkspace = group.rootWorkspace;
         const source = rootWorkspace || group.linkedWorkspaces[0];
         return (
-          <Card className="gap-0 bg-secondary-background py-0" key={group.id}>
-            <div className="flex items-center gap-2 border-b-2 border-border p-2">
-              <Button
+          <div className="space-y-0.5" key={group.id}>
+            <div className="flex min-w-0 items-center gap-1 overflow-hidden rounded-base px-1 py-1">
+              <button
                 aria-expanded={isExpanded}
                 aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${group.repoName} worktrees`}
-                className="size-8"
+                className="grid size-6 shrink-0 place-items-center rounded-base opacity-60 hover:bg-accent-surface hover:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => toggle(group.repoKey)}
-                size="icon"
                 type="button"
-                variant="neutral"
               >
                 {isExpanded ? (
-                  <ChevronDown aria-hidden="true" />
+                  <ChevronDown aria-hidden="true" className="size-3.5" />
                 ) : (
-                  <ChevronRight aria-hidden="true" />
+                  <ChevronRight aria-hidden="true" className="size-3.5" />
                 )}
-              </Button>
-              <FolderGit2 aria-hidden="true" className="size-4" />
-              <span className="min-w-0 flex-1 truncate font-heading">{group.repoName}</span>
-              <Badge variant="neutral">{group.linkedWorkspaces.length}</Badge>
+              </button>
+              <FolderGit2 aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
+              <span className="min-w-0 flex-1 truncate text-sm">{group.repoName}</span>
+              <span className="shrink-0 font-mono text-xs opacity-50">
+                {group.linkedWorkspaces.length}
+              </span>
             </div>
             {rootWorkspace ? (
-              <Button
+              <button
                 aria-label={`Focus workspace ${rootWorkspace.label}`}
-                className="m-2 h-auto justify-start px-3 py-2"
+                className={cn(workspaceRowClass(rootWorkspace.focused), 'pl-7')}
                 onClick={() => onFocusWorkspace(rootWorkspace.workspace_id)}
-                variant={rootWorkspace.focused ? 'noShadow' : 'neutral'}
+                type="button"
               >
-                <span className="min-w-0 flex-1 truncate text-left">{rootWorkspace.label}</span>
-                <Badge variant="neutral">root</Badge>
-              </Button>
+                <WorkspaceStatus status={rootWorkspace.agent_status} />
+                <span className="min-w-0 flex-1 truncate">{rootWorkspace.label}</span>
+                <span className="shrink-0 font-mono text-[11px] opacity-50">root</span>
+              </button>
             ) : null}
             {isExpanded ? (
-              <div className="space-y-2 border-t-2 border-border p-2">
+              <>
                 {group.linkedWorkspaces.length === 0 ? (
-                  <p className="px-2 py-3 text-sm opacity-70">No linked worktrees open</p>
+                  <p className="py-1 pl-7 font-mono text-xs opacity-50">No linked worktrees open</p>
                 ) : (
                   group.linkedWorkspaces.map((workspace) => (
-                    <div className="flex items-center gap-2" key={workspace.workspace_id}>
-                      <Button
+                    <div className="group/worktree relative" key={workspace.workspace_id}>
+                      <button
                         aria-label={`Focus workspace ${workspace.label}`}
-                        className="h-auto min-w-0 flex-1 justify-start px-3 py-2"
+                        className={cn(workspaceRowClass(workspace.focused), 'pl-7 pr-8')}
                         onClick={() => onFocusWorkspace(workspace.workspace_id)}
-                        variant={workspace.focused ? 'noShadow' : 'neutral'}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-left">{workspace.label}</span>
-                        <Badge variant="neutral">{workspace.agent_status}</Badge>
-                      </Button>
-                      <Button
-                        aria-label={`Remove worktree ${workspace.label}`}
-                        className="size-9"
-                        onClick={() => onRemoveWorktree(workspace)}
-                        size="icon"
                         type="button"
-                        variant="neutral"
                       >
-                        <Trash2 aria-hidden="true" />
-                      </Button>
+                        <WorkspaceStatus status={workspace.agent_status} />
+                        <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
+                      </button>
+                      <button
+                        aria-label={`Remove worktree ${workspace.label}`}
+                        className="absolute right-1.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-base opacity-0 hover:bg-background focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring group-hover/worktree:opacity-60 group-hover/worktree:hover:opacity-100"
+                        onClick={() => onRemoveWorktree(workspace)}
+                        type="button"
+                      >
+                        <Trash2 aria-hidden="true" className="size-3.5" />
+                      </button>
                     </div>
                   ))
                 )}
-              </div>
+              </>
             ) : null}
             {source ? (
-              <div className="flex gap-2 border-t-2 border-border p-2">
-                <Button
+              <div className="flex items-center gap-1 pl-7">
+                <button
                   aria-label={`Create worktree for ${source.label}`}
-                  className="min-w-0 flex-1"
+                  className={ghostActionClass}
                   onClick={() => onCreateWorktree(source)}
-                  size="sm"
                   type="button"
                 >
-                  <Plus aria-hidden="true" /> Create
-                </Button>
-                <Button
+                  <Plus aria-hidden="true" className="size-3" /> Worktree
+                </button>
+                <button
                   aria-label={`Open worktree for ${source.label}`}
-                  className="min-w-0 flex-1"
+                  className={ghostActionClass}
                   onClick={() => onOpenWorktree(source)}
-                  size="sm"
                   type="button"
-                  variant="neutral"
                 >
-                  <FolderOpen aria-hidden="true" /> Open
-                </Button>
+                  <FolderOpen aria-hidden="true" className="size-3" /> Open
+                </button>
               </div>
             ) : null}
-          </Card>
+          </div>
         );
       })}
     </nav>

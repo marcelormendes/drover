@@ -1,9 +1,12 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const terminalEvents = vi.hoisted(() => ({
   listener: undefined as ((event: unknown) => void) | undefined,
+}));
+const resizeObserver = vi.hoisted(() => ({
+  listener: undefined as ResizeObserverCallback | undefined,
 }));
 const searchAddon = vi.hoisted(() => ({
   findNext: vi.fn(),
@@ -11,6 +14,7 @@ const searchAddon = vi.hoisted(() => ({
   clearDecorations: vi.fn(),
 }));
 const terminalControl = vi.hoisted(() => ({
+  cols: 80,
   customKeyHandler: undefined as ((event: KeyboardEvent) => boolean) | undefined,
   options: undefined as
     | {
@@ -19,6 +23,7 @@ const terminalControl = vi.hoisted(() => ({
     | undefined,
   selection: '',
   selectionListener: undefined as (() => void) | undefined,
+  rows: 24,
   scrollToBottom: vi.fn(),
 }));
 const webLinks = vi.hoisted(() => ({
@@ -52,8 +57,12 @@ vi.mock('@xterm/xterm', () => ({
     constructor(options: { theme?: Record<string, string> }) {
       terminalControl.options = options;
     }
-    cols = 80;
-    rows = 24;
+    get cols() {
+      return terminalControl.cols;
+    }
+    get rows() {
+      return terminalControl.rows;
+    }
     loadAddon() {}
     open() {}
     write() {}
@@ -84,6 +93,17 @@ vi.mock('@xterm/xterm', () => ({
 import { TerminalPanel } from '@/renderer/terminal/TerminalPanel';
 import type { PaneInfo } from '@/shared/herdr';
 
+vi.stubGlobal(
+  'ResizeObserver',
+  class {
+    constructor(listener: ResizeObserverCallback) {
+      resizeObserver.listener = listener;
+    }
+    observe() {}
+    disconnect() {}
+  },
+);
+
 const pane: PaneInfo = {
   pane_id: 'w1:p2',
   terminal_id: 'terminal-2',
@@ -100,9 +120,12 @@ describe('TerminalPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     terminalControl.customKeyHandler = undefined;
+    terminalControl.cols = 80;
     terminalControl.options = undefined;
     terminalControl.selection = '';
     terminalControl.selectionListener = undefined;
+    terminalControl.rows = 24;
+    resizeObserver.listener = undefined;
     webLinks.activate = undefined;
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -122,32 +145,63 @@ describe('TerminalPanel', () => {
     } as unknown as typeof window.herdr;
   });
 
-  it('uses the original blue terminal palette', () => {
+  it('matches the desktop dark theme in the terminal palette', () => {
     render(<TerminalPanel pane={pane} />);
 
     expect(terminalControl.options?.theme).toEqual({
-      background: '#000000',
-      foreground: '#f7f7f7',
-      cursor: '#6e91ff',
-      cursorAccent: '#000000',
-      selectionBackground: '#6e91ff88',
+      background: '#0f0f10',
+      foreground: '#e6e6e6',
+      cursor: '#4d9eff',
+      cursorAccent: '#0f0f10',
+      selectionBackground: '#4d9eff66',
     });
   });
 
-  it('lets the user reconnect a released Herdr terminal controller', async () => {
+  it('waits for usable terminal dimensions before attaching a newly mounted pane', async () => {
+    terminalControl.cols = 0;
+    terminalControl.rows = 0;
+    render(<TerminalPanel pane={{ ...pane, pane_id: 'w2:pB' }} />);
+
+    expect(window.herdr.terminal.open).not.toHaveBeenCalled();
+
+    terminalControl.cols = 120;
+    terminalControl.rows = 36;
+    act(() => resizeObserver.listener?.([], {} as ResizeObserver));
+
+    await waitFor(() =>
+      expect(window.herdr.terminal.open).toHaveBeenCalledWith({
+        paneId: 'w2:pB',
+        cols: 120,
+        rows: 36,
+      }),
+    );
+  });
+
+  it('reattaches automatically after clean closes and offers Reconnect when they persist', async () => {
     const user = userEvent.setup();
     render(<TerminalPanel pane={pane} />);
-
-    act(() => {
-      terminalEvents.listener?.({
-        type: 'terminal.closed',
-        paneId: pane.pane_id,
-        reason: 'Herdr terminal controller exited with code 0.',
+    const emitClosed = () =>
+      act(() => {
+        terminalEvents.listener?.({
+          type: 'terminal.closed',
+          paneId: pane.pane_id,
+          reason: 'Terminal control ended. Another client may have taken over this pane.',
+        });
       });
-    });
-    await user.click(screen.getByRole('button', { name: 'Reconnect w1:p2' }));
 
-    expect(window.herdr.terminal.open).toHaveBeenCalledTimes(2);
+    emitClosed();
+    expect(screen.queryByRole('button', { name: 'Reconnect w1:p2' })).not.toBeInTheDocument();
+    await waitFor(() => expect(window.herdr.terminal.open).toHaveBeenCalledTimes(2), {
+      timeout: 3_000,
+    });
+    emitClosed();
+    await waitFor(() => expect(window.herdr.terminal.open).toHaveBeenCalledTimes(3), {
+      timeout: 3_000,
+    });
+
+    emitClosed();
+    await user.click(await screen.findByRole('button', { name: 'Reconnect w1:p2' }));
+    await waitFor(() => expect(window.herdr.terminal.open).toHaveBeenCalledTimes(4));
   });
 
   it('opens an accessible terminal search bar', async () => {

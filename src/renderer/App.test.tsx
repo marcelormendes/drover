@@ -2,37 +2,54 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/renderer/chat/ChatPanel', () => ({
-  createChatSessionState: () => ({
-    draft: '',
-    transcript: { messages: [], activeTurnId: null, liveResponseId: null },
-  }),
-  ChatPanel: ({
-    pane,
-    onPrompt,
-    onSessionChange,
-    session,
-  }: {
-    pane: { display_agent?: string; pane_id: string };
-    onPrompt: (target: string, text: string) => void;
-    onSessionChange?: (update: (current: { draft: string }) => { draft: string }) => void;
-    session?: { draft: string };
-  }) => (
-    <div data-testid={`chat-${pane.pane_id}`}>
-      Chat with {pane.display_agent}
-      <span>{session?.draft}</span>
-      <button onClick={() => onPrompt(pane.pane_id, 'Ship the chat')} type="button">
-        Test send chat
-      </button>
-      <button
-        onClick={() => onSessionChange?.((current) => ({ ...current, draft: 'Preserved turn' }))}
-        type="button"
-      >
-        Test preserve chat
-      </button>
-    </div>
-  ),
-}));
+vi.mock('@/renderer/chat/ChatPanel', async () => {
+  const { useState } = await import('react');
+  return {
+    createChatSessionState: () => ({
+      draft: '',
+      transcript: { messages: [], activeTurnId: null, liveResponseId: null },
+    }),
+    ChatPanel: ({
+      pane,
+      onPrompt,
+      onSessionChange,
+      session,
+    }: {
+      pane: { display_agent?: string; pane_id: string };
+      onPrompt: (target: string, text: string) => void | Promise<void>;
+      onSessionChange?: (update: (current: { draft: string }) => { draft: string }) => void;
+      session?: { draft: string };
+    }) => {
+      const [promptOutcome, setPromptOutcome] = useState('pending');
+      return (
+        <div data-testid={`chat-${pane.pane_id}`}>
+          Chat with {pane.display_agent}
+          <span>{session?.draft}</span>
+          <button
+            onClick={() => {
+              setPromptOutcome('pending');
+              void Promise.resolve(onPrompt(pane.pane_id, 'Ship the chat'))
+                .then(() => setPromptOutcome('resolved'))
+                .catch(() => setPromptOutcome('rejected'));
+            }}
+            type="button"
+          >
+            Test send chat
+          </button>
+          <span data-testid="prompt-outcome">{promptOutcome}</span>
+          <button
+            onClick={() =>
+              onSessionChange?.((current) => ({ ...current, draft: 'Preserved turn' }))
+            }
+            type="button"
+          >
+            Test preserve chat
+          </button>
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock('@/renderer/terminal/TerminalPanel', () => ({
   TerminalPanel: ({
@@ -67,7 +84,7 @@ vi.mock('@/renderer/terminal/TerminalPanel', () => ({
 }));
 
 import { App } from '@/renderer/App';
-import type { DesktopAction } from '@/shared/desktop-api';
+import type { DesktopAction, HerdrQueryResult } from '@/shared/desktop-api';
 import type { EngineBootstrap, SessionSnapshot } from '@/shared/herdr';
 import { DEFAULT_DESKTOP_PREFERENCES } from '@/shared/preferences';
 
@@ -207,6 +224,7 @@ describe('App', () => {
       startServer: vi.fn(async () => connected),
       command: vi.fn(async () => connected),
       query: vi.fn(async () => ({ type: 'plugin-list' as const, plugins: [] })),
+      stageChatImages: vi.fn(async () => []),
       readPreferences: vi.fn(async () => DEFAULT_DESKTOP_PREFERENCES),
       writePreferences: vi.fn(async (preferences) => preferences),
       chooseHerdrBinary: vi.fn(async () => connected),
@@ -234,17 +252,18 @@ describe('App', () => {
     expect(screen.getAllByText('Desktop UI')).not.toHaveLength(0);
     expect(screen.getByText('Engine connected')).toBeInTheDocument();
 
-    const workspaceHeader = screen.getByText('WORKSPACES').parentElement;
-    const shell = workspaceHeader?.parentElement?.parentElement;
-    expect(shell).toHaveStyle({ '--spaces-width': '280px', '--agents-width': '280px' });
+    const workspaceHeader = screen.getByText('spaces').parentElement;
+    expect(container.querySelector('[data-slot="session-shell"]')).toHaveStyle({
+      '--spaces-width': '280px',
+    });
     expect(workspaceHeader).toHaveClass('gap-2', 'px-3');
+    // Agents live under spaces in one rail, matching the Herdr TUI.
+    const rail = screen.getByText('spaces').closest('aside');
+    expect(screen.getByText('agents').closest('aside')).toBe(rail);
     expect(container.querySelector('[data-slot="app-mark"]')).toHaveClass(
       'shrink-0',
       'shadow-none',
-    );
-    expect(container.querySelector('[data-slot="workspace-mark"]')).toHaveClass(
-      'shrink-0',
-      'shadow-none',
+      'text-main-foreground',
     );
 
     const tabActions = container.querySelector('[data-slot="tab-actions"]');
@@ -259,6 +278,7 @@ describe('App', () => {
 
     expect(await screen.findByTestId('chat-w1:p1')).toBeInTheDocument();
     expect(screen.queryByTestId('terminal-w1:p1')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Chat view' })).toHaveClass('text-main-foreground');
     await user.click(screen.getByRole('button', { name: 'Terminal view' }));
     expect(screen.getByTestId('terminal-w1:p1')).toBeInTheDocument();
     expect(screen.queryByTestId('chat-w1:p1')).not.toBeInTheDocument();
@@ -272,6 +292,29 @@ describe('App', () => {
       target: 'w1:p1',
       text: 'Ship the chat',
     });
+    await waitFor(() => expect(screen.getByTestId('prompt-outcome')).toHaveTextContent('resolved'));
+  });
+
+  it('rejects the chat prompt promise when the engine command fails', async () => {
+    const user = userEvent.setup();
+    const command = vi.mocked(window.herdr.command);
+    command.mockImplementation(async (candidate) => {
+      if (candidate.type === 'prompt-agent') {
+        throw new Error('engine busy');
+      }
+      return connected;
+    });
+    render(<App />);
+    await screen.findByTestId('chat-w1:p1');
+
+    await user.click(screen.getByRole('button', { name: 'Test send chat' }));
+
+    expect(command).toHaveBeenCalledWith({
+      type: 'prompt-agent',
+      target: 'w1:p1',
+      text: 'Ship the chat',
+    });
+    await waitFor(() => expect(screen.getByTestId('prompt-outcome')).toHaveTextContent('rejected'));
   });
 
   it('focuses canonical workspace records through the Herdr engine', async () => {
@@ -317,6 +360,73 @@ describe('App', () => {
       cwd: '/code/new-project',
       label: 'New project',
     });
+  });
+
+  it('creates a worktree workspace from an ordinary active workspace', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'New worktree' }));
+    await user.type(screen.getByLabelText('Branch name'), 'feature/chat-images');
+    await user.click(screen.getByRole('button', { name: 'Create worktree' }));
+
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'create-worktree',
+      workspaceId: 'w1',
+      branch: 'feature/chat-images',
+      path: undefined,
+      label: undefined,
+      focus: true,
+    });
+  });
+
+  it('creates another worktree from the repository root when a linked workspace is active', async () => {
+    window.herdr.bootstrap = vi.fn(async () => ({
+      ...connected,
+      snapshot: {
+        ...snapshot,
+        focused_workspace_id: 'w2',
+        focused_tab_id: 'w2:t1',
+        focused_pane_id: 'w2:p1',
+        workspaces: [
+          {
+            ...snapshot.workspaces[0],
+            focused: false,
+            worktree: {
+              repo_key: 'repo-1',
+              repo_name: 'herdr-desktop',
+              repo_root: '/code/herdr-desktop',
+              checkout_path: '/code/herdr-desktop',
+              is_linked_worktree: false,
+            },
+          },
+          {
+            ...snapshot.workspaces[1],
+            focused: true,
+            worktree: {
+              repo_key: 'repo-1',
+              repo_name: 'herdr-desktop',
+              repo_root: '/code/herdr-desktop',
+              checkout_path: '/worktrees/release-notes',
+              is_linked_worktree: true,
+            },
+          },
+        ],
+      },
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'New worktree' }));
+    await user.type(screen.getByLabelText('Branch name'), 'feature/another-worktree');
+    await user.click(screen.getByRole('button', { name: 'Create worktree' }));
+
+    expect(window.herdr.command).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'create-worktree',
+        workspaceId: 'w1',
+      }),
+    );
   });
 
   it('can create the first workspace without falling back to the terminal', async () => {
@@ -628,6 +738,201 @@ describe('App', () => {
       type: 'disable-plugin',
       pluginId: 'example.review',
     });
+
+    await user.click(screen.getByRole('button', { name: 'Open Review tools pane' }));
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'open-plugin-pane',
+      pluginId: 'example.review',
+      entrypoint: 'dashboard',
+      placement: 'overlay',
+      focus: true,
+    });
+
+    const placement = screen.getByRole('combobox', {
+      name: 'Review tools pane placement',
+    });
+    await user.selectOptions(placement, 'split');
+    await user.click(screen.getByRole('button', { name: 'Open Review tools pane' }));
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'open-plugin-pane',
+      pluginId: 'example.review',
+      entrypoint: 'dashboard',
+      placement: 'split',
+      targetPaneId: 'w1:p1',
+      direction: 'right',
+      focus: true,
+    });
+
+    await user.selectOptions(placement, 'tab');
+    await user.click(screen.getByRole('button', { name: 'Open Review tools pane' }));
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'open-plugin-pane',
+      pluginId: 'example.review',
+      entrypoint: 'dashboard',
+      placement: 'tab',
+      workspaceId: 'w1',
+      focus: true,
+    });
+
+    await user.selectOptions(placement, 'zoomed');
+    await user.click(screen.getByRole('button', { name: 'Open Review tools pane' }));
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'open-plugin-pane',
+      pluginId: 'example.review',
+      entrypoint: 'dashboard',
+      placement: 'zoomed',
+      targetPaneId: 'w1:p1',
+      focus: true,
+    });
+  });
+
+  it('keeps loaded plugin content visible while refreshing the dialog', async () => {
+    let desktopAction: ((action: DesktopAction) => void) | undefined;
+    let refreshing = false;
+    let resolvePluginRefresh: ((value: HerdrQueryResult) => void) | undefined;
+    let resolveActionRefresh: ((value: HerdrQueryResult) => void) | undefined;
+    window.herdr.onDesktopAction = vi.fn((listener) => {
+      desktopAction = listener;
+      return () => undefined;
+    });
+    window.herdr.query = vi.fn((query) => {
+      if (!refreshing) {
+        return Promise.resolve(
+          query.type === 'list-plugin-actions'
+            ? { type: 'plugin-action-list' as const, actions: [] }
+            : {
+                type: 'plugin-list' as const,
+                plugins: [
+                  {
+                    plugin_id: 'example.review',
+                    name: 'Review tools',
+                    version: '1.0.0',
+                    min_herdr_version: '0.8.0',
+                    manifest_path: '/plugins/review/herdr-plugin.toml',
+                    plugin_root: '/plugins/review',
+                    enabled: true,
+                    build: [],
+                    startup: [],
+                    actions: [],
+                    events: [],
+                    panes: [],
+                    link_handlers: [],
+                    source: { kind: 'local' as const },
+                    warnings: [],
+                  },
+                ],
+              },
+        );
+      }
+      if (query.type === 'list-plugin-actions') {
+        return new Promise<HerdrQueryResult>((resolve) => {
+          resolveActionRefresh = resolve;
+        });
+      }
+      return new Promise<HerdrQueryResult>((resolve) => {
+        resolvePluginRefresh = resolve;
+      });
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'herdr-desktop' });
+
+    act(() => desktopAction?.('open-plugins'));
+    expect(await screen.findByRole('heading', { name: 'Review tools' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveClass('overflow-hidden');
+    expect(
+      screen
+        .getByRole('heading', { name: 'Review tools' })
+        .closest('[data-slot="plugin-scroll-region"]'),
+    ).toHaveClass('overflow-y-auto');
+
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Herdr plugins' })).not.toBeInTheDocument(),
+    );
+    refreshing = true;
+    act(() => desktopAction?.('open-plugins'));
+    await waitFor(() => expect(window.herdr.query).toHaveBeenCalledTimes(4));
+
+    expect(screen.getByRole('heading', { name: 'Review tools' })).toBeInTheDocument();
+    expect(screen.queryByText('Loading installed plugins…')).not.toBeInTheDocument();
+
+    resolvePluginRefresh?.({ type: 'plugin-list', plugins: [] });
+    resolveActionRefresh?.({ type: 'plugin-action-list', actions: [] });
+  });
+
+  it('opens Herdr’s native plugin installer in a new terminal tab', async () => {
+    let desktopAction: ((action: DesktopAction) => void) | undefined;
+    window.herdr.onDesktopAction = vi.fn((listener) => {
+      desktopAction = listener;
+      return () => undefined;
+    });
+    window.herdr.query = vi.fn(async (query) =>
+      query.type === 'list-plugin-actions'
+        ? { type: 'plugin-action-list' as const, actions: [] }
+        : { type: 'plugin-list' as const, plugins: [] },
+    );
+    const installSnapshot: SessionSnapshot = {
+      ...snapshot,
+      focused_tab_id: 'w1:t2',
+      focused_pane_id: 'w1:p2',
+      tabs: [
+        ...snapshot.tabs,
+        {
+          tab_id: 'w1:t2',
+          workspace_id: 'w1',
+          number: 2,
+          label: 'plugin install',
+          focused: true,
+          pane_count: 1,
+          agent_status: 'idle',
+        },
+      ],
+      panes: [
+        ...snapshot.panes,
+        {
+          pane_id: 'w1:p2',
+          terminal_id: 'terminal-install',
+          workspace_id: 'w1',
+          tab_id: 'w1:t2',
+          focused: true,
+          cwd: '/code/herdr-desktop',
+          label: 'plugin install',
+          agent_status: 'idle',
+          state_labels: {},
+          tokens: {},
+          revision: 1,
+        },
+      ],
+    };
+    const installed = { ...connected, snapshot: installSnapshot } satisfies EngineBootstrap;
+    window.herdr.command = vi.fn(async () => installed);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { name: 'herdr-desktop' });
+
+    act(() => desktopAction?.('open-plugins'));
+    await user.type(
+      await screen.findByRole('textbox', { name: 'GitHub plugin source' }),
+      'smarzban/herdr-file-viewer',
+    );
+    await user.type(screen.getByRole('textbox', { name: 'Git ref' }), "release'candidate");
+    await user.click(screen.getByRole('button', { name: 'Install with Herdr' }));
+
+    await waitFor(() =>
+      expect(window.herdr.command).toHaveBeenNthCalledWith(1, {
+        type: 'create-tab',
+        workspaceId: 'w1',
+        label: 'plugin install',
+      }),
+    );
+    expect(window.herdr.command).toHaveBeenNthCalledWith(2, {
+      type: 'send-pane-input',
+      paneId: 'w1:p2',
+      text: "'/usr/local/bin/herdr' plugin install 'smarzban/herdr-file-viewer' --ref 'release'\\''candidate'",
+      keys: ['enter'],
+    });
+    expect(screen.queryByRole('heading', { name: 'Herdr plugins' })).not.toBeInTheDocument();
   });
 
   it('exposes the canonical session switcher for compact layouts', async () => {
@@ -636,8 +941,8 @@ describe('App', () => {
 
     const switcherButton = await screen.findByRole('button', { name: 'Open session switcher' });
     expect(switcherButton).toHaveClass('xl:hidden');
-    expect(screen.getByText('WORKSPACES').closest('aside')).toHaveClass('xl:flex');
-    expect(screen.getByText('AGENTS').closest('aside')).toHaveClass('xl:flex');
+    expect(screen.getByText('spaces').closest('aside')).toHaveClass('xl:flex');
+    expect(screen.getByText('agents').closest('aside')).toHaveClass('xl:flex');
 
     await user.click(switcherButton);
     expect(screen.getByRole('region', { name: 'Mobile session switcher' })).toBeInTheDocument();

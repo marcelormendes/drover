@@ -449,6 +449,11 @@ describe('HerdrEngine.execute', () => {
       },
     },
     {
+      command: { type: 'send-pane-input', paneId: 'w1:p1', text: '/compact', keys: ['enter'] },
+      method: 'pane.send_input',
+      params: { pane_id: 'w1:p1', text: '/compact', keys: ['enter'] },
+    },
+    {
       command: {
         type: 'set-agent-view',
         source: 'desktop',
@@ -663,6 +668,31 @@ describe('HerdrEngine.query', () => {
         source: 'recent_unwrapped',
         format: 'text',
         strip_ansi: true,
+        lines: 500,
+      },
+      wireResult: {
+        type: 'pane_read',
+        read: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          tab_id: 'w1:t1',
+          source: 'recent_unwrapped',
+          format: 'text',
+          text: 'Implemented the chat surface.',
+          revision: 12,
+          truncated: false,
+        },
+      },
+      expectedType: 'pane-output',
+    },
+    {
+      query: { type: 'read-pane-output', paneId: 'w1:p1', lines: 500, ansi: true } as const,
+      method: 'pane.read',
+      params: {
+        pane_id: 'w1:p1',
+        source: 'recent_unwrapped',
+        format: 'text',
+        strip_ansi: false,
         lines: 500,
       },
       wireResult: {

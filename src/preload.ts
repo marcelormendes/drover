@@ -32,6 +32,8 @@ const api: HerdrDesktopApi = {
     ipcRenderer.invoke(IPC_CHANNELS.command, command) as Promise<EngineBootstrap>,
   query: (query: HerdrQuery) =>
     ipcRenderer.invoke(IPC_CHANNELS.query, query) as Promise<HerdrQueryResult>,
+  stageChatImages: (images) =>
+    ipcRenderer.invoke(IPC_CHANNELS.stageChatImages, images) as Promise<string[]>,
   readPreferences: () =>
     ipcRenderer.invoke(IPC_CHANNELS.readPreferences) as Promise<DesktopPreferences>,
   writePreferences: (preferences: DesktopPreferences) =>

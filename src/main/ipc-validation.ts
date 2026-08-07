@@ -4,9 +4,16 @@ import {
   type AgentViewFilter,
   type AgentViewSort,
   type AgentViewValue,
+  base64DecodedLength,
+  CHAT_IMAGE_EXTENSIONS,
+  type ChatImageDraft,
   type HerdrCommand,
   type HerdrQuery,
   INTEGRATION_TARGETS,
+  isCanonicalBase64,
+  MAX_CHAT_IMAGE_ATTACHMENTS,
+  MAX_CHAT_IMAGE_BASE64_LENGTH,
+  MAX_CHAT_IMAGE_TOTAL_BYTES,
   type PaneMoveDestination,
 } from '@/shared/desktop-api';
 import type {
@@ -16,9 +23,12 @@ import type {
   TerminalScrollRequest,
 } from '@/shared/terminal';
 
-const WORKSPACE_ID = /^w\d+$/;
-const TAB_ID = /^w\d+:t\d+$/;
-const PANE_ID = /^w\d+:p\d+$/;
+// Herdr encodes stable public counters with
+// 123456789ABCDEFGHJKMNPQRSTVWXYZ0, so the tenth ID is `A` rather than `10`.
+const PUBLIC_ID_NUMBER = '[123456789ABCDEFGHJKMNPQRSTVWXYZ0]+';
+const WORKSPACE_ID = new RegExp(`^w${PUBLIC_ID_NUMBER}$`);
+const TAB_ID = new RegExp(`^w${PUBLIC_ID_NUMBER}:t${PUBLIC_ID_NUMBER}$`);
+const PANE_ID = new RegExp(`^w${PUBLIC_ID_NUMBER}:p${PUBLIC_ID_NUMBER}$`);
 const MAX_TEXT_LENGTH = 4_096;
 const MAX_TERMINAL_INPUT_LENGTH = 1_048_576;
 const MAX_TERMINAL_DIMENSION = 1_000;
@@ -555,6 +565,21 @@ export function parseHerdrCommand(value: unknown): HerdrCommand {
         return value as unknown as HerdrCommand;
       }
       break;
+    case 'send-pane-input':
+      if (
+        typeof value.paneId === 'string' &&
+        PANE_ID.test(value.paneId) &&
+        (value.text === undefined || requiredText(value.text)) &&
+        (value.keys === undefined ||
+          (Array.isArray(value.keys) &&
+            value.keys.length > 0 &&
+            value.keys.length <= MAX_COLLECTION_LENGTH &&
+            value.keys.every((key) => requiredText(key)))) &&
+        (value.text !== undefined || value.keys !== undefined)
+      ) {
+        return value as unknown as HerdrCommand;
+      }
+      break;
     case 'set-agent-view':
       if (
         validIdentifier(value.source) &&
@@ -651,12 +676,14 @@ export function parseHerdrQuery(value: unknown): HerdrQuery {
       if (
         typeof value.paneId === 'string' &&
         PANE_ID.test(value.paneId) &&
-        (value.lines === undefined || (positiveInteger(value.lines) && value.lines <= 10_000))
+        (value.lines === undefined || (positiveInteger(value.lines) && value.lines <= 10_000)) &&
+        (value.ansi === undefined || typeof value.ansi === 'boolean')
       ) {
         return {
           type: value.type,
           paneId: value.paneId,
           ...(value.lines === undefined ? {} : { lines: value.lines }),
+          ...(value.ansi === undefined ? {} : { ansi: value.ansi }),
         };
       }
       break;
@@ -689,16 +716,13 @@ export function parseHerdrQuery(value: unknown): HerdrQuery {
 }
 
 export function parseTerminalOpen(value: unknown): TerminalOpenRequest {
-  if (
-    isRecord(value) &&
-    typeof value.paneId === 'string' &&
-    PANE_ID.test(value.paneId) &&
-    validDimension(value.cols) &&
-    validDimension(value.rows)
-  ) {
-    return { paneId: value.paneId, cols: value.cols, rows: value.rows };
+  if (!isRecord(value) || typeof value.paneId !== 'string' || !PANE_ID.test(value.paneId)) {
+    throw new Error('Invalid terminal pane identifier.');
   }
-  throw new Error('Invalid terminal attachment.');
+  if (!validDimension(value.cols) || !validDimension(value.rows)) {
+    throw new Error('Invalid terminal dimensions.');
+  }
+  return { paneId: value.paneId, cols: value.cols, rows: value.rows };
 }
 
 export function parsePaneId(value: unknown): string {
@@ -766,4 +790,31 @@ export function parseTerminalScroll(value: unknown): TerminalScrollRequest {
     return value as unknown as TerminalScrollRequest;
   }
   throw new Error('Invalid terminal scroll.');
+}
+
+export function parseChatImageDrafts(value: unknown): ChatImageDraft[] {
+  if (
+    Array.isArray(value) &&
+    value.length <= MAX_CHAT_IMAGE_ATTACHMENTS &&
+    value.every(
+      (draft) =>
+        isRecord(draft) &&
+        typeof draft.extension === 'string' &&
+        (CHAT_IMAGE_EXTENSIONS as readonly string[]).includes(draft.extension) &&
+        typeof draft.data === 'string' &&
+        draft.data.length > 0 &&
+        draft.data.length <= MAX_CHAT_IMAGE_BASE64_LENGTH &&
+        isCanonicalBase64(draft.data),
+    ) &&
+    value.reduce(
+      (sum, draft) =>
+        isRecord(draft) && typeof draft.data === 'string'
+          ? sum + base64DecodedLength(draft.data)
+          : sum,
+      0,
+    ) <= MAX_CHAT_IMAGE_TOTAL_BYTES
+  ) {
+    return value as unknown as ChatImageDraft[];
+  }
+  throw new Error('Invalid chat image drafts.');
 }

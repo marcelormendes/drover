@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -66,5 +66,25 @@ describe('ChatPanel controlled session', () => {
     await user.click(screen.getByRole('button', { name: 'Toggle pane' }));
 
     expect(screen.getByText('Keep this turn')).toBeInTheDocument();
+  });
+
+  it('preserves pasted images when a pane unmounts during tab navigation', async () => {
+    const user = userEvent.setup();
+    render(<PersistentHarness />);
+    const image = new File(['image-bytes'], 'portrait.png', { type: 'image/png' });
+
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Message Pi' }), {
+      clipboardData: {
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }],
+        files: [image],
+      },
+    });
+
+    expect(await screen.findByRole('img', { name: 'portrait.png' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Toggle pane' }));
+    await user.click(screen.getByRole('button', { name: 'Toggle pane' }));
+
+    expect(screen.getByRole('img', { name: 'portrait.png' })).toBeInTheDocument();
   });
 });

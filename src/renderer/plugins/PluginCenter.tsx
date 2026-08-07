@@ -1,3 +1,4 @@
+import { Blocks, Download } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { useMemo, useState } from 'react';
 
@@ -79,6 +80,12 @@ export interface SetPluginEnabledIntent {
   enabled: boolean;
 }
 
+export interface InstallPluginIntent {
+  type: 'install-plugin';
+  source: string;
+  ref?: string;
+}
+
 export interface InvokePluginActionIntent {
   type: 'invoke-plugin-action';
   pluginId: string;
@@ -109,6 +116,7 @@ export interface PluginCenterProps {
   plugins: InstalledPluginViewModel[];
   actions: PluginActionViewModel[];
   panes: ManagedPluginPaneViewModel[];
+  onInstallPlugin: (intent: InstallPluginIntent) => void;
   onSetPluginEnabled: (intent: SetPluginEnabledIntent) => void;
   onInvokeAction: (intent: InvokePluginActionIntent) => void;
   onOpenPane: (intent: OpenPluginPaneIntent) => void;
@@ -126,6 +134,85 @@ const placementOptions: Array<{ label: string; value: PluginPanePlacement }> = [
 
 const selectClassName =
   'h-10 w-full rounded-base border-2 border-border bg-secondary-background px-3 text-sm font-base focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2';
+
+const githubPluginSourcePattern = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+
+function PluginInstaller({
+  onInstallPlugin,
+}: {
+  onInstallPlugin: PluginCenterProps['onInstallPlugin'];
+}) {
+  const [source, setSource] = useState('');
+  const [ref, setRef] = useState('');
+  const [sourceError, setSourceError] = useState('');
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalizedSource = source.trim();
+    if (!githubPluginSourcePattern.test(normalizedSource)) {
+      setSourceError('Use owner/repo or owner/repo/subdir, not a GitHub URL.');
+      return;
+    }
+    setSourceError('');
+    onInstallPlugin({
+      type: 'install-plugin',
+      source: normalizedSource,
+      ...(ref.trim() ? { ref: ref.trim() } : {}),
+    });
+  };
+
+  return (
+    <Card className="bg-secondary-background">
+      <CardHeader>
+        <CardTitle>
+          <h2>Install from GitHub</h2>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form
+          className="grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_minmax(10rem,0.45fr)_auto]"
+          onSubmit={submit}
+        >
+          <Label className="grid gap-1">
+            <span>GitHub plugin source</span>
+            <Input
+              aria-label="GitHub plugin source"
+              aria-describedby={sourceError ? 'plugin-source-error' : undefined}
+              aria-invalid={sourceError ? 'true' : undefined}
+              onChange={(event) => {
+                setSource(event.target.value);
+                setSourceError('');
+              }}
+              placeholder="owner/repo or owner/repo/subdir"
+              required
+              value={source}
+            />
+            {sourceError ? (
+              <span className="text-xs text-destructive" id="plugin-source-error" role="alert">
+                {sourceError}
+              </span>
+            ) : null}
+          </Label>
+          <Label className="grid gap-1">
+            <span>Git ref</span>
+            <Input
+              aria-label="Git ref"
+              onChange={(event) => setRef(event.target.value)}
+              placeholder="Optional branch, tag, or commit"
+              value={ref}
+            />
+          </Label>
+          <Button className="self-end" type="submit">
+            <Download aria-hidden="true" /> Install with Herdr
+          </Button>
+        </form>
+        <p className="mt-3 text-xs text-foreground/65">
+          Opens a Herdr terminal tab with the normal trust preview. Review the manifest commands,
+          then approve or cancel there exactly as you would in the Herdr CLI.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 function PluginPaneLauncher({
   plugin,
@@ -172,13 +259,14 @@ function PluginPaneLauncher({
         </select>
       </Label>
       <Button
+        aria-label={`Open ${plugin.name} pane`}
         className="self-end"
         type="button"
         onClick={() =>
           onOpenPane({ type: 'open-plugin-pane', pluginId: plugin.id, entrypoint, placement })
         }
       >
-        Open {plugin.name} pane
+        Open pane
       </Button>
     </div>
   );
@@ -293,6 +381,7 @@ export function PluginCenter({
   plugins,
   actions,
   panes,
+  onInstallPlugin,
   onSetPluginEnabled,
   onInvokeAction,
   onOpenPane,
@@ -336,161 +425,178 @@ export function PluginCenter({
       </Card>
     );
   }
+  if (plugins.length === 0 && actions.length === 0 && panes.length === 0) {
+    return (
+      <div className="@container grid gap-4">
+        <PluginInstaller onInstallPlugin={onInstallPlugin} />
+        <div className="grid place-items-center rounded-base border-2 border-dashed border-border px-6 py-14 text-center">
+          <Blocks aria-hidden="true" className="mb-4 size-8 opacity-40" />
+          <h2 className="font-heading text-lg">No plugins are installed in Herdr.</h2>
+          <p className="mt-2 max-w-md text-sm opacity-70">
+            Install a GitHub plugin above. Herdr owns its trust preview, build, registration,
+            actions, and panes.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
-      <Card className="bg-secondary-background">
-        <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>
-            <h2>Installed plugins</h2>
-          </CardTitle>
-          <Badge variant="neutral">{plugins.length}</Badge>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {plugins.length === 0 ? (
-            <div className="rounded-base border-2 border-dashed border-border p-5 text-sm">
-              No plugins are installed in Herdr.
-            </div>
-          ) : (
-            plugins.map((plugin) => {
-              const isError = plugin.state === 'error';
-              const isEnabled = plugin.state === 'enabled';
-              return (
-                <article
-                  className="rounded-base border-2 border-border bg-background p-4"
-                  key={plugin.id}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="font-heading">{plugin.name}</h3>
-                        <Badge variant={isEnabled ? 'default' : 'neutral'}>
-                          {isError ? 'Error' : isEnabled ? 'Enabled' : 'Disabled'}
-                        </Badge>
-                        <span className="text-xs text-foreground/60">v{plugin.version}</span>
-                      </div>
-                      {plugin.description ? (
-                        <p className="mt-1 text-sm">{plugin.description}</p>
-                      ) : null}
-                      {plugin.error ? (
-                        <p className="mt-2 text-sm text-red-700">{plugin.error}</p>
-                      ) : null}
-                      {(plugin.warnings || []).map((warning) => (
-                        <p className="mt-2 text-sm" key={warning}>
-                          {warning}
-                        </p>
-                      ))}
-                    </div>
-                    <Switch
-                      aria-label={
-                        isError
-                          ? `${plugin.name} cannot be enabled`
-                          : `${isEnabled ? 'Disable' : 'Enable'} ${plugin.name}`
-                      }
-                      checked={isEnabled}
-                      disabled={isError}
-                      onCheckedChange={(enabled) =>
-                        onSetPluginEnabled({
-                          type: 'set-plugin-enabled',
-                          pluginId: plugin.id,
-                          enabled,
-                        })
-                      }
-                    />
-                  </div>
-                  <PluginPaneLauncher plugin={plugin} onOpenPane={onOpenPane} />
-                </article>
-              );
-            })
-          )}
-        </CardContent>
-      </Card>
-      <div className="grid min-h-0 gap-4">
-        <Card className="bg-secondary-background">
+    // Container queries, not viewport ones: this lives inside a dialog whose
+    // width is unrelated to the window's.
+    <div className="@container grid min-h-0 gap-4">
+      <PluginInstaller onInstallPlugin={onInstallPlugin} />
+      <div className="grid min-h-0 gap-4 @4xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+        <Card className="self-start bg-secondary-background">
           <CardHeader>
-            <CardTitle>
-              <h2>Plugin actions</h2>
+            <CardTitle className="flex items-center gap-2">
+              <h2>Installed plugins</h2>
+              <Badge variant="neutral">{plugins.length}</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Input
-              aria-label="Search plugin actions"
-              placeholder="Search actions"
-              role="searchbox"
-              value={actionQuery}
-              onChange={(event) => setActionQuery(event.target.value)}
-            />
-            {actions.length === 0 ? (
-              <div className="rounded-base border-2 border-dashed border-border p-4 text-sm">
-                No public plugin actions are available.
-              </div>
-            ) : visibleActions.length === 0 ? (
-              <div className="rounded-base border-2 border-dashed border-border p-4 text-sm">
-                No plugin actions match your search.
+            {plugins.length === 0 ? (
+              <div className="rounded-base border-2 border-dashed border-border p-5 text-sm">
+                No plugins are installed in Herdr.
               </div>
             ) : (
-              visibleActions.map((action) => (
-                <PluginActionCard
-                  action={action}
-                  key={`${action.pluginId}:${action.id}`}
-                  onInvokeAction={onInvokeAction}
-                />
-              ))
+              plugins.map((plugin) => {
+                const isError = plugin.state === 'error';
+                const isEnabled = plugin.state === 'enabled';
+                return (
+                  <article
+                    className="rounded-base border-2 border-border bg-background p-4"
+                    key={plugin.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-heading">{plugin.name}</h3>
+                          <Badge variant={isEnabled ? 'default' : 'neutral'}>
+                            {isError ? 'Error' : isEnabled ? 'Enabled' : 'Disabled'}
+                          </Badge>
+                          <span className="text-xs text-foreground/60">v{plugin.version}</span>
+                        </div>
+                        {plugin.description ? (
+                          <p className="mt-1 text-sm">{plugin.description}</p>
+                        ) : null}
+                        {plugin.error ? (
+                          <p className="mt-2 text-sm text-red-700">{plugin.error}</p>
+                        ) : null}
+                        {(plugin.warnings || []).map((warning) => (
+                          <p className="mt-2 text-sm" key={warning}>
+                            {warning}
+                          </p>
+                        ))}
+                      </div>
+                      <Switch
+                        aria-label={
+                          isError
+                            ? `${plugin.name} cannot be enabled`
+                            : `${isEnabled ? 'Disable' : 'Enable'} ${plugin.name}`
+                        }
+                        checked={isEnabled}
+                        disabled={isError}
+                        onCheckedChange={(enabled) =>
+                          onSetPluginEnabled({
+                            type: 'set-plugin-enabled',
+                            pluginId: plugin.id,
+                            enabled,
+                          })
+                        }
+                      />
+                    </div>
+                    <PluginPaneLauncher plugin={plugin} onOpenPane={onOpenPane} />
+                  </article>
+                );
+              })
             )}
           </CardContent>
         </Card>
-        <Card className="bg-secondary-background">
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle>
-              <h2>Managed plugin panes</h2>
-            </CardTitle>
-            <Badge variant="neutral">{panes.length}</Badge>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {panes.length === 0 ? (
-              <div className="rounded-base border-2 border-dashed border-border p-4 text-sm">
-                No plugin panes are open.
-              </div>
-            ) : (
-              panes.map((pane) => (
-                <article
-                  className="rounded-base border-2 border-border bg-background p-4"
-                  key={pane.paneId}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-heading">{pane.title}</h3>
-                    <Badge variant="neutral">{pane.placement}</Badge>
-                    {pane.focused ? <Badge>Focused</Badge> : null}
-                  </div>
-                  <p className="mt-1 text-xs text-foreground/60">{pane.pluginId}</p>
-                  <div className="mt-3 flex gap-2">
-                    <Button
-                      aria-label={`Focus ${pane.title}`}
-                      disabled={pane.focused}
-                      size="sm"
-                      type="button"
-                      variant="neutral"
-                      onClick={() =>
-                        onFocusPane({ type: 'focus-plugin-pane', paneId: pane.paneId })
-                      }
-                    >
-                      Focus
-                    </Button>
-                    <Button
-                      aria-label={`Close ${pane.title}`}
-                      size="sm"
-                      type="button"
-                      onClick={() =>
-                        onClosePane({ type: 'close-plugin-pane', paneId: pane.paneId })
-                      }
-                    >
-                      Close
-                    </Button>
-                  </div>
-                </article>
-              ))
-            )}
-          </CardContent>
-        </Card>
+        <div className="grid min-h-0 gap-4">
+          <Card className="bg-secondary-background">
+            <CardHeader>
+              <CardTitle>
+                <h2>Plugin actions</h2>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Input
+                aria-label="Search plugin actions"
+                placeholder="Search actions"
+                role="searchbox"
+                value={actionQuery}
+                onChange={(event) => setActionQuery(event.target.value)}
+              />
+              {actions.length === 0 ? (
+                <div className="rounded-base border-2 border-dashed border-border p-4 text-sm">
+                  No public plugin actions are available.
+                </div>
+              ) : visibleActions.length === 0 ? (
+                <div className="rounded-base border-2 border-dashed border-border p-4 text-sm">
+                  No plugin actions match your search.
+                </div>
+              ) : (
+                visibleActions.map((action) => (
+                  <PluginActionCard
+                    action={action}
+                    key={`${action.pluginId}:${action.id}`}
+                    onInvokeAction={onInvokeAction}
+                  />
+                ))
+              )}
+            </CardContent>
+          </Card>
+          {panes.length > 0 ? (
+            <Card className="bg-secondary-background">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <h2>Managed plugin panes</h2>
+                  <Badge variant="neutral">{panes.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {panes.map((pane) => (
+                  <article
+                    className="rounded-base border-2 border-border bg-background p-4"
+                    key={pane.paneId}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-heading">{pane.title}</h3>
+                      <Badge variant="neutral">{pane.placement}</Badge>
+                      {pane.focused ? <Badge>Focused</Badge> : null}
+                    </div>
+                    <p className="mt-1 text-xs text-foreground/60">{pane.pluginId}</p>
+                    <div className="mt-3 flex gap-2">
+                      <Button
+                        aria-label={`Focus ${pane.title}`}
+                        disabled={pane.focused}
+                        size="sm"
+                        type="button"
+                        variant="neutral"
+                        onClick={() =>
+                          onFocusPane({ type: 'focus-plugin-pane', paneId: pane.paneId })
+                        }
+                      >
+                        Focus
+                      </Button>
+                      <Button
+                        aria-label={`Close ${pane.title}`}
+                        size="sm"
+                        type="button"
+                        onClick={() =>
+                          onClosePane({ type: 'close-plugin-pane', paneId: pane.paneId })
+                        }
+                      >
+                        Close
+                      </Button>
+                    </div>
+                  </article>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
       </div>
     </div>
   );

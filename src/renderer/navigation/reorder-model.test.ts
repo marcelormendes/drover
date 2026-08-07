@@ -75,23 +75,29 @@ const tabs: TabInfo[] = [
 ];
 
 describe('reorder models', () => {
-  it('orders canonical records by their engine number without mutating input', () => {
+  it('orders workspaces by position while preserving Herdr tab sequence', () => {
     expect(orderWorkspaces(workspaces).map((workspace) => workspace.workspace_id)).toEqual([
       'w1',
       'w2',
       'w3',
     ]);
-    expect(orderTabs(tabs, 'w1').map((tab) => tab.tab_id)).toEqual(['t1', 't2']);
+    expect(orderTabs(tabs, 'w1').map((tab) => tab.tab_id)).toEqual(['t2', 't1']);
     expect(workspaces[0]?.workspace_id).toBe('w3');
+    expect(tabs[0]?.tab_id).toBe('t2');
   });
 
-  it('plans workspace and tab moves as canonical ids plus insert indices', () => {
+  it('plans moves using Herdr remove-then-insert indices', () => {
     expect(planWorkspaceMove(workspaces, 'w2', 'up')).toEqual({
       workspaceId: 'w2',
       insertIndex: 0,
     });
+    expect(planWorkspaceMove(workspaces, 'w2', 'down')).toEqual({
+      workspaceId: 'w2',
+      insertIndex: 3,
+    });
     expect(planWorkspaceMove(workspaces, 'w3', 'down')).toBeNull();
-    expect(planTabMove(tabs, 'w1', 't1', 'down')).toEqual({ tabId: 't1', insertIndex: 1 });
+    expect(planTabMove(tabs, 'w1', 't2', 'down')).toEqual({ tabId: 't2', insertIndex: 2 });
+    expect(planTabMove(tabs, 'w1', 't1', 'up')).toEqual({ tabId: 't1', insertIndex: 0 });
     expect(planTabMove(tabs, 'w1', 'foreign', 'up')).toBeNull();
   });
 });

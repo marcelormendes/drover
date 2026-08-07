@@ -136,6 +136,7 @@ export function createBrowserPreviewApi(): HerdrDesktopApi {
       desktopListeners.add(listener);
       return () => desktopListeners.delete(listener);
     },
+    stageChatImages: async () => [],
     onSessionEvent: (listener) => {
       sessionListeners.add(listener);
       return () => sessionListeners.delete(listener);

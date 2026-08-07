@@ -1,6 +1,5 @@
-import { MessageSquareText, Pencil, RadioTower } from 'lucide-react';
+import { MessageSquareText, Pencil } from 'lucide-react';
 import { type FormEvent, useMemo, useState } from 'react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -20,6 +19,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
+import { statusDotClass } from '@/renderer/status';
 import type { AgentInfo, AgentStatus } from '@/shared/herdr';
 
 export type AgentSort = 'spaces' | 'priority';
@@ -119,12 +120,16 @@ export function AgentSidebar({
 
   return (
     <section aria-label="Agents" className="flex min-h-0 flex-col">
-      <div className="border-b-2 border-border p-3">
+      <div className="px-2 pt-1.5">
         <Label className="sr-only" htmlFor="agent-sort">
           Agent ordering
         </Label>
         <Select onValueChange={(value) => onSortChange(value as AgentSort)} value={sort}>
-          <SelectTrigger aria-label="Agent ordering" id="agent-sort">
+          <SelectTrigger
+            aria-label="Agent ordering"
+            className="h-7 w-auto gap-1 border-0 bg-transparent px-2 font-mono text-[11px] text-foreground opacity-60 hover:bg-accent-surface hover:opacity-100"
+            id="agent-sort"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -134,77 +139,82 @@ export function AgentSidebar({
         </Select>
       </div>
 
-      <div aria-live="polite" className="space-y-3 p-3">
+      <div aria-live="polite" className="space-y-0.5 p-2">
         {orderedAgents.length ? (
           orderedAgents.map((agent) => {
             const title = agentName(agent);
-            const stateLabels = Object.values(agent.state_labels);
+            const stateLabel = Object.values(agent.state_labels)[0];
             return (
-              <article
-                className="rounded-base border-2 border-border bg-background p-3 shadow-shadow"
+              <div
+                className="group/agent relative"
                 data-testid={`agent-card-${agent.pane_id}`}
                 key={agent.pane_id}
               >
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-heading">{title}</span>
-                  <Badge variant={agent.agent_status === 'blocked' ? 'default' : 'neutral'}>
-                    {agent.agent_status}
-                  </Badge>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                  <Badge variant="neutral">{readinessLabel(agent)}</Badge>
-                  <span className="truncate opacity-70">
-                    {agent.workspace_id} / {agent.tab_id}
+                <button
+                  aria-label={`Focus ${title}`}
+                  className="flex w-full min-w-0 flex-col gap-0.5 overflow-hidden rounded-base px-2.5 py-2 text-left transition-colors hover:bg-accent-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onFocus(agent)}
+                  type="button"
+                >
+                  <span className="flex w-full min-w-0 items-center gap-2.5">
+                    <span aria-hidden="true" className={statusDotClass(agent.agent_status)} />
+                    <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
+                    <span
+                      className={cn(
+                        'shrink-0 font-mono text-[11px] opacity-60 transition-opacity group-focus-within/agent:opacity-0 group-hover/agent:opacity-0',
+                        agent.agent_status === 'blocked' && 'text-chart-2 opacity-100',
+                      )}
+                    >
+                      {agent.agent_status}
+                    </span>
                   </span>
-                </div>
-                {stateLabels.length ? (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {stateLabels.map((label) => (
-                      <Badge key={label} variant="neutral">
-                        {label}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : null}
-                {agent.agent_session ? (
-                  <p className="mt-2 truncate font-mono text-xs" title={agent.agent_session.value}>
-                    {agent.agent_session.value}
-                  </p>
-                ) : null}
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  <Button
-                    aria-label={`Focus ${title}`}
-                    onClick={() => onFocus(agent)}
-                    size="icon"
-                    variant="neutral"
-                  >
-                    <RadioTower aria-hidden="true" />
-                  </Button>
-                  <Button
+                  <span className="flex w-full min-w-0 items-center gap-1.5 pl-[22px] font-mono text-[11px] opacity-50">
+                    <span className="truncate">
+                      {agent.workspace_id} · {agent.tab_id}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="shrink-0">{readinessLabel(agent)}</span>
+                  </span>
+                  {stateLabel ? (
+                    <span className="w-full truncate pl-[22px] font-mono text-[11px] opacity-50">
+                      {stateLabel}
+                    </span>
+                  ) : null}
+                  {agent.agent_session ? (
+                    <span
+                      className="w-full truncate pl-[22px] font-mono text-[11px] opacity-40"
+                      title={agent.agent_session.value}
+                    >
+                      {agent.agent_session.value}
+                    </span>
+                  ) : null}
+                </button>
+                <span className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 focus-within:opacity-100 group-hover/agent:opacity-100">
+                  <button
                     aria-label={`Rename ${title}`}
+                    className="grid size-6 place-items-center rounded-base bg-secondary-background opacity-70 hover:bg-background hover:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={() => {
                       setName(agent.name || '');
                       setRenameAgent(agent);
                     }}
-                    size="icon"
-                    variant="neutral"
+                    type="button"
                   >
-                    <Pencil aria-hidden="true" />
-                  </Button>
-                  <Button
+                    <Pencil aria-hidden="true" className="size-3" />
+                  </button>
+                  <button
                     aria-label={`Prompt ${title}`}
+                    className="grid size-6 place-items-center rounded-base bg-secondary-background opacity-70 hover:bg-background hover:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={() => setPromptAgent(agent)}
-                    size="icon"
-                    variant="neutral"
+                    type="button"
                   >
-                    <MessageSquareText aria-hidden="true" />
-                  </Button>
-                </div>
-              </article>
+                    <MessageSquareText aria-hidden="true" className="size-3" />
+                  </button>
+                </span>
+              </div>
             );
           })
         ) : (
-          <div className="rounded-base border-2 border-dashed border-border p-4 text-sm">
+          <div className="px-2.5 py-3 font-mono text-xs opacity-50">
             No agents are active in this session.
           </div>
         )}

@@ -118,9 +118,7 @@ describe('WorktreeSpaces', () => {
     expect(screen.getByRole('button', { name: /a-very-long-workspace-label/i })).toHaveClass(
       'min-w-0',
       'overflow-hidden',
-      'shadow-none!',
-      'hover:translate-x-0!',
-      'hover:translate-y-0!',
+      'rounded-base',
     );
   });
 });

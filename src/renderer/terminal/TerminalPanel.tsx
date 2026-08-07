@@ -44,6 +44,9 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   const [state, setState] = useState<'attaching' | 'attached' | 'closed' | 'error'>('attaching');
   const [message, setMessage] = useState('Attaching through Herdr…');
   const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const retryRef = useRef(0);
+  const retryTimerRef = useRef<number | null>(null);
+  const stableTimerRef = useRef<number | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasSelection, setHasSelection] = useState(false);
@@ -86,11 +89,11 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       screenReaderMode: true,
       scrollback: 10_000,
       theme: {
-        background: '#000000',
-        foreground: '#f7f7f7',
-        cursor: '#6e91ff',
-        cursorAccent: '#000000',
-        selectionBackground: '#6e91ff88',
+        background: '#0f0f10',
+        foreground: '#e6e6e6',
+        cursor: '#4d9eff',
+        cursorAccent: '#0f0f10',
+        selectionBackground: '#4d9eff66',
       },
     });
     terminalRef.current = terminal;
@@ -138,7 +141,6 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         fitAddon.fit();
       }
     };
-    fitTerminal();
 
     const stopEvents = window.herdr.terminal.onEvent((event) => {
       if (event.paneId !== pane.pane_id) {
@@ -147,10 +149,33 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       if (event.type === 'terminal.frame') {
         setState('attached');
         setMessage('Live control through Herdr');
+        if (stableTimerRef.current === null) {
+          // A connection that stays attached earns its retry budget back.
+          stableTimerRef.current = window.setTimeout(() => {
+            retryRef.current = 0;
+            stableTimerRef.current = null;
+          }, 5_000);
+        }
         terminal.write(decodeTerminalBytes(event.bytes));
       } else if (event.type === 'terminal.closed') {
-        setState('closed');
-        setMessage(event.reason);
+        if (stableTimerRef.current !== null) {
+          clearTimeout(stableTimerRef.current);
+          stableTimerRef.current = null;
+        }
+        if (retryRef.current < 2) {
+          // The engine detaches cleanly during quick reopens and takeover
+          // windows; reattach a bounded number of times before surfacing it.
+          retryRef.current += 1;
+          setState('attaching');
+          setMessage('Reattaching through Herdr…');
+          retryTimerRef.current = window.setTimeout(
+            () => setConnectionAttempt((attempt) => attempt + 1),
+            400 * retryRef.current,
+          );
+        } else {
+          setState('closed');
+          setMessage(event.reason);
+        }
       } else {
         setState('error');
         setMessage(event.message);
@@ -159,23 +184,46 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     const input = terminal.onData((value) => {
       void window.herdr.terminal.input({ paneId: pane.pane_id, text: value });
     });
+    let attachmentRequested = false;
+    const attachWhenSized = () => {
+      if (attachmentRequested || terminal.cols < 1 || terminal.rows < 1) {
+        return;
+      }
+      attachmentRequested = true;
+      void window.herdr.terminal
+        .open({ paneId: pane.pane_id, cols: terminal.cols, rows: terminal.rows })
+        .catch((error: unknown) => {
+          setState('error');
+          setMessage(error instanceof Error ? error.message : 'Terminal attachment failed.');
+        });
+    };
     const resize = terminal.onResize(({ cols, rows }) => {
-      void window.herdr.terminal.resize({ paneId: pane.pane_id, cols, rows });
+      if (attachmentRequested) {
+        void window.herdr.terminal.resize({ paneId: pane.pane_id, cols, rows });
+      } else {
+        attachWhenSized();
+      }
     });
     const selection = terminal.onSelectionChange(() => setHasSelection(terminal.hasSelection()));
-    const observer = new ResizeObserver(fitTerminal);
+    const observer = new ResizeObserver(() => {
+      fitTerminal();
+      attachWhenSized();
+    });
     observer.observe(container);
-
-    void window.herdr.terminal
-      .open({ paneId: pane.pane_id, cols: terminal.cols, rows: terminal.rows })
-      .catch((error: unknown) => {
-        setState('error');
-        setMessage(error instanceof Error ? error.message : 'Terminal attachment failed.');
-      });
+    fitTerminal();
+    attachWhenSized();
 
     return () => {
       observer.disconnect();
       stopEvents();
+      if (retryTimerRef.current !== null) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      if (stableTimerRef.current !== null) {
+        clearTimeout(stableTimerRef.current);
+        stableTimerRef.current = null;
+      }
       input.dispose();
       resize.dispose();
       selection.dispose();
@@ -191,7 +239,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   }, [connectionAttempt, pane.pane_id]);
 
   return (
-    <div className="relative min-h-0 flex-1 bg-foreground">
+    <div className="relative min-h-0 flex-1 bg-[#0f0f10]">
       <section
         aria-label={`Terminal output ${pane.pane_id}`}
         className="h-full w-full p-3"
@@ -211,7 +259,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         }}
         ref={containerRef}
       />
-      <div className="absolute right-3 top-3 flex items-center gap-2">
+      <div className="absolute right-3 top-3 flex items-center gap-2 opacity-50 transition-opacity focus-within:opacity-100 hover:opacity-100">
         {onScrollRequest ? (
           <>
             <Button
@@ -346,35 +394,39 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
           {copyFeedback}
         </div>
       ) : null}
-      <div className="absolute bottom-3 right-3 flex max-w-[80%] items-center gap-2">
-        <Badge
-          className="pointer-events-none min-w-0 truncate"
-          variant={state === 'attached' ? 'default' : 'neutral'}
-        >
-          <span
-            aria-hidden="true"
-            className={
-              state === 'attached'
-                ? 'size-2 rounded-full bg-chart-4'
-                : state === 'error'
+      {state !== 'attached' ? (
+        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-end gap-2">
+          <Badge className="pointer-events-none min-w-0 truncate font-mono" variant="neutral">
+            <span
+              aria-hidden="true"
+              className={
+                state === 'error'
                   ? 'size-2 rounded-full bg-chart-2'
                   : 'size-2 animate-pulse rounded-full bg-chart-3'
-            }
-          />
+              }
+            />
+            {message}
+          </Badge>
+          {state === 'closed' || state === 'error' ? (
+            <Button
+              aria-label={`Reconnect ${pane.pane_id}`}
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={() => {
+                retryRef.current = 0;
+                setConnectionAttempt((attempt) => attempt + 1);
+              }}
+              size="sm"
+              variant="neutral"
+            >
+              <RefreshCw aria-hidden="true" /> Reconnect
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="sr-only" role="status">
           {message}
-        </Badge>
-        {state === 'closed' || state === 'error' ? (
-          <Button
-            aria-label={`Reconnect ${pane.pane_id}`}
-            className="h-7 shrink-0 px-2 text-xs"
-            onClick={() => setConnectionAttempt((attempt) => attempt + 1)}
-            size="sm"
-            variant="neutral"
-          >
-            <RefreshCw aria-hidden="true" /> Reconnect
-          </Button>
-        ) : null}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

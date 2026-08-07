@@ -27,6 +27,10 @@ function compareNumberThenId(
   return left.number - right.number || leftId.localeCompare(rightId);
 }
 
+function count(total: number, noun: string): string {
+  return `${total} ${noun}${total === 1 ? '' : 's'}`;
+}
+
 function queryMatches(query: string, values: Array<string | undefined>): boolean {
   const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) {
@@ -56,7 +60,7 @@ export function buildNavigatorRows(
       kind: 'workspace',
       depth: 0,
       label: workspace.label,
-      meta: `${workspace.tab_count} tabs · ${workspace.pane_count} panes`,
+      meta: `${count(workspace.tab_count, 'tab')} · ${count(workspace.pane_count, 'pane')}`,
       status: workspace.agent_status,
       current: snapshot.focused_workspace_id === workspace.workspace_id,
       matched: false,
@@ -82,7 +86,7 @@ export function buildNavigatorRows(
         kind: 'tab',
         depth: 1,
         label: tab.label,
-        meta: `${tab.pane_count} panes`,
+        meta: count(tab.pane_count, 'pane'),
         status: tab.agent_status,
         current: snapshot.focused_tab_id === tab.tab_id,
         matched: false,

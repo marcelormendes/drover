@@ -1,8 +1,10 @@
 import {
   Blocks,
   Bot,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleAlert,
   CloudCog,
   Command,
@@ -14,7 +16,6 @@ import {
   MoreHorizontal,
   PanelBottom,
   PanelRight,
-  PanelTop,
   Pencil,
   Play,
   Plus,
@@ -95,11 +96,18 @@ import { deliverSystemNotification } from '@/renderer/notifications/system-notif
 import { PaneControls, PaneDetails, type PaneMoveIntent, SplitHandles } from '@/renderer/panes';
 import {
   type InstalledPluginViewModel,
+  type InstallPluginIntent,
   type PluginActionViewModel,
   PluginCenter,
 } from '@/renderer/plugins/PluginCenter';
+import { buildPluginInstallCommand } from '@/renderer/plugins/plugin-install';
+import {
+  isPluginActionCompatible,
+  pluginPlatformFromNavigator,
+} from '@/renderer/plugins/plugin-platform';
 import { MobileSwitcher, type MobileSwitcherSection } from '@/renderer/responsive';
 import { SettingsDialog } from '@/renderer/settings/SettingsDialog';
+import { StatusDot } from '@/renderer/status';
 import { TerminalPanel } from '@/renderer/terminal/TerminalPanel';
 import {
   CreateWorktreeDialog,
@@ -119,67 +127,39 @@ import {
   type PluginActionInfo,
 } from '@/shared/desktop-api';
 import type { HerdrEventConnectionState } from '@/shared/events';
-import type {
-  AgentStatus,
-  EngineBootstrap,
-  PaneInfo,
-  PaneLayoutSnapshot,
-  WorkspaceInfo,
-} from '@/shared/herdr';
+import type { EngineBootstrap, PaneInfo, PaneLayoutSnapshot, WorkspaceInfo } from '@/shared/herdr';
 import { DEFAULT_DESKTOP_PREFERENCES, type DesktopPreferences } from '@/shared/preferences';
 import packageMetadata from '../../package.json';
 
 const INSTALL_URL = 'https://github.com/herdrdev/herdr#installation';
-
-const statusStyle: Record<AgentStatus, string> = {
-  working: 'bg-chart-1',
-  blocked: 'bg-chart-2',
-  done: 'bg-chart-4',
-  idle: 'bg-secondary-background',
-  unknown: 'bg-chart-3',
-};
-
-const statusSymbol: Record<AgentStatus, string> = {
-  working: '●',
-  blocked: '!',
-  done: '✓',
-  idle: '○',
-  unknown: '?',
-};
-
-function StatusDot({
-  status,
-  style = 'dot',
-}: {
-  status: AgentStatus;
-  style?: DesktopPreferences['indicatorStyle'];
-}) {
-  if (style === 'symbol') {
-    return (
-      <span aria-label={status} className="font-heading" role="img">
-        {statusSymbol[status]}
-      </span>
-    );
-  }
-  return (
-    <>
-      <span
-        aria-hidden="true"
-        className={cn('size-3 shrink-0 rounded-full border-2 border-border', statusStyle[status])}
-      />
-      <span className="sr-only">{status}</span>
-    </>
-  );
-}
+const currentPluginPlatform = pluginPlatformFromNavigator(navigator.platform, navigator.userAgent);
 
 function AppMark() {
   return (
     <div
-      className="grid size-8 shrink-0 place-items-center rounded-base border-2 border-border bg-main shadow-none"
+      className="grid size-8 shrink-0 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-none"
       data-slot="app-mark"
     >
       <Command aria-hidden="true" className="size-4 stroke-[3]" />
     </div>
+  );
+}
+
+function worktreeCreationSource(
+  workspaces: readonly WorkspaceInfo[],
+  workspace: WorkspaceInfo,
+): WorkspaceInfo {
+  const worktree = workspace.worktree;
+  if (!worktree?.is_linked_worktree) {
+    return workspace;
+  }
+
+  return (
+    workspaces.find(
+      (candidate) =>
+        candidate.worktree?.repo_key === worktree.repo_key &&
+        !candidate.worktree.is_linked_worktree,
+    ) || workspace
   );
 }
 
@@ -195,13 +175,13 @@ function WindowChrome({
   busy?: boolean;
 }) {
   return (
-    <header className="app-drag flex h-12 shrink-0 items-center border-b-2 border-border bg-secondary-background pl-20 pr-3">
+    <header className="app-drag flex h-12 shrink-0 items-center border-b-2 border-border bg-secondary-background pl-24 pr-3">
       <div className="flex min-w-0 items-center gap-3">
         <AppMark />
-        <span className="truncate text-sm font-heading tracking-[0.12em]">HERDR DESKTOP</span>
-        <Badge className="hidden sm:inline-flex" variant="neutral">
-          ENGINE UI
-        </Badge>
+        <span className="truncate text-sm font-heading tracking-[0.12em]">HERDR</span>
+        <span className="hidden truncate font-mono text-[10px] uppercase tracking-[0.18em] opacity-50 lg:inline">
+          The herd, from a client that isn't there
+        </span>
       </div>
       <div className="app-no-drag ml-auto flex items-center gap-2">
         {onPlugins ? (
@@ -265,7 +245,7 @@ function LoadingScreen() {
       <main className="grid flex-1 place-items-center p-8">
         <Card className="w-full max-w-md bg-secondary-background">
           <CardContent className="flex items-center gap-4 py-1">
-            <div className="grid size-12 place-items-center rounded-base border-2 border-border bg-main shadow-shadow">
+            <div className="grid size-12 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-shadow">
               <RefreshCw aria-hidden="true" className="size-5 animate-spin" />
             </div>
             <div>
@@ -315,7 +295,7 @@ function OnboardingScreen({ result, busy, onRetry, onStart, onSettings }: Onboar
         />
         <Card className="relative w-full max-w-2xl bg-secondary-background">
           <CardHeader className="border-b-2 border-border">
-            <div className="mb-5 flex size-14 items-center justify-center rounded-base border-2 border-border bg-main shadow-shadow">
+            <div className="mb-5 flex size-14 items-center justify-center rounded-base border-2 border-border bg-main text-main-foreground shadow-shadow">
               {missing ? <CloudCog aria-hidden="true" /> : <CircleAlert aria-hidden="true" />}
             </div>
             <CardTitle>
@@ -653,7 +633,7 @@ function StartAgentDialog({
               autoFocus
               id="agent-name"
               onChange={(event) => setName(event.target.value)}
-              pattern="[a-z][a-z0-9_-]{0,31}"
+              pattern="[a-z][a-z0-9_\-]{0,31}"
               placeholder="reviewer"
               value={name}
             />
@@ -728,6 +708,7 @@ function PaneStage({
   onClose,
   onSetSplitRatio,
   onPrompt,
+  onSendInput,
   readOutput,
   chatSessions,
   onChatSessionChange,
@@ -745,6 +726,7 @@ function PaneStage({
   onClose: (pane: PaneInfo) => void;
   onSetSplitRatio: (tabId: string, path: boolean[], ratio: number) => void;
   onPrompt: (target: string, text: string) => void | Promise<void>;
+  onSendInput: (paneId: string, input: { text?: string; keys?: string[] }) => void | Promise<void>;
   readOutput: (paneId: string) => Promise<Extract<HerdrQueryResult, { type: 'pane-output' }>>;
   chatSessions: Readonly<Record<string, ChatSessionState>>;
   onChatSessionChange: (paneId: string, update: ChatSessionUpdate) => void;
@@ -778,7 +760,7 @@ function PaneStage({
   };
 
   return (
-    <div className="relative min-h-0 flex-1 overflow-hidden p-2">
+    <div className="relative min-h-0 flex-1 overflow-hidden p-1">
       {panes.map((item) => {
         const focused = item.pane_id === pane.pane_id;
         const hiddenByZoom = Boolean(layout?.zoomed && !focused);
@@ -794,30 +776,25 @@ function PaneStage({
             <Card
               className={cn(
                 'h-full gap-0 overflow-hidden bg-secondary-background py-0 shadow-none',
-                focused && 'shadow-shadow',
+                focused && 'border-main shadow-shadow',
               )}
               onMouseDown={() => !focused && onFocus(item.pane_id)}
             >
-              <div
-                className={cn(
-                  'flex h-10 shrink-0 items-center gap-2 border-b-2 border-border px-3',
-                  focused ? 'bg-main' : 'bg-secondary-background',
-                )}
-              >
+              <div className="flex h-10 shrink-0 items-center gap-2 border-b-2 border-border bg-secondary-background px-3">
                 {view === 'chat' ? (
-                  <MessageSquare aria-hidden="true" className="size-4" />
+                  <MessageSquare aria-hidden="true" className="size-4 shrink-0 opacity-60" />
                 ) : (
-                  <SquareTerminal aria-hidden="true" className="size-4" />
+                  <SquareTerminal aria-hidden="true" className="size-4 shrink-0 opacity-60" />
                 )}
                 {showPaneLabels ? (
-                  <>
-                    <span className="min-w-0 truncate text-xs font-heading">
-                      {item.label || item.title || item.pane_id}
-                    </span>
-                    <Badge className="ml-auto shrink-0" variant="neutral">
-                      {item.pane_id}
-                    </Badge>
-                  </>
+                  <span
+                    className={cn(
+                      'min-w-0 truncate font-mono text-xs',
+                      focused ? 'text-main' : 'opacity-60',
+                    )}
+                  >
+                    {item.label || item.title || item.pane_id}
+                  </span>
                 ) : null}
                 {focused ? (
                   <div className="ml-auto flex shrink-0 gap-2">
@@ -831,7 +808,7 @@ function PaneStage({
                           aria-pressed={view === 'chat'}
                           className={cn(
                             'h-7 rounded-none border-0 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
-                            view === 'chat' && 'bg-main',
+                            view === 'chat' && 'bg-main text-main-foreground',
                           )}
                           onClick={() =>
                             setViewByPane((current) => ({
@@ -850,7 +827,7 @@ function PaneStage({
                           aria-pressed={view === 'terminal'}
                           className={cn(
                             'h-7 rounded-none border-0 border-l-2 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
-                            view === 'terminal' && 'bg-main',
+                            view === 'terminal' && 'bg-main text-main-foreground',
                           )}
                           onClick={() =>
                             setViewByPane((current) => ({
@@ -938,10 +915,12 @@ function PaneStage({
                     }))
                   }
                   onPrompt={onPrompt}
+                  onSendInput={onSendInput}
                   onSessionChange={(update) => onChatSessionChange(item.pane_id, update)}
                   pane={item}
                   readOutput={readOutput}
                   session={chatSessions[item.pane_id]}
+                  stageImages={(images) => window.herdr.stageChatImages(images)}
                 />
               ) : (
                 <TerminalPanel
@@ -1001,7 +980,7 @@ function ConnectedShell({
 }: {
   result: Extract<EngineBootstrap, { state: 'connected' }>;
   onRefresh: () => void;
-  onCommand: (command: HerdrCommand) => void;
+  onCommand: (command: HerdrCommand) => Promise<EngineBootstrap>;
   onNavigator: () => void;
   onPlugins: () => void;
   onSettings: () => void;
@@ -1012,6 +991,19 @@ function ConnectedShell({
   busy: boolean;
 }) {
   const { snapshot, status } = result;
+  const runChatCommand = useCallback(
+    async (command: HerdrCommand): Promise<void> => {
+      const next = await onCommand(command);
+      if (next.state !== 'connected') {
+        throw new Error(
+          next.state === 'error' || next.state === 'missing'
+            ? next.message
+            : 'Herdr command failed.',
+        );
+      }
+    },
+    [onCommand],
+  );
   const [workspaceId, setWorkspaceId] = useState(
     snapshot.focused_workspace_id || snapshot.workspaces[0]?.workspace_id,
   );
@@ -1048,7 +1040,12 @@ function ConnectedShell({
     });
   }, []);
   const readPaneOutput = useCallback(async (paneId: string) => {
-    const output = await window.herdr.query({ type: 'read-pane-output', paneId, lines: 500 });
+    const output = await window.herdr.query({
+      type: 'read-pane-output',
+      paneId,
+      lines: 500,
+      ansi: true,
+    });
     if (output.type !== 'pane-output') {
       throw new Error('Herdr returned an unexpected pane output response.');
     }
@@ -1126,23 +1123,27 @@ function ConnectedShell({
         onSettings={onSettings}
       />
       <div
-        className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[var(--spaces-width)_minmax(0,1fr)_var(--agents-width)]"
+        className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[var(--spaces-width)_minmax(0,1fr)]"
+        data-slot="session-shell"
         style={
           {
             '--spaces-width': preferences.spacesCollapsed ? '64px' : '280px',
-            '--agents-width': preferences.agentsCollapsed ? '64px' : '280px',
           } as CSSProperties
         }
       >
         <aside className="hidden min-h-0 flex-col border-r-2 border-border bg-secondary-background xl:flex">
-          <div className="flex h-14 items-center gap-2 border-b-2 border-border px-3">
+          <div className="flex h-12 shrink-0 items-center gap-2 border-b-2 border-border px-3">
             {preferences.spacesCollapsed ? (
-              <Blocks aria-hidden="true" className="size-4 shrink-0" />
+              <Blocks aria-hidden="true" className="size-4 shrink-0 opacity-60" />
             ) : null}
             {!preferences.spacesCollapsed ? (
               <>
-                <span className="min-w-0 flex-1 truncate text-sm font-heading">WORKSPACES</span>
-                <Badge className="ml-auto">{snapshot.workspaces.length}</Badge>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs tracking-[0.08em] opacity-60">
+                  spaces
+                </span>
+                <span className="ml-auto font-mono text-xs opacity-60">
+                  {snapshot.workspaces.length}
+                </span>
                 <ReorderControls
                   canMoveDown={snapshot.workspaces.at(-1)?.workspace_id !== workspace.workspace_id}
                   canMoveUp={snapshot.workspaces[0]?.workspace_id !== workspace.workspace_id}
@@ -1188,8 +1189,9 @@ function ConnectedShell({
             </Button>
           </div>
           {!preferences.spacesCollapsed ? (
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="p-3">
+            // Spaces take only the room they need so agents keep the rest.
+            <div className="max-h-[45%] shrink-0 overflow-y-auto">
+              <div className="p-2">
                 <WorktreeSpaces
                   defaultExpandedRepoKeys={snapshot.workspaces.flatMap((item) =>
                     item.worktree ? [item.worktree.repo_key] : [],
@@ -1204,34 +1206,110 @@ function ConnectedShell({
                   workspaces={snapshot.workspaces}
                 />
               </div>
-            </ScrollArea>
+            </div>
           ) : null}
           {!preferences.spacesCollapsed ? (
-            <div className="border-t-2 border-border p-3">
+            <div className="shrink-0 p-3 pt-2">
               <CreateWorkspaceDialog
                 busy={busy}
                 onCreate={(cwd, label) => onCommand({ type: 'create-workspace', cwd, label })}
               />
             </div>
           ) : null}
+
+          <div
+            className={cn(
+              'flex min-h-0 flex-col border-t-2 border-border',
+              !preferences.spacesCollapsed && !preferences.agentsCollapsed && 'flex-1',
+            )}
+            data-slot="agents-section"
+          >
+            <div className="flex h-11 shrink-0 items-center gap-2 px-3">
+              <Bot aria-hidden="true" className="size-4 shrink-0 opacity-60" />
+              {!preferences.spacesCollapsed ? (
+                <>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs tracking-[0.08em] opacity-60">
+                    agents
+                  </span>
+                  <span className="font-mono text-xs opacity-60">{agents.length}</span>
+                  <Button
+                    aria-label={
+                      preferences.agentsCollapsed
+                        ? 'Expand agent sidebar'
+                        : 'Collapse agent sidebar'
+                    }
+                    className="size-7"
+                    onClick={() =>
+                      onPreferencesChange({
+                        ...preferences,
+                        agentsCollapsed: !preferences.agentsCollapsed,
+                      })
+                    }
+                    size="icon"
+                    variant="neutral"
+                  >
+                    {preferences.agentsCollapsed ? (
+                      <ChevronUp aria-hidden="true" />
+                    ) : (
+                      <ChevronDown aria-hidden="true" />
+                    )}
+                  </Button>
+                </>
+              ) : null}
+            </div>
+            {!preferences.spacesCollapsed && !preferences.agentsCollapsed ? (
+              <>
+                <ScrollArea className="min-h-0 flex-1">
+                  <AgentSidebar
+                    agents={agents}
+                    onFocus={(agent) => {
+                      setWorkspaceId(agent.workspace_id);
+                      setTabByWorkspace((current) => ({
+                        ...current,
+                        [agent.workspace_id]: agent.tab_id,
+                      }));
+                      onCommand({ type: 'focus-pane', paneId: agent.pane_id });
+                    }}
+                    onPrompt={(target, text) => onCommand({ type: 'prompt-agent', target, text })}
+                    onRename={(target, name) => onCommand({ type: 'rename-agent', target, name })}
+                    onSortChange={(agentSort) => onPreferencesChange({ ...preferences, agentSort })}
+                    sort={preferences.agentSort}
+                  />
+                </ScrollArea>
+                <div className="shrink-0 p-3 pt-2">
+                  <StartAgentDialog
+                    busy={busy}
+                    onStart={(paneId, name, kind, args, timeoutMs) =>
+                      onCommand({ type: 'start-agent', paneId, name, kind, args, timeoutMs })
+                    }
+                    pane={pane}
+                  />
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          {!preferences.spacesCollapsed ? (
+            <div className="shrink-0 border-t-2 border-border p-3 font-mono text-[11px]">
+              <div className="mb-1 flex items-center gap-2">
+                <Wifi aria-hidden="true" className="size-3 opacity-60" /> Engine {connectionState}
+              </div>
+              <p className="truncate opacity-50">
+                v{status.server.version} · protocol {status.server.protocol}
+              </p>
+            </div>
+          ) : null}
         </aside>
 
         <main className="flex min-h-0 min-w-0 flex-col">
-          <div className="flex h-20 shrink-0 items-center gap-4 border-b-2 border-border bg-secondary-background px-5">
-            <div
-              className="grid size-10 shrink-0 place-items-center rounded-base border-2 border-border bg-main shadow-none"
-              data-slot="workspace-mark"
-            >
-              <FolderGit2 aria-hidden="true" className="size-5" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="truncate text-xl">{workspace.label}</h1>
-              <div className="mt-1 flex items-center gap-2 text-xs">
-                <GitBranch aria-hidden="true" className="size-3" />
-                <span className="truncate">
-                  {workspace.worktree?.checkout_path || pane?.cwd || 'Herdr workspace'}
-                </span>
-              </div>
+          <div className="flex h-12 shrink-0 items-center gap-3 border-b-2 border-border bg-secondary-background px-4">
+            <FolderGit2 aria-hidden="true" className="size-4 shrink-0 opacity-60" />
+            <h1 className="min-w-0 max-w-[40%] truncate text-sm font-heading">{workspace.label}</h1>
+            <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] opacity-50">
+              <GitBranch aria-hidden="true" className="size-3 shrink-0" />
+              <span className="truncate">
+                {workspace.worktree?.checkout_path || pane?.cwd || 'Herdr workspace'}
+              </span>
             </div>
             {status.update.restart_needed || status.server.restart_needed ? (
               <Badge className="hidden sm:inline-flex">RESTART NEEDED</Badge>
@@ -1239,16 +1317,34 @@ function ConnectedShell({
             <div className="ml-auto flex items-center gap-2">
               <Button
                 aria-label="Open session switcher"
-                className="xl:hidden"
+                className="size-8 xl:hidden"
                 onClick={() => setMobileSwitcherOpen(true)}
                 size="icon"
                 variant="neutral"
               >
                 <Blocks aria-hidden="true" />
               </Button>
+              <Button
+                aria-label="New worktree"
+                className="h-8 px-2.5"
+                disabled={busy}
+                onClick={() =>
+                  setCreateWorktreeSource(worktreeCreationSource(snapshot.workspaces, workspace))
+                }
+                size="sm"
+                variant="neutral"
+              >
+                <GitBranch aria-hidden="true" />
+                <span className="hidden sm:inline">New worktree</span>
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button aria-label="Workspace actions" size="icon" variant="neutral">
+                  <Button
+                    aria-label="Workspace actions"
+                    className="size-8"
+                    size="icon"
+                    variant="neutral"
+                  >
                     <MoreHorizontal aria-hidden="true" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -1296,9 +1392,8 @@ function ConnectedShell({
               <TabsList className="h-auto gap-2 bg-transparent p-0">
                 {workspaceTabs.map((tab) => (
                   <TabsTrigger className="gap-2" key={tab.tab_id} value={tab.tab_id}>
-                    <PanelTop aria-hidden="true" className="size-3" />
-                    {tab.label}
                     <StatusDot status={tab.agent_status} style={preferences.indicatorStyle} />
+                    {tab.label}
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -1402,7 +1497,10 @@ function ConnectedShell({
               onSetSplitRatio={(tabId, path, ratio) =>
                 onCommand({ type: 'set-split-ratio', tabId, path, ratio })
               }
-              onPrompt={(target, text) => onCommand({ type: 'prompt-agent', target, text })}
+              onPrompt={(target, text) => runChatCommand({ type: 'prompt-agent', target, text })}
+              onSendInput={(paneId, input) =>
+                runChatCommand({ type: 'send-pane-input', paneId, ...input })
+              }
               onZoom={(paneId) => onCommand({ type: 'zoom-pane', paneId, mode: 'toggle' })}
               pane={pane}
               panes={panes}
@@ -1411,80 +1509,6 @@ function ConnectedShell({
             />
           </Tabs>
         </main>
-
-        <aside className="hidden min-h-0 flex-col border-l-2 border-border bg-secondary-background xl:flex">
-          <div className="flex h-14 items-center gap-2 border-b-2 border-border px-3">
-            <Bot aria-hidden="true" className="size-4 shrink-0" />
-            {!preferences.agentsCollapsed ? (
-              <>
-                <span className="min-w-0 flex-1 truncate text-sm font-heading">AGENTS</span>
-                <Badge className="ml-auto" variant="neutral">
-                  {agents.length}
-                </Badge>
-              </>
-            ) : null}
-            <Button
-              aria-label={
-                preferences.agentsCollapsed ? 'Expand agent sidebar' : 'Collapse agent sidebar'
-              }
-              className={cn('size-7', preferences.agentsCollapsed && 'ml-auto')}
-              onClick={() =>
-                onPreferencesChange({
-                  ...preferences,
-                  agentsCollapsed: !preferences.agentsCollapsed,
-                })
-              }
-              size="icon"
-              variant="neutral"
-            >
-              {preferences.agentsCollapsed ? (
-                <ChevronLeft aria-hidden="true" />
-              ) : (
-                <ChevronRight aria-hidden="true" />
-              )}
-            </Button>
-          </div>
-          {!preferences.agentsCollapsed ? (
-            <ScrollArea className="min-h-0 flex-1">
-              <AgentSidebar
-                agents={agents}
-                onFocus={(agent) => {
-                  setWorkspaceId(agent.workspace_id);
-                  setTabByWorkspace((current) => ({
-                    ...current,
-                    [agent.workspace_id]: agent.tab_id,
-                  }));
-                  onCommand({ type: 'focus-pane', paneId: agent.pane_id });
-                }}
-                onPrompt={(target, text) => onCommand({ type: 'prompt-agent', target, text })}
-                onRename={(target, name) => onCommand({ type: 'rename-agent', target, name })}
-                onSortChange={(agentSort) => onPreferencesChange({ ...preferences, agentSort })}
-                sort={preferences.agentSort}
-              />
-            </ScrollArea>
-          ) : null}
-          {!preferences.agentsCollapsed ? (
-            <div className="border-t-2 border-border p-3">
-              <StartAgentDialog
-                busy={busy}
-                onStart={(paneId, name, kind, args, timeoutMs) =>
-                  onCommand({ type: 'start-agent', paneId, name, kind, args, timeoutMs })
-                }
-                pane={pane}
-              />
-            </div>
-          ) : null}
-          {!preferences.agentsCollapsed ? (
-            <div className="border-t-2 border-border p-3 text-xs">
-              <div className="mb-2 flex items-center gap-2 font-heading">
-                <Wifi aria-hidden="true" className="size-3" /> Engine {connectionState}
-              </div>
-              <p className="truncate opacity-70">
-                v{status.server.version} · protocol {status.server.protocol}
-              </p>
-            </div>
-          ) : null}
-        </aside>
       </div>
       <RenameResourceDialog
         onOpenChange={(open) => !open && setRenameTarget(null)}
@@ -1570,7 +1594,7 @@ function ConnectedShell({
         onOpenChange={(open) => !open && setPaneControlsTarget(null)}
         open={Boolean(controlsPane)}
       >
-        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>Pane controls and details</DialogTitle>
             <DialogDescription>
@@ -1636,7 +1660,7 @@ function ConnectedShell({
         </DialogContent>
       </Dialog>
       <Dialog onOpenChange={setMobileSwitcherOpen} open={mobileSwitcherOpen}>
-        <DialogContent className="max-h-[90vh] max-w-xl overflow-hidden p-0">
+        <DialogContent className="max-h-[90vh] overflow-hidden p-0 sm:max-w-xl">
           <DialogHeader className="sr-only">
             <DialogTitle>Session switcher</DialogTitle>
             <DialogDescription>
@@ -1764,6 +1788,7 @@ function AppContent() {
           },
         );
       }
+      return next;
     } finally {
       setBusy(false);
     }
@@ -1830,7 +1855,7 @@ function AppContent() {
   }, []);
 
   const loadPlugins = useCallback(async () => {
-    setPluginStatus('loading');
+    setPluginStatus((current) => (current === 'ready' ? current : 'loading'));
     setPluginError(undefined);
     try {
       const [installed, actions] = await Promise.all([
@@ -1841,7 +1866,11 @@ function AppContent() {
         throw new Error('Herdr returned an unexpected plugin response.');
       }
       setPlugins(installed.plugins.map(installedPluginView));
-      setPluginActions(actions.actions.map(pluginActionView));
+      setPluginActions(
+        actions.actions
+          .filter((action) => isPluginActionCompatible(action, currentPluginPlatform))
+          .map(pluginActionView),
+      );
       setPluginStatus('ready');
     } catch (error) {
       setPluginStatus('error');
@@ -1853,6 +1882,34 @@ function AppContent() {
     setPluginsOpen(true);
     void loadPlugins();
   }, [loadPlugins]);
+
+  const installPlugin = useCallback(
+    async (intent: InstallPluginIntent) => {
+      if (result?.state !== 'connected' || !result.snapshot.focused_workspace_id) {
+        toast.error('Choose a Herdr workspace before installing a plugin.');
+        return;
+      }
+
+      setPluginsOpen(false);
+      const created = await runCommand({
+        type: 'create-tab',
+        workspaceId: result.snapshot.focused_workspace_id,
+        label: 'plugin install',
+      });
+      if (created?.state !== 'connected' || !created.snapshot.focused_pane_id) {
+        toast.error('Herdr did not create a terminal for the plugin installer.');
+        return;
+      }
+
+      await runCommand({
+        type: 'send-pane-input',
+        paneId: created.snapshot.focused_pane_id,
+        text: buildPluginInstallCommand(created.status.client.binary, intent),
+        keys: ['enter'],
+      });
+    },
+    [result, runCommand],
+  );
 
   const loadManifests = useCallback(async () => {
     setManifestStatus('loading');
@@ -2112,7 +2169,7 @@ function AppContent() {
       <ConnectedShell
         busy={busy}
         connectionState={connectionState}
-        onCommand={(command) => void runCommand(command)}
+        onCommand={runCommand}
         onNavigator={() => setNavigatorOpen(true)}
         onPlugins={openPlugins}
         onPreferencesChange={(next) => void savePreferences(next)}
@@ -2124,7 +2181,7 @@ function AppContent() {
       />
       {settings}
       <Dialog onOpenChange={setNavigatorOpen} open={navigatorOpen}>
-        <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden p-0">
+        <DialogContent className="max-h-[85vh] overflow-hidden p-0 sm:max-w-3xl">
           <DialogHeader className="sr-only">
             <DialogTitle>Session navigator</DialogTitle>
             <DialogDescription>Search Herdr workspaces, tabs, and panes.</DialogDescription>
@@ -2147,53 +2204,61 @@ function AppContent() {
         </DialogContent>
       </Dialog>
       <Dialog onOpenChange={setPluginsOpen} open={pluginsOpen}>
-        <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl">
+          <DialogHeader className="shrink-0 border-b-2 border-border px-6 py-5">
             <DialogTitle>Herdr plugins</DialogTitle>
             <DialogDescription>
               Installed plugins, public actions, and panes exposed by the running Herdr engine.
             </DialogDescription>
           </DialogHeader>
-          <PluginCenter
-            actions={pluginActions}
-            errorMessage={pluginError}
-            onClosePane={({ paneId }) => void runCommand({ type: 'close-plugin-pane', paneId })}
-            onFocusPane={({ paneId }) => void runCommand({ type: 'focus-plugin-pane', paneId })}
-            onInvokeAction={({ pluginId, actionId }) =>
-              void runCommand({
-                type: 'invoke-plugin-action',
-                pluginId,
-                actionId,
-                context: {
-                  workspaceId: result.snapshot.focused_workspace_id,
-                  tabId: result.snapshot.focused_tab_id,
-                  focusedPaneId: result.snapshot.focused_pane_id,
-                  invocationSource: 'desktop-plugin-center',
-                },
-              })
-            }
-            onOpenPane={({ pluginId, entrypoint, placement }) =>
-              void runCommand({
-                type: 'open-plugin-pane',
-                pluginId,
-                entrypoint,
-                placement,
-                workspaceId: result.snapshot.focused_workspace_id,
-                targetPaneId: result.snapshot.focused_pane_id,
-                direction: placement === 'split' ? 'right' : undefined,
-                focus: true,
-              })
-            }
-            onSetPluginEnabled={({ pluginId, enabled }) => {
-              void runCommand({
-                type: enabled ? 'enable-plugin' : 'disable-plugin',
-                pluginId,
-              }).then(loadPlugins);
-            }}
-            panes={[]}
-            plugins={plugins}
-            status={pluginStatus}
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto p-6" data-slot="plugin-scroll-region">
+            <PluginCenter
+              actions={pluginActions}
+              errorMessage={pluginError}
+              onInstallPlugin={(intent) => void installPlugin(intent)}
+              onClosePane={({ paneId }) => void runCommand({ type: 'close-plugin-pane', paneId })}
+              onFocusPane={({ paneId }) => void runCommand({ type: 'focus-plugin-pane', paneId })}
+              onInvokeAction={({ pluginId, actionId }) =>
+                void runCommand({
+                  type: 'invoke-plugin-action',
+                  pluginId,
+                  actionId,
+                  context: {
+                    workspaceId: result.snapshot.focused_workspace_id,
+                    tabId: result.snapshot.focused_tab_id,
+                    focusedPaneId: result.snapshot.focused_pane_id,
+                    invocationSource: 'desktop-plugin-center',
+                  },
+                })
+              }
+              onOpenPane={({ pluginId, entrypoint, placement }) =>
+                void runCommand({
+                  type: 'open-plugin-pane',
+                  pluginId,
+                  entrypoint,
+                  placement,
+                  ...(placement === 'tab' && result.snapshot.focused_workspace_id
+                    ? { workspaceId: result.snapshot.focused_workspace_id }
+                    : {}),
+                  ...((placement === 'split' || placement === 'zoomed') &&
+                  result.snapshot.focused_pane_id
+                    ? { targetPaneId: result.snapshot.focused_pane_id }
+                    : {}),
+                  ...(placement === 'split' ? { direction: 'right' as const } : {}),
+                  focus: true,
+                })
+              }
+              onSetPluginEnabled={({ pluginId, enabled }) => {
+                void runCommand({
+                  type: enabled ? 'enable-plugin' : 'disable-plugin',
+                  pluginId,
+                }).then(loadPlugins);
+              }}
+              panes={[]}
+              plugins={plugins}
+              status={pluginStatus}
+            />
+          </div>
         </DialogContent>
       </Dialog>
       <ShortcutHelpDialog onOpenChange={setShortcutsOpen} open={shortcutsOpen} />

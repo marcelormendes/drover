@@ -14,6 +14,7 @@ The project is intentionally not a Herdr fork and not a Herdr plugin. It can tra
 - Split, focus, swap, move, resize, rename, clear, close, and engine-zoom panes without losing terminal continuity.
 - Search, copy, safely open links, scroll through Herdr-owned history, and return to terminal bottom.
 - Launch every supported agent kind with native arguments and timeout, then focus, rename, or prompt it.
+- Paste clipboard images or drop image files into agent chats; they are staged locally and bridged to the agent as pasted paths, the same flow Herdr itself uses.
 - Show canonical agent readiness, sessions, metadata, priority ordering, and lifecycle notifications.
 - Search the full session with Navigator and use a compact mobile-sized session switcher.
 - Inspect and reload agent manifests, manage integrations, and use public Herdr plugins/actions/panes.

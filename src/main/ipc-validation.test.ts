@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
-
 import {
+  parseChatImageDrafts,
   parseHerdrCommand,
   parseHerdrQuery,
+  parsePaneId,
   parseTerminalInput,
   parseTerminalOpen,
   parseTerminalResize,
   parseTerminalScroll,
 } from '@/main/ipc-validation';
+import {
+  MAX_CHAT_IMAGE_ATTACHMENTS,
+  MAX_CHAT_IMAGE_BASE64_LENGTH,
+  MAX_CHAT_IMAGE_TOTAL_BYTES,
+} from '@/shared/desktop-api';
 
 describe('IPC validation', () => {
   it('accepts the finite Herdr command contract', () => {
@@ -74,6 +80,25 @@ describe('IPC validation', () => {
         kind: 'unknown',
       }),
     ).toThrow('Invalid Herdr command.');
+  });
+
+  it('accepts Herdr public identifiers after their counters pass nine', () => {
+    expect(parseHerdrCommand({ type: 'focus-workspace', workspaceId: 'wA' })).toEqual({
+      type: 'focus-workspace',
+      workspaceId: 'wA',
+    });
+    expect(parseHerdrCommand({ type: 'focus-tab', tabId: 'wA:tZ' })).toEqual({
+      type: 'focus-tab',
+      tabId: 'wA:tZ',
+    });
+    expect(parseHerdrCommand({ type: 'focus-pane', paneId: 'w2:pA' })).toEqual({
+      type: 'focus-pane',
+      paneId: 'w2:pA',
+    });
+    expect(parseHerdrQuery({ type: 'read-pane-output', paneId: 'wA:p11' })).toEqual({
+      type: 'read-pane-output',
+      paneId: 'wA:p11',
+    });
   });
 
   it('accepts only finite typed Herdr queries', () => {
@@ -188,6 +213,10 @@ describe('IPC validation', () => {
       },
     ],
     [
+      'agent slash-command pane input',
+      { type: 'send-pane-input', paneId: 'w1:p1', text: '/compact', keys: ['enter'] },
+    ],
+    [
       'agent view selection',
       {
         type: 'set-agent-view',
@@ -266,6 +295,10 @@ describe('IPC validation', () => {
     { type: 'resize-pane', paneId: 'w1:p1', direction: 'right', amount: 2 },
     { type: 'set-split-ratio', tabId: 'w1:t1', path: [false, 'left'], ratio: 0.5 },
     { type: 'prompt-agent', target: 'reviewer', text: '', wait: { until: ['finished'] } },
+    { type: 'send-pane-input', paneId: 'w1:p1' },
+    { type: 'send-pane-input', paneId: 'w1:p1', keys: [] },
+    { type: 'send-pane-input', paneId: 'w1:p1', text: '/ok', keys: ['enter', 42] },
+    { type: 'send-pane-input', paneId: 'not a pane', text: '/ok' },
     {
       type: 'set-agent-view',
       source: 'desktop',
@@ -303,11 +336,35 @@ describe('IPC validation', () => {
       cellHeightPx: 16,
     });
     expect(() => parseTerminalOpen({ paneId: 'w1:p1', cols: 0, rows: 24 })).toThrow(
-      'Invalid terminal attachment.',
+      'Invalid terminal dimensions.',
+    );
+    expect(() => parseTerminalOpen({ paneId: 'pane-1', cols: 80, rows: 24 })).toThrow(
+      'Invalid terminal pane identifier.',
     );
     expect(() => parseTerminalResize({ paneId: 'w1:p1', cols: 10_000, rows: 24 })).toThrow(
       'Invalid terminal resize.',
     );
+  });
+
+  it('accepts encoded pane identifiers throughout terminal control', () => {
+    expect(parseTerminalOpen({ paneId: 'w2:pA', cols: 120, rows: 40 })).toEqual({
+      paneId: 'w2:pA',
+      cols: 120,
+      rows: 40,
+    });
+    expect(parseTerminalResize({ paneId: 'w2:pA', cols: 100, rows: 32 })).toEqual({
+      paneId: 'w2:pA',
+      cols: 100,
+      rows: 32,
+    });
+    expect(parseTerminalInput({ paneId: 'w2:pA', text: 'pwd\n' })).toEqual({
+      paneId: 'w2:pA',
+      text: 'pwd\n',
+    });
+    expect(
+      parseTerminalScroll({ paneId: 'w2:pA', direction: 'up', lines: 3, source: 'wheel' }),
+    ).toEqual({ paneId: 'w2:pA', direction: 'up', lines: 3, source: 'wheel' });
+    expect(parsePaneId('w2:pA')).toBe('w2:pA');
   });
 
   it('accepts normal terminal input and rejects oversized payloads', () => {
@@ -346,5 +403,105 @@ describe('IPC validation', () => {
     expect(() => parseTerminalScroll({ paneId: 'w1:p1', direction: 'sideways', lines: 1 })).toThrow(
       'Invalid terminal scroll.',
     );
+  });
+});
+
+describe('chat image draft validation', () => {
+  const VALID = [{ extension: 'png', data: 'aGVsbG8=' }];
+
+  it('accepts a finite array of chat image drafts', () => {
+    expect(parseChatImageDrafts(VALID)).toEqual(VALID);
+    expect(parseChatImageDrafts([])).toEqual([]);
+    expect(
+      parseChatImageDrafts([
+        { extension: 'jpg', data: 'aGVsbG8=' },
+        { extension: 'webp', data: 'aGVsbG8=' },
+      ]),
+    ).toEqual([
+      { extension: 'jpg', data: 'aGVsbG8=' },
+      { extension: 'webp', data: 'aGVsbG8=' },
+    ]);
+  });
+
+  it('rejects non-array payloads', () => {
+    expect(() => parseChatImageDrafts({ extension: 'png', data: 'aGVsbG8=' })).toThrow(
+      'Invalid chat image drafts.',
+    );
+    expect(() => parseChatImageDrafts('png')).toThrow('Invalid chat image drafts.');
+  });
+
+  it('rejects unknown image extensions', () => {
+    expect(() => parseChatImageDrafts([{ extension: 'svg', data: 'aGVsbG8=' }])).toThrow(
+      'Invalid chat image drafts.',
+    );
+    expect(() => parseChatImageDrafts([{ extension: 'PNG', data: 'aGVsbG8=' }])).toThrow(
+      'Invalid chat image drafts.',
+    );
+  });
+
+  it('rejects drafts with missing or malformed data', () => {
+    expect(() => parseChatImageDrafts([{ extension: 'png' }])).toThrow(
+      'Invalid chat image drafts.',
+    );
+    expect(() => parseChatImageDrafts([{ extension: 'png', data: 42 }])).toThrow(
+      'Invalid chat image drafts.',
+    );
+    expect(() => parseChatImageDrafts([{ extension: 'png', data: 'not base64!' }])).toThrow(
+      'Invalid chat image drafts.',
+    );
+  });
+
+  it('rejects drafts over the base64 chat image limit', () => {
+    const oversized = 'A'.repeat(MAX_CHAT_IMAGE_BASE64_LENGTH + 1);
+    expect(() => parseChatImageDrafts([{ extension: 'png', data: oversized }])).toThrow(
+      'Invalid chat image drafts.',
+    );
+  });
+
+  it('rejects non-canonical base64 payloads', () => {
+    for (const data of ['A', 'A=', 'AA=', 'AAA==', 'aGVsbG8']) {
+      expect(() => parseChatImageDrafts([{ extension: 'png', data }])).toThrow(
+        'Invalid chat image drafts.',
+      );
+    }
+  });
+
+  it('rejects more than the maximum attachment count', () => {
+    const drafts = Array.from({ length: MAX_CHAT_IMAGE_ATTACHMENTS + 1 }, () => ({
+      extension: 'png',
+      data: 'aGVsbG8=',
+    }));
+    expect(() => parseChatImageDrafts(drafts)).toThrow('Invalid chat image drafts.');
+  });
+
+  it('rejects drafts over the total chat image byte budget', () => {
+    const big = 'A'.repeat(Math.ceil(MAX_CHAT_IMAGE_TOTAL_BYTES / 3) * 4 + 4);
+    expect(() => parseChatImageDrafts([{ extension: 'png', data: big }])).toThrow(
+      'Invalid chat image drafts.',
+    );
+  });
+
+  it('accepts a batch whose exact decoded size is the total budget', () => {
+    // 16 MiB binary with == padding must not be overcounted as 16 MiB + 2.
+    const data = Buffer.alloc(MAX_CHAT_IMAGE_TOTAL_BYTES / 2).toString('base64');
+    const drafts = [
+      { extension: 'png', data },
+      { extension: 'png', data },
+    ];
+    expect(parseChatImageDrafts(drafts)).toEqual(drafts);
+  });
+
+  it('rejects non-canonical base64 pad bits', () => {
+    for (const data of ['AB==', 'AAB=']) {
+      expect(() => parseChatImageDrafts([{ extension: 'png', data }])).toThrow(
+        'Invalid chat image drafts.',
+      );
+    }
+    expect(parseChatImageDrafts([{ extension: 'png', data: 'AA==' }])).toEqual([
+      { extension: 'png', data: 'AA==' },
+    ]);
+    expect(parseChatImageDrafts([{ extension: 'png', data: 'AAA=' }])).toEqual([
+      { extension: 'png', data: 'AAA=' },
+    ]);
   });
 });

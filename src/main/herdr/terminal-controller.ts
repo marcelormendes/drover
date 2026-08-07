@@ -142,7 +142,9 @@ export class TerminalController {
       this.child = null;
       const reason = signal
         ? `Herdr terminal controller exited with ${signal}.`
-        : `Herdr terminal controller exited with code ${code ?? 0}.`;
+        : code
+          ? `Herdr terminal controller exited with code ${code}.`
+          : 'Terminal control ended. Another client may have taken over this pane.';
       onEvent({ type: 'terminal.closed', paneId: request.paneId, reason });
     });
   }
@@ -165,16 +167,42 @@ export class TerminalController {
     this.write({ type: 'terminal.scroll', ...request });
   }
 
-  close(): void {
+  close(): Promise<void> {
     const child = this.child;
     if (!child) {
-      return;
+      return Promise.resolve();
     }
     this.write({ type: 'terminal.release' });
     this.child = null;
     this.generation += 1;
-    const killTimer = setTimeout(() => child.kill('SIGTERM'), 1_000);
-    killTimer.unref();
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(killTimer);
+          clearTimeout(capTimer);
+          resolve();
+        }
+      };
+      child.once('exit', finish);
+      const killTimer = setTimeout(() => child.kill('SIGTERM'), 1_000);
+      killTimer.unref();
+      const capTimer = setTimeout(finish, 1_500);
+      capTimer.unref();
+    });
+  }
+
+  // Replacement path: no release message — a release that reaches the engine
+  // after the successor's takeover would close the successor's stream.
+  kill(): void {
+    const child = this.child;
+    if (!child) {
+      return;
+    }
+    this.child = null;
+    this.generation += 1;
+    child.kill('SIGTERM');
   }
 
   private write(command: Record<string, unknown>): void {

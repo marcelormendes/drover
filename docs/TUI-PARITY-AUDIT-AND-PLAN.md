@@ -128,6 +128,7 @@ For 0.1.5:
 - Text copy uses the graphical terminal selection and the OS clipboard through an explicit user action.
 - Retained/plugin graphics use public graphics APIs only where a stable stream is available.
 - Irreducible image-clipboard and private client-frame behavior is recorded as requiring an upstream neutral bridge addition; it is not silently reimplemented.
+- Chat image paste is implemented on the client side with public APIs only: the desktop stages the clipboard image locally and brackets-pastes the staged path into the pane, mirroring Herdr's own image-paste flow. It never deserializes the private client protocol.
 
 Named-session selection, update/channel changes, remote attach orchestration, and some integration-status commands are CLI-only in the current engine. Where the TUI exposes them, the desktop main process may invoke the current Herdr CLI and must parse finite structured output. It must not persist an alternative representation.
 

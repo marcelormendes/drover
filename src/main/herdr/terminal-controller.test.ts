@@ -122,4 +122,38 @@ describe('TerminalController', () => {
       });
     });
   });
+
+  it('explains a clean exit as control moving to another client', async () => {
+    const child = fakeProcess();
+    const events = vi.fn();
+    const controller = new TerminalController(() => child, 'herdr');
+    controller.open({ paneId: 'w1:p3', cols: 80, rows: 24 }, events);
+
+    child.emit('exit', 0, null);
+
+    await vi.waitFor(() => {
+      expect(events).toHaveBeenCalledWith({
+        type: 'terminal.closed',
+        paneId: 'w1:p3',
+        reason: 'Terminal control ended. Another client may have taken over this pane.',
+      });
+    });
+  });
+
+  it('kills a replaced controller without sending a release that could race a takeover', () => {
+    const child = fakeProcess();
+    const events = vi.fn();
+    const writes: string[] = [];
+    child.stdin.setEncoding('utf8');
+    child.stdin.on('data', (chunk) => writes.push(chunk));
+    const controller = new TerminalController(() => child, 'herdr');
+    controller.open({ paneId: 'w1:p4', cols: 80, rows: 24 }, events);
+
+    controller.kill();
+    child.emit('exit', 0, null);
+
+    expect(writes).toEqual([]);
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(events).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'terminal.closed' }));
+  });
 });

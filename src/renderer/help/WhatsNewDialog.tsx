@@ -46,7 +46,7 @@ export function WhatsNewDialog({
 }: WhatsNewDialogProps) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>What's new in {version}</DialogTitle>
           <DialogDescription>
@@ -60,7 +60,7 @@ export function WhatsNewDialog({
               key={item.title}
             >
               <div className="flex gap-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-base border-2 border-border bg-main font-heading">
+                <span className="grid size-8 shrink-0 place-items-center rounded-base border-2 border-border bg-main font-heading text-main-foreground">
                   {index + 1}
                 </span>
                 <div>
@@ -74,7 +74,7 @@ export function WhatsNewDialog({
         {restartNeeded ? (
           <div
             aria-live="polite"
-            className="rounded-base border-2 border-border bg-main p-4 text-sm"
+            className="rounded-base border-2 border-border bg-main p-4 text-sm text-main-foreground"
           >
             A newer Herdr engine is ready. Live handoff preserves supported processes and layout.
           </div>

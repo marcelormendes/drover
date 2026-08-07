@@ -7,6 +7,7 @@ import { PluginCenter, type PluginCenterProps } from '@/renderer/plugins/PluginC
 const callbacks = {
   onClosePane: vi.fn(),
   onFocusPane: vi.fn(),
+  onInstallPlugin: vi.fn(),
   onInvokeAction: vi.fn(),
   onOpenPane: vi.fn(),
   onSetPluginEnabled: vi.fn(),
@@ -42,11 +43,76 @@ describe('PluginCenter', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('plugin manifest is invalid');
   });
 
-  it('renders an explicit empty installed-plugin state', () => {
+  it('renders one empty state when nothing is installed, not three empty panels', () => {
     renderCenter();
+
+    expect(
+      screen.getByRole('heading', { name: 'No plugins are installed in Herdr.' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Herdr owns its trust preview, build/i)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Plugin actions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Managed plugin panes' })).not.toBeInTheDocument();
+  });
+
+  it('starts Herdr’s native install flow for a GitHub plugin source and optional ref', async () => {
+    const user = userEvent.setup();
+    renderCenter();
+
+    await user.type(
+      screen.getByRole('textbox', { name: 'GitHub plugin source' }),
+      'smarzban/herdr-file-viewer',
+    );
+    await user.type(screen.getByRole('textbox', { name: 'Git ref' }), 'v1.15.0');
+    await user.click(screen.getByRole('button', { name: 'Install with Herdr' }));
+
+    expect(callbacks.onInstallPlugin).toHaveBeenCalledWith({
+      type: 'install-plugin',
+      source: 'smarzban/herdr-file-viewer',
+      ref: 'v1.15.0',
+    });
+    expect(screen.getByText(/normal trust preview/i)).toBeInTheDocument();
+  });
+
+  it('rejects sources that are not Herdr GitHub shorthands', async () => {
+    const user = userEvent.setup();
+    renderCenter();
+
+    await user.type(
+      screen.getByRole('textbox', { name: 'GitHub plugin source' }),
+      'https://github.com/smarzban/herdr-file-viewer',
+    );
+    await user.click(screen.getByRole('button', { name: 'Install with Herdr' }));
+
+    expect(callbacks.onInstallPlugin).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Use owner/repo');
+  });
+
+  it('shows the installed-plugin panel whenever the engine reports plugin data', () => {
+    renderCenter({
+      panes: [
+        {
+          paneId: 'w1:p9',
+          pluginId: 'example.review',
+          title: 'Review dashboard',
+          placement: 'overlay',
+          focused: false,
+        },
+      ],
+    });
 
     expect(screen.getByRole('heading', { name: 'Installed plugins' })).toBeInTheDocument();
     expect(screen.getByText('No plugins are installed in Herdr.')).toBeInTheDocument();
+  });
+
+  it('does not show a managed-pane panel when Herdr supplies no pane inventory', () => {
+    renderCenter({
+      plugins: [{ id: 'example.review', name: 'Review', state: 'enabled', version: '1.0.0' }],
+    });
+
+    expect(screen.queryByRole('heading', { name: 'Managed plugin panes' })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Installed plugins' }).closest('[data-slot="card"]'),
+    ).toHaveClass('self-start');
   });
 
   it('renders installed plugin states and emits enablement intents', async () => {
@@ -172,7 +238,9 @@ describe('PluginCenter', () => {
     );
     await user.selectOptions(screen.getByRole('combobox', { name: 'Review pane' }), 'history');
     await user.selectOptions(placement, 'popup');
-    await user.click(screen.getByRole('button', { name: 'Open Review pane' }));
+    const openPane = screen.getByRole('button', { name: 'Open Review pane' });
+    expect(openPane).toHaveTextContent('Open pane');
+    await user.click(openPane);
 
     expect(callbacks.onOpenPane).toHaveBeenCalledWith({
       entrypoint: 'history',
