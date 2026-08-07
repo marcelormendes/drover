@@ -1,0 +1,214 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Git ref whose source should be packaged
+        required: false
+        default: main
+        type: string
+      release_tag:
+        description: Release tag; defaults to the package version
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CHECKOUT_REF: ${{ inputs.release_ref || github.ref }}
+
+jobs:
+  prepare:
+    name: Verify release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Use the repository npm version
+        run: npm install --global npm@11.7.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify source
+        run: npm run verify
+
+      - name: Resolve and validate release version
+        id: release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          elif [ -n "${INPUT_RELEASE_TAG}" ]; then
+            tag="${INPUT_RELEASE_TAG}"
+          else
+            tag="v${version}"
+          fi
+          if [ "${tag}" != "v${version}" ]; then
+            echo "Release tag ${tag} does not match package version ${version}." >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: prepare
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Use the repository npm version
+        run: npm install --global npm@11.7.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import Apple Developer ID certificate
+        env:
+          HERDR_MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.HERDR_MACOS_CERTIFICATE_P12_BASE64 }}
+          HERDR_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.HERDR_MACOS_CERTIFICATE_PASSWORD }}
+          HERDR_MACOS_KEYCHAIN_PASSWORD: ${{ secrets.HERDR_MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "${HERDR_MACOS_CERTIFICATE_P12_BASE64}" ] || [ -z "${HERDR_MACOS_CERTIFICATE_PASSWORD}" ]; then
+            echo "The Apple Developer ID certificate secrets are required." >&2
+            exit 1
+          fi
+          keychain_password="${HERDR_MACOS_KEYCHAIN_PASSWORD:-$(uuidgen)}"
+          keychain_path="${RUNNER_TEMP}/herdr-signing.keychain-db"
+          certificate_path="${RUNNER_TEMP}/herdr-signing.p12"
+          printf '%s' "${HERDR_MACOS_CERTIFICATE_P12_BASE64}" | base64 --decode > "${certificate_path}"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${certificate_path}" -P "${HERDR_MACOS_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "${keychain_path}"
+          security list-keychains -d user -s "${keychain_path}"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
+          security find-identity -p codesigning -v "${keychain_path}"
+
+      - name: Build, sign, and notarize the app
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          HERDR_DESKTOP_ARCH: ${{ matrix.arch }}
+          HERDR_MACOS_NOTARIZE: "1"
+          HERDR_MACOS_SIGN_IDENTITY: ${{ secrets.HERDR_MACOS_SIGN_IDENTITY }}
+        run: npm run make
+
+      - name: Prepare stable artifact names
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          dmg_path="$(find out/make -type f -name '*.dmg' -print -quit)"
+          zip_path="$(find out/make -type f -name '*.zip' -print -quit)"
+          if [ -z "${dmg_path}" ] || [ -z "${zip_path}" ]; then
+            echo "Forge did not produce both DMG and ZIP artifacts." >&2
+            exit 1
+          fi
+          mkdir -p dist/release
+          cp "${dmg_path}" "dist/release/herdr-desktop-macos-${RELEASE_ARCH}.dmg"
+          cp "${zip_path}" "dist/release/herdr-desktop-macos-${RELEASE_ARCH}.zip"
+
+      - name: Notarize and staple the DMG
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          dmg_path="dist/release/herdr-desktop-macos-${RELEASE_ARCH}.dmg"
+          xcrun notarytool submit "${dmg_path}" \
+            --apple-id "${APPLE_ID}" \
+            --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --wait
+          xcrun stapler staple "${dmg_path}"
+          xcrun stapler validate "${dmg_path}"
+
+      - name: Validate the signed app
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          validation_dir="$(mktemp -d)"
+          ditto -x -k "dist/release/herdr-desktop-macos-${RELEASE_ARCH}.zip" "${validation_dir}"
+          app_path="${validation_dir}/Herdr Desktop.app"
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          spctl --assess --type execute --verbose=2 "${app_path}"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/release
+          if-no-files-found: error
+          retention-days: 2
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: macos-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist/release
+          sha256sum herdr-desktop-macos-*.dmg herdr-desktop-macos-*.zip > checksums.sha256
+
+      - name: Create or update GitHub Release
+        env:
+          CHECKOUT_REF: ${{ env.CHECKOUT_REF }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/release/* --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${RELEASE_TAG}" dist/release/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${CHECKOUT_REF}" \
+              --title "Herdr Desktop ${RELEASE_TAG}" \
+              --generate-notes
+          fi
