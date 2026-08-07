@@ -229,6 +229,16 @@ describe('App', () => {
       writePreferences: vi.fn(async (preferences) => preferences),
       chooseHerdrBinary: vi.fn(async () => connected),
       resetHerdrBinary: vi.fn(async () => connected),
+      applyRemoteEngine: vi.fn(async (target) => ({
+        state: 'off' as const,
+        host: target.host,
+        port: target.port,
+      })),
+      remoteEngineStatus: vi.fn(async () => ({
+        state: 'off' as const,
+        host: '',
+        port: 22025,
+      })),
       onDesktopAction: vi.fn(() => () => undefined),
       onSessionEvent: vi.fn(() => () => undefined),
       terminal: {

@@ -11,6 +11,7 @@ import type { HerdrEventEnvelope } from '@/shared/events';
 import type { EngineBootstrap } from '@/shared/herdr';
 import { IPC_CHANNELS } from '@/shared/ipc';
 import type { DesktopPreferences } from '@/shared/preferences';
+import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-engine';
 import type {
   TerminalEvent,
   TerminalInputRequest,
@@ -41,6 +42,10 @@ const api: HerdrDesktopApi = {
   chooseHerdrBinary: () =>
     ipcRenderer.invoke(IPC_CHANNELS.chooseBinary) as Promise<EngineBootstrap | null>,
   resetHerdrBinary: () => ipcRenderer.invoke(IPC_CHANNELS.resetBinary) as Promise<EngineBootstrap>,
+  applyRemoteEngine: (target: RemoteEngineTarget) =>
+    ipcRenderer.invoke(IPC_CHANNELS.remoteEngineApply, target) as Promise<RemoteEngineStatus>,
+  remoteEngineStatus: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.remoteEngineStatus) as Promise<RemoteEngineStatus>,
   onDesktopAction: (listener) => subscribe<DesktopAction>(IPC_CHANNELS.desktopAction, listener),
   onSessionEvent: (listener) => subscribe<HerdrEventEnvelope>(IPC_CHANNELS.sessionEvent, listener),
   terminal: Object.freeze({

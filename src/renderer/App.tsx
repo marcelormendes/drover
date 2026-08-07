@@ -128,7 +128,12 @@ import {
 } from '@/shared/desktop-api';
 import type { HerdrEventConnectionState } from '@/shared/events';
 import type { EngineBootstrap, PaneInfo, PaneLayoutSnapshot, WorkspaceInfo } from '@/shared/herdr';
-import { DEFAULT_DESKTOP_PREFERENCES, type DesktopPreferences } from '@/shared/preferences';
+import {
+  DEFAULT_DESKTOP_PREFERENCES,
+  DEFAULT_REMOTE_ENGINE_PREFERENCE,
+  type DesktopPreferences,
+} from '@/shared/preferences';
+import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-engine';
 import packageMetadata from '../../package.json';
 
 const INSTALL_URL = 'https://github.com/herdrdev/herdr#installation';
@@ -1748,6 +1753,11 @@ function AppContent() {
   const [manifests, setManifests] = useState<AgentManifestInfo[]>([]);
   const [connectionState, setConnectionState] = useState<HerdrEventConnectionState>('connecting');
   const [preferences, setPreferences] = useState<DesktopPreferences>(DEFAULT_DESKTOP_PREFERENCES);
+  const [remoteStatus, setRemoteStatus] = useState<RemoteEngineStatus>({
+    state: 'off',
+    host: '',
+    port: DEFAULT_REMOTE_ENGINE_PREFERENCE.port,
+  });
   const resultRequestSequence = useRef(0);
   const previousAgents = useRef<
     Extract<EngineBootstrap, { state: 'connected' }>['snapshot']['agents']
@@ -1882,6 +1892,21 @@ function AppContent() {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      return;
+    }
+    let cancelled = false;
+    void window.herdr.remoteEngineStatus().then((status) => {
+      if (!cancelled) {
+        setRemoteStatus(status);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsOpen]);
 
   const loadPlugins = useCallback(async () => {
     setPluginStatus((current) => (current === 'ready' ? current : 'loading'));
@@ -2230,6 +2255,12 @@ function AppContent() {
           target: target as (typeof INTEGRATION_TARGETS)[number],
         })
       }
+      onApplyRemoteEngine={(target) =>
+        void window.herdr.applyRemoteEngine(target).then((status) => {
+          setRemoteStatus(status);
+          void load();
+        })
+      }
       onOpenChange={setSettingsOpen}
       onPreferencesChange={(next) => void savePreferences(next)}
       onReloadConfig={() => void runCommand({ type: 'reload-server-config' })}
@@ -2245,6 +2276,7 @@ function AppContent() {
       }
       open={settingsOpen}
       preferences={preferences}
+      remoteStatus={remoteStatus}
     />
   );
 

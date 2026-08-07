@@ -1,4 +1,4 @@
-import { RefreshCw, Wrench } from 'lucide-react';
+import { PlugZap, RefreshCw, Wrench } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -21,6 +22,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import type { AgentManifestInfo } from '@/shared/desktop-api';
 import type { DesktopPreferences } from '@/shared/preferences';
+import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-engine';
 
 export interface IntegrationSummary {
   id: string;
@@ -45,6 +47,8 @@ interface SettingsDialogProps {
   onReloadManifests: () => void;
   onInstallIntegration: (id: string) => void;
   onUninstallIntegration: (id: string) => void;
+  onApplyRemoteEngine: (target: RemoteEngineTarget) => void;
+  remoteStatus: RemoteEngineStatus;
 }
 
 function SettingSection({ title, children }: { title: string; children: ReactNode }) {
@@ -72,6 +76,8 @@ export function SettingsDialog({
   onReloadManifests,
   onInstallIntegration,
   onUninstallIntegration,
+  onApplyRemoteEngine,
+  remoteStatus,
 }: SettingsDialogProps) {
   const update = <Key extends keyof DesktopPreferences>(key: Key, value: DesktopPreferences[Key]) =>
     onPreferencesChange({ ...preferences, [key]: value });
@@ -318,6 +324,107 @@ export function SettingsDialog({
                   >
                     <RefreshCw aria-hidden="true" /> Reload configuration
                   </Button>
+                </div>
+              </SettingSection>
+            </div>
+
+            <div className="sm:col-span-2">
+              <SettingSection title="Remote engine">
+                <div className="flex items-center justify-between gap-4">
+                  <Label htmlFor="remote-engine-switch">
+                    Use a Herdr engine on another computer (SSH)
+                  </Label>
+                  <Switch
+                    aria-label="Use a remote Herdr engine"
+                    checked={preferences.remoteEngine.enabled}
+                    id="remote-engine-switch"
+                    onCheckedChange={(checked) => {
+                      update('remoteEngine', {
+                        ...preferences.remoteEngine,
+                        enabled: checked,
+                      });
+                      onApplyRemoteEngine({
+                        enabled: checked,
+                        host: preferences.remoteEngine.host,
+                        port: preferences.remoteEngine.port,
+                      });
+                    }}
+                  />
+                </div>
+                <div className="mt-3 grid gap-2">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="remote-engine-host">SSH target</Label>
+                    <Input
+                      id="remote-engine-host"
+                      onChange={(event) =>
+                        update('remoteEngine', {
+                          ...preferences.remoteEngine,
+                          host: event.target.value,
+                        })
+                      }
+                      placeholder="user@host"
+                      value={preferences.remoteEngine.host}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="remote-engine-port">Forwarded port</Label>
+                    <Input
+                      id="remote-engine-port"
+                      max={65535}
+                      min={1}
+                      onChange={(event) => {
+                        const port = Number(event.target.value);
+                        update('remoteEngine', {
+                          ...preferences.remoteEngine,
+                          port:
+                            Number.isInteger(port) && port >= 1 && port <= 65535
+                              ? port
+                              : preferences.remoteEngine.port,
+                        });
+                      }}
+                      type="number"
+                      value={String(preferences.remoteEngine.port)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      disabled={busy}
+                      onClick={() =>
+                        onApplyRemoteEngine({
+                          enabled: preferences.remoteEngine.enabled,
+                          host: preferences.remoteEngine.host,
+                          port: preferences.remoteEngine.port,
+                        })
+                      }
+                      variant="neutral"
+                    >
+                      <PlugZap aria-hidden="true" />
+                      {preferences.remoteEngine.enabled ? 'Reconnect' : 'Test connection'}
+                    </Button>
+                    <p
+                      aria-live="polite"
+                      className={
+                        remoteStatus.state === 'error'
+                          ? 'min-w-0 flex-1 text-xs text-red-500'
+                          : 'min-w-0 flex-1 truncate text-xs opacity-70'
+                      }
+                    >
+                      {remoteStatus.state === 'off' && 'Not connected.'}
+                      {remoteStatus.state === 'starting' && 'Connecting…'}
+                      {remoteStatus.state === 'connected' && `Connected to ${remoteStatus.host}.`}
+                      {remoteStatus.state === 'error' &&
+                        (remoteStatus.message ?? 'Remote engine connection failed.')}
+                    </p>
+                  </div>
+                  <p className="text-xs leading-relaxed opacity-70">
+                    Runs agents, terminals, and files on the remote computer through an SSH tunnel.
+                    The target needs a running Herdr server and a socket bridge (
+                    <code className="font-mono">
+                      socat TCP-LISTEN:&lt;port&gt;,bind=127.0.0.1,reuseaddr,fork
+                      UNIX-CONNECT:$HOME/.config/herdr/herdr.sock
+                    </code>
+                    ). Both sides must run the same Herdr version.
+                  </p>
                 </div>
               </SettingSection>
             </div>

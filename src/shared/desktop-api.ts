@@ -1,6 +1,7 @@
 import type { HerdrEventEnvelope } from '@/shared/events';
 import type { EngineBootstrap } from '@/shared/herdr';
 import type { DesktopPreferences } from '@/shared/preferences';
+import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-engine';
 import type {
   TerminalEvent,
   TerminalInputRequest,
@@ -478,6 +479,8 @@ export interface HerdrDesktopApi {
   writePreferences(preferences: DesktopPreferences): Promise<DesktopPreferences>;
   chooseHerdrBinary(): Promise<EngineBootstrap | null>;
   resetHerdrBinary(): Promise<EngineBootstrap>;
+  applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngineStatus>;
+  remoteEngineStatus(): Promise<RemoteEngineStatus>;
   onDesktopAction(listener: (action: DesktopAction) => void): () => void;
   onSessionEvent(listener: (event: HerdrEventEnvelope) => void): () => void;
   terminal: {

@@ -20,17 +20,20 @@ import {
   parseHerdrCommand,
   parseHerdrQuery,
   parsePaneId,
+  parseRemoteEngineTarget,
   parseTerminalInput,
   parseTerminalOpen,
   parseTerminalResize,
   parseTerminalScroll,
 } from '@/main/ipc-validation';
+import { RemoteEngineTunnel } from '@/main/remote-engine';
 import { isAllowedExternalUrl, isTrustedRendererUrl } from '@/main/security';
 import { ConnectedSessionTracker } from '@/main/session-tracker';
 import { DEMO_BOOTSTRAP, demoQueryResult } from '@/shared/demo';
 import type { EngineBootstrap } from '@/shared/herdr';
 import { IPC_CHANNELS } from '@/shared/ipc';
 import { parseDesktopPreferences } from '@/shared/preferences';
+import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-engine';
 
 function defaultHerdrBinary(): string {
   return (
@@ -54,6 +57,7 @@ let herdrBinary = defaultHerdrBinary();
 let engine = createEngine(herdrBinary);
 let binaryPreference: HerdrBinaryPreference | null = null;
 let desktopPreferences: DesktopPreferencesStore | null = null;
+const remoteTunnel = new RemoteEngineTunnel();
 const terminalControllers = new TerminalControllerPool(
   () => new TerminalController(undefined, herdrBinary),
 );
@@ -109,6 +113,45 @@ function configureHerdrBinary(binary: string): void {
   engine = createEngine(binary);
 }
 
+function remoteFailureMessage(result: EngineBootstrap): string {
+  switch (result.state) {
+    case 'connected':
+      return '';
+    case 'stopped':
+      return 'No Herdr server is running on the target machine.';
+    case 'incompatible':
+      return 'The remote Herdr version is incompatible with the local client.';
+    case 'missing':
+      return 'The Herdr binary was not found.';
+    default:
+      return result.message ?? 'Could not reach the remote Herdr engine.';
+  }
+}
+
+/**
+ * Applies the remote-engine tunnel: starts/stops ssh + the local socket
+ * bridge, points HERDR_SOCKET_PATH at the tunnel while active, and confirms
+ * reachability by bootstrapping through it. On failure the tunnel is torn
+ * down and the env override removed so the local engine keeps working.
+ */
+async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngineStatus> {
+  const status = await remoteTunnel.apply(target);
+  if (status.state === 'off') {
+    delete process.env.HERDR_SOCKET_PATH;
+    return status;
+  }
+  if (status.socketPath) {
+    process.env.HERDR_SOCKET_PATH = status.socketPath;
+  }
+  const result = await engine.bootstrap();
+  if (result.state !== 'connected') {
+    delete process.env.HERDR_SOCKET_PATH;
+    await remoteTunnel.stop();
+    return remoteTunnel.setConnected(false, remoteFailureMessage(result));
+  }
+  return remoteTunnel.setConnected(true);
+}
+
 function assertTrustedSender(url: string | undefined): void {
   if (!url || !isTrustedRendererUrl(url, trustedRendererUrl)) {
     throw new Error('Rejected IPC request from an untrusted renderer.');
@@ -130,6 +173,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.startServer, async (event) => {
     assertTrustedSender(event.senderFrame?.url);
+    if (remoteTunnel.active) {
+      // The tunnel owns the socket path; never start a local server on top of it.
+      return trackConnectedSession(demoMode ? DEMO_BOOTSTRAP : await engine.bootstrap());
+    }
     return trackConnectedSession(demoMode ? DEMO_BOOTSTRAP : await engine.startServer());
   });
 
@@ -201,6 +248,16 @@ function registerIpcHandlers(): void {
     await binaryPreference?.clear();
     configureHerdrBinary(defaultHerdrBinary());
     return trackConnectedSession(await engine.bootstrap());
+  });
+
+  ipcMain.handle(IPC_CHANNELS.remoteEngineApply, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    return applyRemoteEngine(parseRemoteEngineTarget(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.remoteEngineStatus, async (event) => {
+    assertTrustedSender(event.senderFrame?.url);
+    return remoteTunnel.status;
   });
 
   ipcMain.handle(IPC_CHANNELS.terminalOpen, (event, candidate: unknown) => {
@@ -327,6 +384,16 @@ if (!started) {
       if (selectedBinary) {
         configureHerdrBinary(selectedBinary);
       }
+    }
+    const storedPreferences = await desktopPreferences.read();
+    if (storedPreferences.remoteEngine.enabled) {
+      // Re-establish the SSH tunnel from the persisted settings; failures
+      // fall back to the local engine with the status surfaced in Settings.
+      void applyRemoteEngine({
+        enabled: true,
+        host: storedPreferences.remoteEngine.host,
+        port: storedPreferences.remoteEngine.port,
+      });
     }
     registerIpcHandlers();
     configureApplicationMenu();
