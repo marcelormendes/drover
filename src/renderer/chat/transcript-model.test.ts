@@ -333,6 +333,33 @@ describe('applyPaneRead thinking capture', () => {
       thinkingLines: ['Second draft.'],
     });
   });
+
+  it('keeps the richer captured set when a completion frame only recolors part of it', () => {
+    const submitted = submitUserMessage(createChatTranscript(), {
+      submissionId: 'turn-1',
+      text: 'Fix the layout.',
+    });
+    const streamed = applyPaneRead(submitted, {
+      text: 'The user wants the layout fixed.\nHere is the fix.',
+      revision: 42,
+      status: 'working',
+      thinkingLines: ['The user wants the layout fixed.', 'A second thought.'],
+    });
+
+    // The CLI kept one thinking line muted but recolored the other to the
+    // answer foreground in its final frame; a strict subset must not shrink
+    // the captured set or that paragraph would render white.
+    const completed = applyPaneRead(streamed, {
+      text: 'The user wants the layout fixed.\nHere is the fix.',
+      revision: 43,
+      status: 'idle',
+      thinkingLines: ['The user wants the layout fixed.'],
+    });
+
+    expect(completed.messages[1]).toMatchObject({
+      thinkingLines: ['The user wants the layout fixed.', 'A second thought.'],
+    });
+  });
 });
 
 describe('extractPaneResponse collapse handling', () => {

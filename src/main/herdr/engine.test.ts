@@ -691,7 +691,10 @@ describe('HerdrEngine.query', () => {
       params: {
         pane_id: 'w1:p1',
         source: 'recent_unwrapped',
-        format: 'text',
+        // The engine exposes `format: 'ansi'` so the chat surface can see
+        // the CLI's own colors: 'text' always strips, even with
+        // strip_ansi: false (the server only honors the flag in 'ansi').
+        format: 'ansi',
         strip_ansi: false,
         lines: 500,
       },
@@ -702,7 +705,7 @@ describe('HerdrEngine.query', () => {
           workspace_id: 'w1',
           tab_id: 'w1:t1',
           source: 'recent_unwrapped',
-          format: 'text',
+          format: 'ansi',
           text: 'Implemented the chat surface.',
           revision: 12,
           truncated: false,

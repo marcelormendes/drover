@@ -270,13 +270,27 @@ export function applyPaneRead(
     return transcript;
   }
   // A final frame that collapsed or recolored the thinking block carries no
-  // markers; keep the set captured while the turn streamed.
-  const thinkingLines =
+  // (or fewer) markers; keep the set captured while the turn streamed. Only a
+  // read with genuinely new muted lines replaces it — a strict subset just
+  // means the CLI recolored part of the thinking to the answer foreground.
+  let thinkingLines =
     paneRead.thinkingLines && paneRead.thinkingLines.length > 0
       ? [...paneRead.thinkingLines]
       : currentResponse?.role === 'assistant'
         ? currentResponse.thinkingLines
         : undefined;
+  if (
+    thinkingLines &&
+    currentResponse?.role === 'assistant' &&
+    currentResponse.thinkingLines &&
+    currentResponse.thinkingLines.length > 0
+  ) {
+    const existing = new Set(currentResponse.thinkingLines);
+    const addsNewLines = thinkingLines.some((line) => !existing.has(line));
+    if (!addsNewLines) {
+      thinkingLines = [...currentResponse.thinkingLines];
+    }
+  }
   const response: ChatAssistantMessage = {
     id: responseId,
     turnId,

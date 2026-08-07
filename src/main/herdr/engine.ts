@@ -475,14 +475,16 @@ function queryRequest(query: HerdrQuery): {
 } {
   switch (query.type) {
     case 'read-pane-output':
+      // The server's 'text' format always strips ANSI (strip_ansi is only
+      // honored in 'ansi' format). The chat surface needs the CLI's own
+      // colors to tell thinking from answer, so request the raw stream and
+      // strip locally.
       return {
         method: 'pane.read',
         params: {
           pane_id: query.paneId,
           source: 'recent_unwrapped',
-          format: 'text',
-          // ANSI colors carry the thinking-vs-answer distinction agent CLIs
-          // render; the chat surface keeps them and strips locally.
+          format: query.ansi ? 'ansi' : 'text',
           strip_ansi: !query.ansi,
           ...(query.lines === undefined ? {} : { lines: query.lines }),
         },
