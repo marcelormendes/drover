@@ -1748,58 +1748,86 @@ function AppContent() {
   const [manifests, setManifests] = useState<AgentManifestInfo[]>([]);
   const [connectionState, setConnectionState] = useState<HerdrEventConnectionState>('connecting');
   const [preferences, setPreferences] = useState<DesktopPreferences>(DEFAULT_DESKTOP_PREFERENCES);
+  const resultRequestSequence = useRef(0);
   const previousAgents = useRef<
     Extract<EngineBootstrap, { state: 'connected' }>['snapshot']['agents']
   >([]);
 
-  const load = useCallback(async () => {
-    setBusy(true);
-    try {
-      const next = await window.herdr.bootstrap();
-      setResult(next);
-      setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
-    } finally {
-      setBusy(false);
+  const streamStateRevision = useRef(0);
+  const applyLatestResult = useCallback((sequence: number, next: EngineBootstrap) => {
+    if (sequence !== resultRequestSequence.current) {
+      return false;
     }
+    setResult(next);
+    return true;
   }, []);
+
+  const load = useCallback(
+    async (quiet = false) => {
+      const sequence = ++resultRequestSequence.current;
+      const streamRevision = streamStateRevision.current;
+      // Background refreshes (driven by the session event stream) must not
+      // flash the toolbar's busy state; only user-initiated reloads do.
+      if (!quiet) {
+        setBusy(true);
+      }
+      try {
+        const next = await window.herdr.bootstrap();
+        if (applyLatestResult(sequence, next) && streamStateRevision.current === streamRevision) {
+          setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
+        }
+      } finally {
+        if (!quiet) {
+          setBusy(false);
+        }
+      }
+    },
+    [applyLatestResult],
+  );
 
   const startServer = useCallback(async () => {
+    const sequence = ++resultRequestSequence.current;
     setBusy(true);
     try {
-      setResult(await window.herdr.startServer());
+      applyLatestResult(sequence, await window.herdr.startServer());
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyLatestResult]);
 
-  const runCommand = useCallback(async (command: HerdrCommand) => {
-    setBusy(true);
-    try {
-      const next = await window.herdr.command(command);
-      if (next.state === 'connected') {
-        setResult(next);
-      } else {
-        toast.error(
-          next.state === 'error' || next.state === 'missing'
-            ? next.message
-            : 'Herdr command failed.',
-          {
-            description: next.state === 'error' ? next.details : undefined,
-          },
-        );
+  const runCommand = useCallback(
+    async (command: HerdrCommand) => {
+      const sequence = ++resultRequestSequence.current;
+      setBusy(true);
+      try {
+        const next = await window.herdr.command(command);
+        if (next.state === 'connected') {
+          applyLatestResult(sequence, next);
+        } else {
+          toast.error(
+            next.state === 'error' || next.state === 'missing'
+              ? next.message
+              : 'Herdr command failed.',
+            {
+              description: next.state === 'error' ? next.details : undefined,
+            },
+          );
+        }
+        return next;
+      } finally {
+        setBusy(false);
       }
-      return next;
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+    },
+    [applyLatestResult],
+  );
 
   const chooseBinary = useCallback(async () => {
+    const sequence = ++resultRequestSequence.current;
     setBusy(true);
     try {
       const next = await window.herdr.chooseHerdrBinary();
       if (next) {
-        setResult(next);
+        applyLatestResult(sequence, next);
       }
     } catch (error) {
       toast.error('The selected file cannot run as Herdr.', {
@@ -1808,16 +1836,17 @@ function AppContent() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyLatestResult]);
 
   const resetBinary = useCallback(async () => {
+    const sequence = ++resultRequestSequence.current;
     setBusy(true);
     try {
-      setResult(await window.herdr.resetHerdrBinary());
+      applyLatestResult(sequence, await window.herdr.resetHerdrBinary());
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyLatestResult]);
 
   useEffect(() => {
     void load();
@@ -1931,7 +1960,75 @@ function AppContent() {
   }, [loadManifests]);
 
   useEffect(() => {
+    // The engine streams a constant trickle of events (focus changes, layout
+    // updates, transient agent tabs). Re-bootstrapping per event spawns CLI
+    // processes and flashes the toolbar, so coalesce: refresh once the stream
+    // has settled for a beat, never overlap an in-flight refresh, and never
+    // let the snapshot age past the freshness bound even under a flood.
+    const EVENT_REFRESH_SETTLE_MS = 400;
+    const EVENT_REFRESH_MAX_WAIT_MS = 1_000;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+    let dirty = false;
+    let disposed = false;
+    // The mount-time load() just ran; count it as the last completion.
+    let lastCompletedAt = Date.now();
+    const clearTimer = () => {
+      if (refreshTimer !== undefined) {
+        clearTimeout(refreshTimer);
+        refreshTimer = undefined;
+      }
+    };
+    const runRefresh = async () => {
+      clearTimer();
+      if (disposed) {
+        return;
+      }
+      if (inFlight) {
+        // Events arrived while a bootstrap is still running; drain them
+        // exactly once when it finishes instead of overlapping.
+        dirty = true;
+        return;
+      }
+      inFlight = true;
+      try {
+        const sinceLast = Date.now() - lastCompletedAt;
+        if (sinceLast < EVENT_REFRESH_SETTLE_MS) {
+          refreshTimer = setTimeout(() => void runRefresh(), EVENT_REFRESH_SETTLE_MS - sinceLast);
+          return;
+        }
+        await load(true);
+      } finally {
+        inFlight = false;
+        lastCompletedAt = Date.now();
+      }
+      if (disposed) {
+        return;
+      }
+      if (dirty) {
+        dirty = false;
+        refreshTimer = setTimeout(() => void runRefresh(), 0);
+      }
+    };
+    const scheduleRefresh = () => {
+      if (disposed) {
+        return;
+      }
+      clearTimer();
+      if (inFlight) {
+        dirty = true;
+        return;
+      }
+      // Trailing settle: events reset the timer to 400ms of quiet. Under a
+      // continuous flood that would starve the snapshot, so cap the wait at
+      // the freshness bound.
+      const sinceLast = Date.now() - lastCompletedAt;
+      const wait = Math.max(
+        0,
+        Math.min(EVENT_REFRESH_SETTLE_MS, EVENT_REFRESH_MAX_WAIT_MS - sinceLast),
+      );
+      refreshTimer = setTimeout(() => void runRefresh(), wait);
+    };
     const unsubscribe = window.herdr.onSessionEvent((event) => {
       if (event.event === 'desktop.connection_state') {
         const state = event.data.state;
@@ -1941,15 +2038,17 @@ function AppContent() {
           state === 'reconnecting' ||
           state === 'disconnected'
         ) {
+          streamStateRevision.current += 1;
           setConnectionState(state);
         }
         return;
       }
-      clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => void load(), 120);
+      scheduleRefresh();
     });
     return () => {
-      clearTimeout(refreshTimer);
+      disposed = true;
+      dirty = false;
+      clearTimer();
       unsubscribe();
     };
   }, [load]);

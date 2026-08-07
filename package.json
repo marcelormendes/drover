@@ -2,7 +2,7 @@
   "name": "herdr-desktop",
   "productName": "Herdr Desktop",
   "version": "0.1.5",
-  "description": "A desktop interface powered by the Herdr engine.",
+  "description": "A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.",
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
@@ -17,8 +17,9 @@
     "test:watch": "vitest",
     "lint": "biome check .",
     "format": "biome format --write .",
+    "site:build": "node scripts/build-site.mjs",
     "check:latest": "npm outdated",
-    "verify": "npm run typecheck && npm run lint && npm test"
+    "verify": "npm run typecheck && npm run lint && npm test && npm run site:build"
   },
   "keywords": [
     "herdr",

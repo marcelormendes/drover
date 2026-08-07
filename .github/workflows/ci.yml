@@ -44,3 +44,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Build website
+        run: npm run site:build

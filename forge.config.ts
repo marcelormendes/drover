@@ -9,18 +9,46 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import type { ForgeConfig } from '@electron-forge/shared-types';
+import { APP_DESCRIPTION, APP_NAME } from './src/main/app-branding';
 
 const applePlatforms = new Set(['darwin', 'mas']);
 const execFileAsync = promisify(execFile);
+const macosSignIdentity = process.env.HERDR_MACOS_SIGN_IDENTITY?.trim();
+const macosNotarize = ['1', 'true', 'yes'].includes(
+  process.env.HERDR_MACOS_NOTARIZE?.toLowerCase() ?? '',
+);
+
+function notarizationCredentials() {
+  if (!macosNotarize) {
+    return undefined;
+  }
+  const appleId = process.env.APPLE_ID?.trim();
+  const appleIdPassword = process.env.APPLE_APP_SPECIFIC_PASSWORD?.trim();
+  const teamId = process.env.APPLE_TEAM_ID?.trim();
+  if (!macosSignIdentity || !appleId || !appleIdPassword || !teamId) {
+    throw new Error(
+      'macOS notarization requires HERDR_MACOS_SIGN_IDENTITY, APPLE_ID, APPLE_TEAM_ID, and APPLE_APP_SPECIFIC_PASSWORD.',
+    );
+  }
+  return { appleId, appleIdPassword, teamId };
+}
 
 const config: ForgeConfig = {
   packagerConfig: {
     appBundleId: 'dev.herdr.desktop',
     appCategoryType: 'public.app-category.developer-tools',
+    appCopyright: 'Copyright © 2026 Herdr Desktop contributors',
     asar: true,
+    extendInfo: {
+      CFBundleDisplayName: APP_NAME,
+      CFBundleGetInfoString: APP_DESCRIPTION,
+      CFBundleName: APP_NAME,
+    },
     icon: 'resources/icon',
-    name: 'Herdr Desktop',
-    executableName: 'Herdr Desktop',
+    name: APP_NAME,
+    executableName: APP_NAME,
+    ...(macosSignIdentity ? { osxSign: { identity: macosSignIdentity } } : {}),
+    ...(macosNotarize ? { osxNotarize: notarizationCredentials() } : {}),
   },
   rebuildConfig: {},
   makers: [
@@ -84,12 +112,22 @@ const config: ForgeConfig = {
         [FuseV1Options.WasmTrapHandlers]: true,
       });
     },
-    postPackage: async (_forgeConfig, { outputPaths, platform }) => {
+    postPackage: async (forgeConfig, { outputPaths, platform }) => {
       if (!applePlatforms.has(platform)) {
         return;
       }
       for (const outputPath of outputPaths) {
-        const appPath = path.join(outputPath, 'Herdr Desktop.app');
+        const appPath = path.join(outputPath, `${APP_NAME}.app`);
+        if (forgeConfig.packagerConfig.osxSign) {
+          await execFileAsync('/usr/bin/codesign', [
+            '--verify',
+            '--deep',
+            '--strict',
+            '--verbose=2',
+            appPath,
+          ]);
+          continue;
+        }
         await execFileAsync('/usr/bin/xattr', ['-cr', appPath]);
         await execFileAsync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', appPath]);
       }
