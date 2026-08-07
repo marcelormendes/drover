@@ -216,3 +216,50 @@ describe('RemoteEngineTunnel lifecycle hardening', () => {
     expect(tunnel.status.state).toBe('off');
   });
 });
+
+describe('RemoteEngineTunnel shutdown and pending work', () => {
+  it('is active while the bridge is still being created', async () => {
+    let releaseBridge!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseBridge = resolve;
+    });
+    const sshSpawn = vi.fn<SpawnCall>(() => fakeChild());
+    const tunnel = new RemoteEngineTunnel({
+      createBridge: vi.fn(async () => {
+        await gate;
+        return { close: vi.fn() };
+      }),
+      socketPath: '/tmp/herdr-test-remote.sock',
+      sshSpawn,
+    });
+    const pending = tunnel.apply(target);
+    await vi.waitFor(() => expect(tunnel.active).toBe(true));
+    releaseBridge();
+    await pending;
+  });
+
+  it('never spawns SSH after a stop that raced an in-flight apply', async () => {
+    let releaseBridge!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseBridge = resolve;
+    });
+    const sshSpawn = vi.fn<SpawnCall>(() => fakeChild());
+    const tunnel = new RemoteEngineTunnel({
+      createBridge: vi.fn(async () => {
+        await gate;
+        return { close: vi.fn() };
+      }),
+      socketPath: '/tmp/herdr-test-remote.sock',
+      sshSpawn,
+    });
+    const pending = tunnel.apply(target);
+    const stopping = tunnel.stop();
+    releaseBridge();
+    await Promise.all([pending, stopping]);
+    expect(tunnel.status.state).toBe('off');
+    const spawns = sshSpawn.mock.calls.length;
+    await tunnel.stop();
+    expect(sshSpawn.mock.calls.length).toBe(spawns);
+    expect(tunnel.status.state).toBe('off');
+  });
+});

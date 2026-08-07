@@ -44,6 +44,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   const [state, setState] = useState<'attaching' | 'attached' | 'closed' | 'error'>('attaching');
   const [message, setMessage] = useState('Attaching through Herdr…');
   const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [engineGeneration, setEngineGeneration] = useState(0);
   const retryRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const stableTimerRef = useRef<number | null>(null);
@@ -71,6 +72,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     }
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: engineGeneration is an intentional dependency — the engine-changed event bumps it so this effect re-runs and the view attaches through the new engine.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) {
@@ -205,6 +207,14 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       }
     });
     const selection = terminal.onSelectionChange(() => setHasSelection(terminal.hasSelection()));
+    const stopSessionEvents = window.herdr.onSessionEvent((event) => {
+      // The engine target changed (local ↔ remote): the main process closed
+      // every terminal controller, so this view must attach again through the
+      // new engine even when the pane id is unchanged.
+      if (event.event === 'desktop.engine_changed') {
+        setEngineGeneration((generation) => generation + 1);
+      }
+    });
     const observer = new ResizeObserver(() => {
       fitTerminal();
       attachWhenSized();
@@ -216,6 +226,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     return () => {
       observer.disconnect();
       stopEvents();
+      stopSessionEvents();
       if (retryTimerRef.current !== null) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
@@ -236,7 +247,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       }
       void window.herdr.terminal.close(pane.pane_id);
     };
-  }, [connectionAttempt, pane.pane_id]);
+  }, [connectionAttempt, engineGeneration, pane.pane_id]);
 
   return (
     <div className="relative min-h-0 flex-1 bg-[#0f0f10]">

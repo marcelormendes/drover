@@ -8,6 +8,11 @@ const terminalEvents = vi.hoisted(() => ({
 const resizeObserver = vi.hoisted(() => ({
   listener: undefined as ResizeObserverCallback | undefined,
 }));
+const sessionEvents = vi.hoisted(() => ({
+  listener: undefined as
+    | ((event: { event: string; data: Record<string, unknown> }) => void)
+    | undefined,
+}));
 const searchAddon = vi.hoisted(() => ({
   findNext: vi.fn(),
   findPrevious: vi.fn(),
@@ -142,6 +147,10 @@ describe('TerminalPanel', () => {
           return () => undefined;
         }),
       },
+      onSessionEvent: vi.fn((listener) => {
+        sessionEvents.listener = listener;
+        return () => undefined;
+      }),
     } as unknown as typeof window.herdr;
   });
 
@@ -425,5 +434,26 @@ describe('TerminalPanel', () => {
       unit: 'page',
       amount: 1,
     });
+  });
+});
+
+describe('TerminalPanel engine reattach', () => {
+  it('re-opens the terminal when the engine changes with the same pane id', async () => {
+    render(<TerminalPanel pane={pane} />);
+    const open = window.herdr.terminal.open as unknown as ReturnType<typeof vi.fn>;
+    const before = open.mock.calls.length;
+    expect(before).toBeGreaterThan(0);
+    sessionEvents.listener?.({ event: 'desktop.engine_changed', data: { generation: 2 } });
+    await waitFor(() => expect(open.mock.calls.length).toBeGreaterThan(before));
+    expect(open.mock.calls.at(-1)?.[0]).toMatchObject({ paneId: pane.pane_id });
+  });
+
+  it('ignores unrelated session events', async () => {
+    render(<TerminalPanel pane={pane} />);
+    const open = window.herdr.terminal.open as unknown as ReturnType<typeof vi.fn>;
+    const before = open.mock.calls.length;
+    sessionEvents.listener?.({ event: 'desktop.something_else', data: {} });
+    await act(async () => {});
+    expect(open.mock.calls.length).toBe(before);
   });
 });

@@ -207,3 +207,43 @@ describe('SettingsDialog remote engine section', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('SettingsDialog remote engine applying state', () => {
+  it('keeps controls disabled until the apply promise settles', async () => {
+    const user = userEvent.setup();
+    let resolveApply!: (status: { state: 'connected'; host: string; port: number }) => void;
+    const pending = new Promise<{ state: 'connected'; host: string; port: number }>((resolve) => {
+      resolveApply = resolve;
+    });
+    function Harness() {
+      const [preferences, setPreferences] = useState(DEFAULT_DESKTOP_PREFERENCES);
+      return (
+        <SettingsDialog
+          binary="/usr/local/bin/herdr"
+          busy={false}
+          integrations={[]}
+          manifestStatus="ready"
+          manifests={[]}
+          onApplyRemoteEngine={() => pending}
+          onChooseBinary={vi.fn()}
+          onInstallIntegration={vi.fn()}
+          onOpenChange={vi.fn()}
+          onPreferencesChange={setPreferences}
+          onReloadConfig={vi.fn()}
+          onReloadManifests={vi.fn()}
+          onResetBinary={vi.fn()}
+          onUninstallIntegration={vi.fn()}
+          open
+          preferences={preferences}
+          remoteStatus={{ state: 'off', host: '', port: 22025 }}
+        />
+      );
+    }
+    render(<Harness />);
+    const toggle = screen.getByRole('switch', { name: 'Use a remote Herdr engine' });
+    await user.click(toggle);
+    expect(toggle).toBeDisabled();
+    resolveApply({ state: 'connected', host: '', port: 22025 });
+    await vi.waitFor(() => expect(toggle).not.toBeDisabled());
+  });
+});

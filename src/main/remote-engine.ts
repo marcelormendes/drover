@@ -126,6 +126,9 @@ export class RemoteEngineTunnel {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       return this.setStatus('error', 'Port must be between 1 and 65535.');
     }
+    // Connecting work is active from here on: a quit during bridge creation
+    // must still be able to see the tunnel as active and stop it.
+    this.setStatus('starting', undefined, this.socketPath);
     try {
       this.bridge = await this.createBridge(this.socketPath, port);
     } catch (error) {
@@ -172,7 +175,15 @@ export class RemoteEngineTunnel {
     return this.setStatus(connected ? 'connected' : 'error', message);
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    // Runs through the same queue as apply so a quit during an in-flight
+    // apply cannot be raced by a late tunnel install.
+    const run = this.queue.then(() => this.doStop());
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async doStop(): Promise<void> {
     await this.teardown();
     this.setStatus('off');
   }
