@@ -24,6 +24,7 @@ import {
   parseTerminalScroll,
 } from '@/main/ipc-validation';
 import { isAllowedExternalUrl, isTrustedRendererUrl } from '@/main/security';
+import { ConnectedSessionTracker } from '@/main/session-tracker';
 import { DEMO_BOOTSTRAP, demoQueryResult } from '@/shared/demo';
 import type { EngineBootstrap } from '@/shared/herdr';
 import { IPC_CHANNELS } from '@/shared/ipc';
@@ -61,6 +62,10 @@ const eventSubscription = new HerdrEventSubscription(
       publishSessionEvent({ event: 'desktop.connection_state', data: { state } }),
   },
 );
+// Background refreshes re-bootstrap constantly and return the same session;
+// only re-open the event stream when the session actually changed, or the
+// pill flickers through connecting/disconnected on every refresh.
+const sessionTracker = new ConnectedSessionTracker(eventSubscription);
 const demoMode = !app.isPackaged && process.env.HERDR_DESKTOP_DEMO === '1';
 const smokeTestMode = process.env.HERDR_DESKTOP_SMOKE_TEST === '1';
 const packagedRendererPath = path.join(
@@ -91,15 +96,10 @@ function assertTrustedSender(url: string | undefined): void {
 }
 
 function trackConnectedSession(result: EngineBootstrap): EngineBootstrap {
-  if (!demoMode && result.state === 'connected') {
-    eventSubscription.open(
-      result.status.server.socket,
-      result.snapshot.panes.map((pane) => pane.pane_id),
-    );
-  } else {
-    eventSubscription.close();
+  if (demoMode) {
+    return result;
   }
-  return result;
+  return sessionTracker.track(result);
 }
 
 function registerIpcHandlers(): void {
