@@ -3,6 +3,20 @@ export type IndicatorStyle = 'dot' | 'symbol';
 export type NotificationDelivery = 'off' | 'in-app' | 'system';
 export type AgentSort = 'spaces' | 'priority';
 
+export interface RemoteEnginePreference {
+  enabled: boolean;
+  /** SSH target for the tunnel, e.g. `user@host`. */
+  host: string;
+  /** TCP port forwarded by `ssh -L`; the remote socat bridge must listen on it. */
+  port: number;
+}
+
+export const DEFAULT_REMOTE_ENGINE_PREFERENCE: RemoteEnginePreference = Object.freeze({
+  enabled: false,
+  host: '',
+  port: 22025,
+});
+
 export interface DesktopPreferences {
   schemaVersion: 1;
   appearance: DesktopAppearance;
@@ -13,6 +27,7 @@ export interface DesktopPreferences {
   agentSort: AgentSort;
   spacesCollapsed: boolean;
   agentsCollapsed: boolean;
+  remoteEngine: RemoteEnginePreference;
 }
 
 export type DesktopPreferencesInput = Omit<DesktopPreferences, 'schemaVersion'>;
@@ -27,6 +42,7 @@ export const DEFAULT_DESKTOP_PREFERENCES: DesktopPreferences = Object.freeze({
   agentSort: 'spaces',
   spacesCollapsed: false,
   agentsCollapsed: false,
+  remoteEngine: DEFAULT_REMOTE_ENGINE_PREFERENCE,
 });
 
 const preferenceKeys = [
@@ -39,6 +55,7 @@ const preferenceKeys = [
   'agentSort',
   'spacesCollapsed',
   'agentsCollapsed',
+  'remoteEngine',
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,11 +66,26 @@ function isOneOf<const T extends readonly string[]>(value: unknown, values: T): 
   return typeof value === 'string' && values.includes(value);
 }
 
+function isRemoteEnginePreference(value: unknown): value is RemoteEnginePreference {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.host === 'string' &&
+    typeof value.port === 'number' &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535
+  );
+}
+
 export function parseDesktopPreferences(value: unknown): DesktopPreferences | null {
+  // Files written before the remote engine preference existed lack the key;
+  // accept them and fill the default so upgrades do not reset user settings.
+  const hasRemoteEngine = isRecord(value) && 'remoteEngine' in value;
   if (
     !isRecord(value) ||
-    Object.keys(value).length !== preferenceKeys.length ||
-    !preferenceKeys.every((key) => key in value) ||
+    Object.keys(value).length !== preferenceKeys.length - (hasRemoteEngine ? 0 : 1) ||
+    !preferenceKeys.filter((key) => key !== 'remoteEngine').every((key) => key in value) ||
     value.schemaVersion !== 1 ||
     !isOneOf(value.appearance, ['system', 'light', 'dark']) ||
     !isOneOf(value.indicatorStyle, ['dot', 'symbol']) ||
@@ -62,10 +94,16 @@ export function parseDesktopPreferences(value: unknown): DesktopPreferences | nu
     typeof value.paneLabels !== 'boolean' ||
     !isOneOf(value.agentSort, ['spaces', 'priority']) ||
     typeof value.spacesCollapsed !== 'boolean' ||
-    typeof value.agentsCollapsed !== 'boolean'
+    typeof value.agentsCollapsed !== 'boolean' ||
+    (hasRemoteEngine && !isRemoteEnginePreference(value.remoteEngine))
   ) {
     return null;
   }
+
+  const remoteEngine: RemoteEnginePreference =
+    hasRemoteEngine && isRemoteEnginePreference(value.remoteEngine)
+      ? value.remoteEngine
+      : { ...DEFAULT_REMOTE_ENGINE_PREFERENCE };
 
   return {
     schemaVersion: 1,
@@ -77,5 +115,6 @@ export function parseDesktopPreferences(value: unknown): DesktopPreferences | nu
     agentSort: value.agentSort,
     spacesCollapsed: value.spacesCollapsed,
     agentsCollapsed: value.agentsCollapsed,
+    remoteEngine,
   };
 }

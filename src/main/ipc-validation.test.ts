@@ -4,6 +4,7 @@ import {
   parseHerdrCommand,
   parseHerdrQuery,
   parsePaneId,
+  parseRemoteEngineTarget,
   parseTerminalInput,
   parseTerminalOpen,
   parseTerminalResize,
@@ -503,5 +504,40 @@ describe('chat image draft validation', () => {
     expect(parseChatImageDrafts([{ extension: 'png', data: 'AAA=' }])).toEqual([
       { extension: 'png', data: 'AAA=' },
     ]);
+  });
+});
+
+describe('parseRemoteEngineTarget', () => {
+  it('parses a valid target', () => {
+    expect(parseRemoteEngineTarget({ enabled: true, host: 'user@host', port: 22025 })).toEqual({
+      enabled: true,
+      host: 'user@host',
+      port: 22025,
+    });
+  });
+
+  it('accepts a disabled target with an empty host', () => {
+    expect(parseRemoteEngineTarget({ enabled: false, host: '', port: 22025 })).toEqual({
+      enabled: false,
+      host: '',
+      port: 22025,
+    });
+  });
+
+  it('rejects malformed targets', () => {
+    for (const value of [
+      null,
+      'remote',
+      {},
+      { enabled: true, host: 'user@host' },
+      { enabled: 'yes', host: 'user@host', port: 22025 },
+      { enabled: true, host: 42, port: 22025 },
+      { enabled: true, host: 'user@host', port: 0 },
+      { enabled: true, host: 'user@host', port: 70000 },
+      { enabled: true, host: 'user@host', port: 22.5 },
+      { enabled: true, host: 'user@host', port: '22025' },
+    ]) {
+      expect(() => parseRemoteEngineTarget(value)).toThrow('Invalid remote engine target.');
+    }
   });
 });

@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SettingsDialog } from '@/renderer/settings/SettingsDialog';
@@ -31,6 +32,7 @@ describe('SettingsDialog', () => {
             local_override_shadowing_remote: false,
           },
         ]}
+        onApplyRemoteEngine={vi.fn()}
         onChooseBinary={vi.fn()}
         onInstallIntegration={onInstallIntegration}
         onOpenChange={vi.fn()}
@@ -41,6 +43,7 @@ describe('SettingsDialog', () => {
         onUninstallIntegration={onUninstallIntegration}
         open
         preferences={DEFAULT_DESKTOP_PREFERENCES}
+        remoteStatus={{ state: 'off', host: '', port: 22025 }}
       />,
     );
 
@@ -53,6 +56,7 @@ describe('SettingsDialog', () => {
       'Pane labels',
       'Integrations',
       'Agent manifests',
+      'Remote engine',
     ]) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument();
     }
@@ -73,5 +77,132 @@ describe('SettingsDialog', () => {
     expect(screen.getByText('v1.2.3')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Reload agent manifests' }));
     expect(onReloadManifests).toHaveBeenCalledOnce();
+  });
+});
+
+describe('SettingsDialog remote engine section', () => {
+  const remoteProps = {
+    binary: '/usr/local/bin/herdr',
+    busy: false,
+    integrations: [],
+    manifestStatus: 'ready' as const,
+    manifests: [],
+    onChooseBinary: vi.fn(),
+    onInstallIntegration: vi.fn(),
+    onOpenChange: vi.fn(),
+    onReloadConfig: vi.fn(),
+    onReloadManifests: vi.fn(),
+    onResetBinary: vi.fn(),
+    onUninstallIntegration: vi.fn(),
+    open: true,
+  };
+
+  it('shows the remote engine section with the persisted settings', () => {
+    render(
+      <SettingsDialog
+        {...remoteProps}
+        onApplyRemoteEngine={vi.fn()}
+        onPreferencesChange={vi.fn()}
+        preferences={{
+          ...DEFAULT_DESKTOP_PREFERENCES,
+          remoteEngine: { enabled: true, host: 'user@host', port: 22025 },
+        }}
+        remoteStatus={{ state: 'connected', host: 'user@host', port: 22025 }}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Remote engine' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Use a remote Herdr engine' })).toBeChecked();
+    expect(screen.getByLabelText('SSH target')).toHaveValue('user@host');
+    expect(screen.getByLabelText('Forwarded port')).toHaveValue(22025);
+  });
+
+  it('routes the toggle through preferences and applies the tunnel', async () => {
+    const user = userEvent.setup();
+    const onPreferencesChange = vi.fn();
+    const onApplyRemoteEngine = vi.fn();
+    render(
+      <SettingsDialog
+        {...remoteProps}
+        onApplyRemoteEngine={onApplyRemoteEngine}
+        onPreferencesChange={onPreferencesChange}
+        preferences={DEFAULT_DESKTOP_PREFERENCES}
+        remoteStatus={{ state: 'off', host: '', port: 22025 }}
+      />,
+    );
+    await user.click(screen.getByRole('switch', { name: 'Use a remote Herdr engine' }));
+    expect(onPreferencesChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        remoteEngine: { enabled: true, host: '', port: 22025 },
+      }),
+    );
+    expect(onApplyRemoteEngine).toHaveBeenCalledWith({
+      enabled: true,
+      host: '',
+      port: 22025,
+    });
+  });
+
+  it('applies edited host and port with the reconnect button', async () => {
+    const user = userEvent.setup();
+    const onApplyRemoteEngine = vi.fn();
+    function Harness() {
+      const [preferences, setPreferences] = useState({
+        ...DEFAULT_DESKTOP_PREFERENCES,
+        remoteEngine: { enabled: true, host: 'user@host', port: 22025 },
+      });
+      return (
+        <SettingsDialog
+          {...remoteProps}
+          onApplyRemoteEngine={onApplyRemoteEngine}
+          onPreferencesChange={setPreferences}
+          preferences={preferences}
+          remoteStatus={{ state: 'connected', host: 'user@host', port: 22025 }}
+        />
+      );
+    }
+    render(<Harness />);
+    fireEvent.change(screen.getByLabelText('SSH target'), {
+      target: { value: 'other@machine' },
+    });
+    fireEvent.change(screen.getByLabelText('Forwarded port'), {
+      target: { value: '22100' },
+    });
+    expect(screen.getByLabelText('Forwarded port')).toHaveValue(22100);
+    await user.click(screen.getByRole('button', { name: /Reconnect/ }));
+    expect(onApplyRemoteEngine).toHaveBeenCalledWith({
+      enabled: true,
+      host: 'other@machine',
+      port: 22100,
+    });
+  });
+
+  it('surfaces the tunnel status, including errors', () => {
+    const { rerender } = render(
+      <SettingsDialog
+        {...remoteProps}
+        onApplyRemoteEngine={vi.fn()}
+        onPreferencesChange={vi.fn()}
+        preferences={DEFAULT_DESKTOP_PREFERENCES}
+        remoteStatus={{ state: 'connected', host: 'user@host', port: 22025 }}
+      />,
+    );
+    expect(screen.getByText(/Connected to user@host/)).toBeInTheDocument();
+    rerender(
+      <SettingsDialog
+        {...remoteProps}
+        onApplyRemoteEngine={vi.fn()}
+        onPreferencesChange={vi.fn()}
+        preferences={DEFAULT_DESKTOP_PREFERENCES}
+        remoteStatus={{
+          state: 'error',
+          host: 'user@host',
+          port: 22025,
+          message: 'No Herdr server is running on the target machine.',
+        }}
+      />,
+    );
+    expect(
+      screen.getByText('No Herdr server is running on the target machine.'),
+    ).toBeInTheDocument();
   });
 });

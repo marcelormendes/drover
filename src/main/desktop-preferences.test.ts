@@ -32,6 +32,7 @@ describe('DesktopPreferencesStore', () => {
       agentSort: 'priority',
       spacesCollapsed: true,
       agentsCollapsed: false,
+      remoteEngine: { enabled: false, host: '', port: 22025 },
     });
 
     expect(saved).toMatchObject({ appearance: 'dark', agentSort: 'priority' });

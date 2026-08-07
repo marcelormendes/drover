@@ -132,6 +132,8 @@ export function createBrowserPreviewApi(): HerdrDesktopApi {
     },
     chooseHerdrBinary: async () => structuredClone(connected),
     resetHerdrBinary: async () => structuredClone(connected),
+    applyRemoteEngine: async (target) => ({ state: 'off', host: target.host, port: target.port }),
+    remoteEngineStatus: async () => ({ state: 'off', host: '', port: 22025 }),
     onDesktopAction: (listener) => {
       desktopListeners.add(listener);
       return () => desktopListeners.delete(listener);
