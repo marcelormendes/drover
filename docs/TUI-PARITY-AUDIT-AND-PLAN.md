@@ -93,7 +93,7 @@ The context-menu inventory is:
 | Config reload | Reload Herdr configuration | Missing | Public `server.reload_config` action and result feedback |
 | Integrations | Detect/install supported agent integrations | Missing | List status and install/uninstall through Herdr |
 | Onboarding | Mouse-first introduction and engine startup | Complete engine recovery | Add short interaction/help entry points |
-| Release/update UX | Release notes, announcement, update/restart state | Missing | What's New dialog and update/restart-needed banner |
+| Release/update UX | Release notes, announcement, update/restart state | Partial | What's New dialog, update/restart-needed banner, engine self-update and desktop update check from the sidebar |
 | Responsive/mobile | Mobile header and switcher | Missing; window minimum is 1000px | Compact navigator/switcher and lower safe minimum size |
 | Accessibility | Mouse and keyboard first-class | Partial | Keyboard-focusable pane surfaces, live regions, reduced motion |
 | Plugins/custom commands | Plugin panes and configured actions | Not represented | Public plugin/action inventory and invocation; preserve engine ownership |

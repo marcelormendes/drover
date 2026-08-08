@@ -839,3 +839,162 @@ describe('HerdrEngine.query', () => {
     );
   });
 });
+
+describe('HerdrEngine.update', () => {
+  const updatedStatus = {
+    ...runningStatus,
+    client: { ...runningStatus.client, version: '0.9.0' },
+    server: { ...runningStatus.server, version: '0.9.0' },
+  };
+
+  it('installs a newer engine version and reports the fresh bootstrap', async () => {
+    let statusCalls = 0;
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'update') {
+        return { stdout: '', stderr: 'downloading 0.9.0...\ninstalled 0.9.0\n' };
+      }
+      if (args[1] === 'snapshot') {
+        return {
+          stdout: JSON.stringify({
+            id: 'cli:api:snapshot',
+            result: { type: 'session_snapshot', snapshot },
+          }),
+          stderr: '',
+        };
+      }
+      statusCalls += 1;
+      return {
+        stdout: JSON.stringify(statusCalls === 1 ? runningStatus : updatedStatus),
+        stderr: '',
+      };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(runner.run).toHaveBeenNthCalledWith(1, ['status', '--json']);
+    expect(runner.run).toHaveBeenNthCalledWith(2, ['update', '--handoff'], {
+      timeoutMs: 10 * 60 * 1000,
+    });
+    expect(result).toMatchObject({
+      updated: true,
+      version: '0.9.0',
+      message: 'Herdr engine updated to v0.9.0.',
+    });
+    expect(result.bootstrap).toEqual({
+      state: 'connected',
+      status: updatedStatus,
+      snapshot,
+    });
+  });
+
+  it('warns when the binary was replaced but the running server stayed old', async () => {
+    const partialStatus = {
+      ...runningStatus,
+      client: { ...runningStatus.client, version: '0.9.0' },
+      server: { ...runningStatus.server, restart_needed: true },
+    };
+    let statusCalls = 0;
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'update') {
+        return { stdout: '', stderr: 'installed 0.9.0' };
+      }
+      if (args[1] === 'snapshot') {
+        return {
+          stdout: JSON.stringify({
+            id: 'cli:api:snapshot',
+            result: { type: 'session_snapshot', snapshot },
+          }),
+          stderr: '',
+        };
+      }
+      statusCalls += 1;
+      return {
+        stdout: JSON.stringify(statusCalls === 1 ? runningStatus : partialStatus),
+        stderr: '',
+      };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(result).toMatchObject({
+      updated: true,
+      version: '0.9.0',
+      message:
+        'Herdr engine updated to v0.9.0; the running server is still v0.8.0 and needs a restart.',
+    });
+  });
+
+  it('reports already up to date without changing the bootstrap', async () => {
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'update') {
+        return { stdout: '', stderr: 'already up to date (0.8.0)' };
+      }
+      if (args[1] === 'snapshot') {
+        return {
+          stdout: JSON.stringify({
+            id: 'cli:api:snapshot',
+            result: { type: 'session_snapshot', snapshot },
+          }),
+          stderr: '',
+        };
+      }
+      return { stdout: JSON.stringify(runningStatus), stderr: '' };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(result).toEqual({
+      bootstrap: { state: 'connected', status: runningStatus, snapshot },
+      updated: false,
+      version: '0.8.0',
+      message: 'Herdr engine is already up to date (v0.8.0).',
+    });
+  });
+
+  it('surfaces the engine error when the update command fails', async () => {
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'update') {
+        const error = new Error('Command failed: herdr update --handoff') as Error & {
+          stderr?: string;
+        };
+        error.stderr = 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`';
+        throw error;
+      }
+      if (args[1] === 'snapshot') {
+        return {
+          stdout: JSON.stringify({
+            id: 'cli:api:snapshot',
+            result: { type: 'session_snapshot', snapshot },
+          }),
+          stderr: '',
+        };
+      }
+      return { stdout: JSON.stringify(runningStatus), stderr: '' };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(result).toMatchObject({
+      updated: false,
+      version: '0.8.0',
+      message: 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`',
+      error: 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`',
+    });
+    expect(result.bootstrap.state).toBe('connected');
+  });
+
+  it('keeps the previous status when the engine is unreachable after a failed update', async () => {
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'update') {
+        throw new Error('download failed');
+      }
+      throw Object.assign(new Error('boom'), { code: 'ENOENT' });
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(result.updated).toBe(false);
+    expect(result.message).toBe('download failed');
+    expect(result.bootstrap.state).toBe('missing');
+  });
+});

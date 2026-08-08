@@ -9,6 +9,7 @@ import { APP_NAME, configureApplicationBranding } from '@/main/app-branding';
 import { applicationMenuTemplate } from '@/main/application-menu';
 import { stageChatImages } from '@/main/chat-images';
 import { DesktopPreferencesStore } from '@/main/desktop-preferences';
+import { checkDesktopUpdate } from '@/main/desktop-update';
 import { resolveHerdrBinary } from '@/main/herdr/binary-locator';
 import { HerdrBinaryPreference } from '@/main/herdr/binary-preference';
 import { HerdrEngine, NodeHerdrCommandRunner, NodeHerdrServerLauncher } from '@/main/herdr/engine';
@@ -346,6 +347,36 @@ function registerIpcHandlers(): void {
     await binaryPreference?.clear();
     configureHerdrBinary(defaultHerdrBinary());
     return trackConnectedSession(await engine.bootstrap());
+  });
+
+  ipcMain.handle(IPC_CHANNELS.engineUpdate, async (event) => {
+    assertTrustedSender(event.senderFrame?.url);
+    // In remote mode the updater would replace the local binary and then try
+    // to hand off through the SSH bridge using a local executable path, which
+    // cannot work on the remote host. The desktop only updates its own engine.
+    if (remoteTunnel.active) {
+      const bootstrap = trackConnectedSession(demoMode ? DEMO_BOOTSTRAP : await engine.bootstrap());
+      const version = bootstrap.state === 'connected' ? bootstrap.status.client.version : null;
+      const message = 'Herdr engine updates are disabled while connected to a remote engine.';
+      return { bootstrap, updated: false, version, message, error: message };
+    }
+    if (demoMode) {
+      const version =
+        DEMO_BOOTSTRAP.state === 'connected' ? DEMO_BOOTSTRAP.status.client.version : null;
+      return {
+        bootstrap: trackConnectedSession(DEMO_BOOTSTRAP),
+        updated: false,
+        version,
+        message: 'Demo mode: the Herdr engine update is disabled.',
+      };
+    }
+    const result = await engine.update();
+    return { ...result, bootstrap: trackConnectedSession(result.bootstrap) };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.desktopUpdateCheck, async (event) => {
+    assertTrustedSender(event.senderFrame?.url);
+    return checkDesktopUpdate(app.getVersion());
   });
 
   ipcMain.handle(IPC_CHANNELS.remoteEngineApply, async (event, candidate: unknown) => {
