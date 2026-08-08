@@ -87,6 +87,7 @@ import { App } from '@/renderer/App';
 import type { DesktopAction, HerdrQueryResult } from '@/shared/desktop-api';
 import type { EngineBootstrap, SessionSnapshot } from '@/shared/herdr';
 import { DEFAULT_DESKTOP_PREFERENCES } from '@/shared/preferences';
+import packageMetadata from '../../package.json';
 
 const snapshot: SessionSnapshot = {
   version: '0.8.0',
@@ -236,8 +237,8 @@ describe('App', () => {
         message: 'Herdr engine is already up to date (v0.8.0).',
       })),
       checkDesktopUpdate: vi.fn(async () => ({
-        currentVersion: '0.1.7',
-        latestVersion: '0.1.7',
+        currentVersion: packageMetadata.version,
+        latestVersion: packageMetadata.version,
         updateAvailable: false,
         releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
       })),
@@ -1171,7 +1172,7 @@ describe('App', () => {
     const footer = screen.getByText(/Desktop v/).parentElement;
 
     expect(footer).toHaveTextContent('v0.8.0 · protocol 7');
-    expect(footer).toHaveTextContent(/Desktop v0\.1\.7/);
+    expect(footer).toHaveTextContent(`Desktop v${packageMetadata.version}`);
   });
 
   it('updates the Herdr engine from the sidebar footer', async () => {
@@ -1216,8 +1217,8 @@ describe('App', () => {
 
   it('reports when the desktop is already up to date', async () => {
     window.herdr.checkDesktopUpdate = vi.fn(async () => ({
-      currentVersion: '0.1.7',
-      latestVersion: '0.1.7',
+      currentVersion: packageMetadata.version,
+      latestVersion: packageMetadata.version,
       updateAvailable: false,
       releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
     }));
@@ -1226,7 +1227,9 @@ describe('App', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Update Herdr Desktop' }));
 
-    expect(await screen.findByText('Herdr Desktop is up to date (v0.1.7).')).toBeInTheDocument();
+    expect(
+      await screen.findByText(`Herdr Desktop is up to date (v${packageMetadata.version}).`),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
@@ -1287,7 +1290,7 @@ describe('App', () => {
     await screen.findByRole('heading', { name: 'Herdr engine not found' });
     expect(screen.getByRole('button', { name: 'Update Herdr engine' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Update Herdr Desktop' })).toBeInTheDocument();
-    expect(screen.getByText(/Desktop v0\.1\.7/)).toBeInTheDocument();
+    expect(screen.getByText(`Desktop v${packageMetadata.version}`)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Update Herdr Desktop' }));
     expect(window.herdr.checkDesktopUpdate).toHaveBeenCalledOnce();
