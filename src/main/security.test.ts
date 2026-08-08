@@ -27,4 +27,17 @@ describe('external navigation allowlist', () => {
     expect(isAllowedExternalUrl('http://github.com/herdrdev/herdr')).toBe(false);
     expect(isAllowedExternalUrl('https://github.com/another-org/repository')).toBe(false);
   });
+
+  it('allows only the Herdr Desktop latest-release page for desktop updates', () => {
+    expect(
+      isAllowedExternalUrl('https://github.com/marcelormendes/herdr-desktop/releases/latest'),
+    ).toBe(true);
+    expect(
+      isAllowedExternalUrl('https://github.com/marcelormendes/herdr-desktop/releases/tag/v0.1.7'),
+    ).toBe(false);
+    expect(isAllowedExternalUrl('https://github.com/marcelormendes/herdr-desktop')).toBe(false);
+    expect(
+      isAllowedExternalUrl('https://github.com/marcelormendes/other-repo/releases/latest'),
+    ).toBe(false);
+  });
 });

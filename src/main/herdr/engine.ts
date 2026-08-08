@@ -5,6 +5,7 @@ import { HerdrApiClient } from '@/main/herdr/api-client';
 import { decodeHerdrQueryResult } from '@/main/herdr/query-decoder';
 import { decodeSessionSnapshot } from '@/main/herdr/snapshot-decoder';
 import type {
+  EngineUpdateResult,
   HerdrCommand,
   HerdrQuery,
   HerdrQueryResult,
@@ -15,13 +16,20 @@ import type { EngineBootstrap, HerdrStatus, SessionSnapshot } from '@/shared/her
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * `herdr update` downloads the new binary (up to 120s), verifies its
+ * checksum, and may live-hand off running servers (up to 240s), so the
+ * desktop gives it a generous timeout instead of the 15s CLI default.
+ */
+const ENGINE_UPDATE_TIMEOUT_MS = 10 * 60 * 1000;
+
 export interface HerdrCommandResult {
   stdout: string;
   stderr: string;
 }
 
 export interface HerdrCommandRunner {
-  run(args: string[]): Promise<HerdrCommandResult>;
+  run(args: string[], options?: { timeoutMs?: number }): Promise<HerdrCommandResult>;
 }
 
 export interface HerdrServerLauncher {
@@ -35,11 +43,11 @@ export interface HerdrRequestClient {
 export class NodeHerdrCommandRunner implements HerdrCommandRunner {
   constructor(private readonly binary = process.env.HERDR_DESKTOP_BIN || 'herdr') {}
 
-  async run(args: string[]): Promise<HerdrCommandResult> {
+  async run(args: string[], options?: { timeoutMs?: number }): Promise<HerdrCommandResult> {
     const { stdout, stderr } = await execFileAsync(this.binary, args, {
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
-      timeout: 15_000,
+      timeout: options?.timeoutMs ?? 15_000,
       windowsHide: true,
     });
 
@@ -630,5 +638,82 @@ export class HerdrEngine {
       request.params,
     );
     return decodeHerdrQueryResult(query, result);
+  }
+
+  private async readVersion(): Promise<string | null> {
+    try {
+      return parseStatus((await this.runner.run(['status', '--json'])).stdout).client.version;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Runs the engine self-update (`herdr update --handoff`). Live handoff is
+   * opted in so running servers restart onto the new binary without prompts;
+   * when a server is too old for handoff, the engine reports the failure and
+   * nothing is installed. Always returns an `EngineUpdateResult` instead of
+   * throwing, with a human-readable message for the renderer.
+   */
+  async update(): Promise<EngineUpdateResult> {
+    const before = await this.readVersion();
+
+    try {
+      const { stderr } = await this.runner.run(['update', '--handoff'], {
+        timeoutMs: ENGINE_UPDATE_TIMEOUT_MS,
+      });
+      const status = parseStatus((await this.runner.run(['status', '--json'])).stdout);
+      const after = status.client.version;
+      const bootstrap = await this.bootstrap();
+
+      const installed = after !== null && before !== null && after !== before;
+      if (installed) {
+        // The binary can be replaced while the running server stays on the
+        // old version (for example when live handoff failed); only claim a
+        // complete update when the server actually runs the new version.
+        if (status.server.version === null || status.server.version === after) {
+          return {
+            bootstrap,
+            updated: true,
+            version: after,
+            message: `Herdr engine updated to v${after}.`,
+          };
+        }
+        return {
+          bootstrap,
+          updated: true,
+          version: after,
+          message: `Herdr engine updated to v${after}; the running server is still v${status.server.version} and needs a restart.`,
+        };
+      }
+
+      if (stderr.includes('already up to date')) {
+        return {
+          bootstrap,
+          updated: false,
+          version: after ?? before,
+          message: `Herdr engine is already up to date (v${after ?? before ?? 'unknown'}).`,
+        };
+      }
+
+      return {
+        bootstrap,
+        updated: false,
+        version: after ?? before,
+        message: 'Herdr engine update completed without a version change.',
+      };
+    } catch (error) {
+      const stderr = isRecord(error) && typeof error.stderr === 'string' ? error.stderr.trim() : '';
+      const message =
+        stderr || (error instanceof Error ? error.message : 'Herdr engine update failed.');
+      const bootstrap = await this.bootstrap().catch((): EngineBootstrap => {
+        return {
+          state: 'error',
+          message: 'Herdr could not be reached after the update attempt.',
+          details: errorDetails(error),
+        };
+      });
+      return { bootstrap, updated: false, version: before, message, error: message };
+    }
   }
 }

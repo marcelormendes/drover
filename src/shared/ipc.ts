@@ -8,6 +8,8 @@ export const IPC_CHANNELS = {
   writePreferences: 'desktop:preferences-write',
   chooseBinary: 'herdr:choose-binary',
   resetBinary: 'herdr:reset-binary',
+  engineUpdate: 'herdr:engine-update',
+  desktopUpdateCheck: 'desktop:update-check',
   remoteEngineApply: 'remote-engine:apply',
   remoteEngineStatus: 'remote-engine:status',
   sessionEvent: 'herdr:session-event',

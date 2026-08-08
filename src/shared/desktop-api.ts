@@ -12,6 +12,32 @@ import type {
 
 export const CHAT_IMAGE_EXTENSIONS = ['png', 'jpg', 'gif', 'webp', 'bmp'] as const;
 
+/** Result of running `herdr update` (engine self-update) from the desktop. */
+export interface EngineUpdateResult {
+  /** Fresh engine state after the update attempt. */
+  bootstrap: EngineBootstrap;
+  /** True when a newer engine version was installed. */
+  updated: boolean;
+  /** Engine version after the attempt, when known. */
+  version: string | null;
+  /** Human-readable outcome (installed version, up to date, or failure). */
+  message: string;
+  /** Set when the update attempt failed, with the engine-reported reason. */
+  error?: string;
+}
+
+/** Result of checking the GitHub releases feed for a newer Herdr Desktop. */
+export interface DesktopUpdateInfo {
+  /** Version of the running desktop build. */
+  currentVersion: string;
+  /** Latest published desktop version, or null when the check failed. */
+  latestVersion: string | null;
+  /** True when a newer desktop version is available. */
+  updateAvailable: boolean;
+  /** Release page the user can download the new build from. */
+  releaseUrl: string;
+}
+
 export type ChatImageExtension = (typeof CHAT_IMAGE_EXTENSIONS)[number];
 
 /** Mirrors Herdr's clipboard image payload limit for paste bridging. */
@@ -479,6 +505,8 @@ export interface HerdrDesktopApi {
   writePreferences(preferences: DesktopPreferences): Promise<DesktopPreferences>;
   chooseHerdrBinary(): Promise<EngineBootstrap | null>;
   resetHerdrBinary(): Promise<EngineBootstrap>;
+  engineUpdate(): Promise<EngineUpdateResult>;
+  checkDesktopUpdate(): Promise<DesktopUpdateInfo>;
   applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngineStatus>;
   remoteEngineStatus(): Promise<RemoteEngineStatus>;
   onDesktopAction(listener: (action: DesktopAction) => void): () => void;

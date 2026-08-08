@@ -8,8 +8,10 @@ import {
   CircleAlert,
   CloudCog,
   Command,
+  Download,
   FolderGit2,
   GitBranch,
+  Loader2,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -120,6 +122,8 @@ import {
   type AgentKind,
   type AgentManifestInfo,
   type DesktopAction,
+  type DesktopUpdateInfo,
+  type EngineUpdateResult,
   type HerdrCommand,
   type HerdrQueryResult,
   INTEGRATION_TARGETS,
@@ -270,9 +274,19 @@ interface OnboardingScreenProps {
   onRetry: () => void;
   onStart: () => void;
   onSettings: () => void;
+  onEngineUpdate: () => Promise<EngineUpdateResult>;
+  onCheckDesktopUpdate: () => Promise<void>;
 }
 
-function OnboardingScreen({ result, busy, onRetry, onStart, onSettings }: OnboardingScreenProps) {
+function OnboardingScreen({
+  result,
+  busy,
+  onRetry,
+  onStart,
+  onSettings,
+  onEngineUpdate,
+  onCheckDesktopUpdate,
+}: OnboardingScreenProps) {
   const missing = result.state === 'missing';
   const stopped = result.state === 'stopped';
   const incompatible = result.state === 'incompatible';
@@ -339,6 +353,25 @@ function OnboardingScreen({ result, busy, onRetry, onStart, onSettings }: Onboar
                 <RefreshCw aria-hidden="true" className={cn(busy && 'animate-spin')} />
                 Check again
               </Button>
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-base border-2 border-border bg-background p-3 font-mono text-[11px]">
+              <div className="min-w-0">
+                {'status' in result ? (
+                  <>
+                    <p className="truncate opacity-50">
+                      v{result.status.client.version} · protocol {result.status.client.protocol}
+                    </p>
+                    <p className="truncate opacity-50">Desktop v{packageMetadata.version}</p>
+                  </>
+                ) : (
+                  <p className="truncate opacity-50">Desktop v{packageMetadata.version}</p>
+                )}
+              </div>
+              <UpdateButtons
+                busy={busy}
+                onCheckDesktopUpdate={onCheckDesktopUpdate}
+                onEngineUpdate={onEngineUpdate}
+              />
             </div>
           </CardContent>
         </Card>
@@ -970,6 +1003,128 @@ function PaneStage({
   );
 }
 
+function EngineUpdateButton({ busy, onUpdate }: { busy: boolean; onUpdate: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          aria-label="Update Herdr engine"
+          className="size-6"
+          disabled={busy}
+          onClick={onUpdate}
+          size="icon"
+          variant="neutral"
+        >
+          {busy ? (
+            <Loader2 aria-hidden="true" className="animate-spin" />
+          ) : (
+            <RefreshCw aria-hidden="true" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">Update Herdr engine</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function DesktopUpdateButton({ busy, onUpdate }: { busy: boolean; onUpdate: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          aria-label="Update Herdr Desktop"
+          className="size-6"
+          disabled={busy}
+          onClick={onUpdate}
+          size="icon"
+          variant="neutral"
+        >
+          {busy ? (
+            <Loader2 aria-hidden="true" className="animate-spin" />
+          ) : (
+            <Download aria-hidden="true" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">Update Herdr Desktop</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function UpdateButtons({
+  onEngineUpdate,
+  onCheckDesktopUpdate,
+  busy,
+}: {
+  onEngineUpdate: () => Promise<EngineUpdateResult>;
+  onCheckDesktopUpdate: () => Promise<void>;
+  busy: boolean;
+}) {
+  const [engineUpdating, setEngineUpdating] = useState(false);
+  const [desktopChecking, setDesktopChecking] = useState(false);
+  return (
+    <div className="flex items-center gap-1">
+      <EngineUpdateButton
+        busy={engineUpdating || busy}
+        onUpdate={() => {
+          setEngineUpdating(true);
+          void onEngineUpdate().finally(() => setEngineUpdating(false));
+        }}
+      />
+      <DesktopUpdateButton
+        busy={desktopChecking || busy}
+        onUpdate={() => {
+          setDesktopChecking(true);
+          void onCheckDesktopUpdate().finally(() => setDesktopChecking(false));
+        }}
+      />
+    </div>
+  );
+}
+
+function DesktopUpdateDialog({
+  info,
+  onClose,
+}: {
+  info: DesktopUpdateInfo | null;
+  onClose: () => void;
+}) {
+  return (
+    <AlertDialog
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open={Boolean(info?.updateAvailable)}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Herdr Desktop update available</AlertDialogTitle>
+          <AlertDialogDescription>
+            A newer version of Herdr Desktop is ready: v{info?.currentVersion} → v
+            {info?.latestVersion}. Open the release page to download it and replace this app.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Not now</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              const url = info?.releaseUrl;
+              if (url) {
+                void window.herdr.openExternal(url);
+              }
+              onClose();
+            }}
+          >
+            Download
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function ConnectedShell({
   result,
   onRefresh,
@@ -978,6 +1133,8 @@ function ConnectedShell({
   onPlugins,
   onSettings,
   onShortcuts,
+  onEngineUpdate,
+  onCheckDesktopUpdate,
   preferences,
   onPreferencesChange,
   connectionState,
@@ -990,6 +1147,8 @@ function ConnectedShell({
   onPlugins: () => void;
   onSettings: () => void;
   onShortcuts: () => void;
+  onEngineUpdate: () => Promise<EngineUpdateResult>;
+  onCheckDesktopUpdate: () => Promise<void>;
   preferences: DesktopPreferences;
   onPreferencesChange: (preferences: DesktopPreferences) => void;
   connectionState: HerdrEventConnectionState;
@@ -1298,10 +1457,18 @@ function ConnectedShell({
             <div className="shrink-0 border-t-2 border-border p-3 font-mono text-[11px]">
               <div className="mb-1 flex items-center gap-2">
                 <Wifi aria-hidden="true" className="size-3 opacity-60" /> Engine {connectionState}
+                <div className="ml-auto">
+                  <UpdateButtons
+                    busy={busy}
+                    onCheckDesktopUpdate={onCheckDesktopUpdate}
+                    onEngineUpdate={onEngineUpdate}
+                  />
+                </div>
               </div>
               <p className="truncate opacity-50">
                 v{status.server.version} · protocol {status.server.protocol}
               </p>
+              <p className="truncate opacity-50">Desktop v{packageMetadata.version}</p>
             </div>
           ) : null}
         </aside>
@@ -1756,6 +1923,7 @@ function AppContent() {
   const [manifestStatus, setManifestStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [manifests, setManifests] = useState<AgentManifestInfo[]>([]);
   const [connectionState, setConnectionState] = useState<HerdrEventConnectionState>('connecting');
+  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdateInfo | null>(null);
   const [preferences, setPreferences] = useState<DesktopPreferences>(DEFAULT_DESKTOP_PREFERENCES);
   const [remoteStatus, setRemoteStatus] = useState<RemoteEngineStatus>({
     state: 'off',
@@ -1861,6 +2029,54 @@ function AppContent() {
       setBusy(false);
     }
   }, [applyLatestResult]);
+
+  const updateEngine = useCallback(async (): Promise<EngineUpdateResult> => {
+    const sequence = ++resultRequestSequence.current;
+    setBusy(true);
+    try {
+      const result = await window.herdr.engineUpdate();
+      applyLatestResult(sequence, result.bootstrap);
+      if (result.updated) {
+        toast.success(result.message);
+      } else if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast(result.message);
+      }
+      return result;
+    } catch (error) {
+      toast.error('Herdr engine update failed.', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+      return {
+        bootstrap: { state: 'error', message: 'Herdr engine update failed.' },
+        updated: false,
+        version: null,
+        message: 'Herdr engine update failed.',
+      };
+    } finally {
+      setBusy(false);
+    }
+  }, [applyLatestResult]);
+
+  const checkDesktopUpdate = useCallback(async () => {
+    try {
+      const info = await window.herdr.checkDesktopUpdate();
+      if (info.latestVersion === null) {
+        toast.error('Could not check for Herdr Desktop updates.');
+        return;
+      }
+      if (info.updateAvailable) {
+        setDesktopUpdate(info);
+      } else {
+        toast(`Herdr Desktop is up to date (v${info.currentVersion}).`);
+      }
+    } catch (error) {
+      toast.error('Could not check for Herdr Desktop updates.', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  }, []);
 
   useEffect(() => {
     void load();
@@ -2305,11 +2521,14 @@ function AppContent() {
       <>
         <OnboardingScreen
           busy={busy}
+          onCheckDesktopUpdate={checkDesktopUpdate}
+          onEngineUpdate={updateEngine}
           onRetry={() => void load()}
           onSettings={openSettings}
           onStart={() => void startServer()}
           result={result}
         />
+        <DesktopUpdateDialog info={desktopUpdate} onClose={() => setDesktopUpdate(null)} />
         {settings}
       </>
     );
@@ -2320,7 +2539,9 @@ function AppContent() {
       <ConnectedShell
         busy={busy}
         connectionState={connectionState}
+        onCheckDesktopUpdate={checkDesktopUpdate}
         onCommand={runCommand}
+        onEngineUpdate={updateEngine}
         onNavigator={() => setNavigatorOpen(true)}
         onPlugins={openPlugins}
         onPreferencesChange={(next) => void savePreferences(next)}
@@ -2430,6 +2651,7 @@ function AppContent() {
         )}
         version={packageMetadata.version}
       />
+      <DesktopUpdateDialog info={desktopUpdate} onClose={() => setDesktopUpdate(null)} />
     </>
   );
 }

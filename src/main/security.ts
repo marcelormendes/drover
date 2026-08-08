@@ -21,7 +21,12 @@ export function isAllowedExternalUrl(candidate: string): boolean {
     }
 
     if (url.hostname === 'github.com') {
-      return url.pathname === '/herdrdev/herdr' || url.pathname.startsWith('/herdrdev/herdr/');
+      return (
+        url.pathname === '/herdrdev/herdr' ||
+        url.pathname.startsWith('/herdrdev/herdr/') ||
+        // Only the exact latest-release page is needed for desktop updates.
+        url.pathname === '/marcelormendes/herdr-desktop/releases/latest'
+      );
     }
 
     return url.hostname === 'herdr.dev' || url.hostname === 'www.herdr.dev';

@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import type {
   DesktopAction,
+  DesktopUpdateInfo,
+  EngineUpdateResult,
   HerdrCommand,
   HerdrDesktopApi,
   HerdrQuery,
@@ -42,6 +44,9 @@ const api: HerdrDesktopApi = {
   chooseHerdrBinary: () =>
     ipcRenderer.invoke(IPC_CHANNELS.chooseBinary) as Promise<EngineBootstrap | null>,
   resetHerdrBinary: () => ipcRenderer.invoke(IPC_CHANNELS.resetBinary) as Promise<EngineBootstrap>,
+  engineUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.engineUpdate) as Promise<EngineUpdateResult>,
+  checkDesktopUpdate: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.desktopUpdateCheck) as Promise<DesktopUpdateInfo>,
   applyRemoteEngine: (target: RemoteEngineTarget) =>
     ipcRenderer.invoke(IPC_CHANNELS.remoteEngineApply, target) as Promise<RemoteEngineStatus>,
   remoteEngineStatus: () =>

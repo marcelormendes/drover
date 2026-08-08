@@ -87,6 +87,7 @@ import { App } from '@/renderer/App';
 import type { DesktopAction, HerdrQueryResult } from '@/shared/desktop-api';
 import type { EngineBootstrap, SessionSnapshot } from '@/shared/herdr';
 import { DEFAULT_DESKTOP_PREFERENCES } from '@/shared/preferences';
+import packageMetadata from '../../package.json';
 
 const snapshot: SessionSnapshot = {
   version: '0.8.0',
@@ -229,6 +230,18 @@ describe('App', () => {
       writePreferences: vi.fn(async (preferences) => preferences),
       chooseHerdrBinary: vi.fn(async () => connected),
       resetHerdrBinary: vi.fn(async () => connected),
+      engineUpdate: vi.fn(async () => ({
+        bootstrap: connected,
+        updated: false,
+        version: '0.8.0',
+        message: 'Herdr engine is already up to date (v0.8.0).',
+      })),
+      checkDesktopUpdate: vi.fn(async () => ({
+        currentVersion: packageMetadata.version,
+        latestVersion: packageMetadata.version,
+        updateAvailable: false,
+        releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+      })),
       applyRemoteEngine: vi.fn(async (target) => ({
         state: 'off' as const,
         host: target.host,
@@ -1152,6 +1165,94 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
   });
 
+  it('shows the desktop version below the engine version in the sidebar footer', async () => {
+    render(<App />);
+
+    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    const footer = screen.getByText(/Desktop v/).parentElement;
+
+    expect(footer).toHaveTextContent('v0.8.0 · protocol 7');
+    expect(footer).toHaveTextContent(`Desktop v${packageMetadata.version}`);
+  });
+
+  it('updates the Herdr engine from the sidebar footer', async () => {
+    window.herdr.engineUpdate = vi.fn(async () => ({
+      bootstrap: connected,
+      updated: true,
+      version: '0.9.0',
+      message: 'Herdr engine updated to v0.9.0.',
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Update Herdr engine' }));
+
+    expect(window.herdr.engineUpdate).toHaveBeenCalledOnce();
+    expect(await screen.findByText('Herdr engine updated to v0.9.0.')).toBeInTheDocument();
+  });
+
+  it('offers the latest release page when a desktop update is available', async () => {
+    window.herdr.checkDesktopUpdate = vi.fn(async () => ({
+      currentVersion: '0.1.7',
+      latestVersion: '0.1.8',
+      updateAvailable: true,
+      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Update Herdr Desktop' }));
+    expect(window.herdr.checkDesktopUpdate).toHaveBeenCalledOnce();
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Herdr Desktop update available');
+    expect(dialog).toHaveTextContent('v0.1.7 → v0.1.8');
+
+    await user.click(screen.getByRole('button', { name: 'Download' }));
+    expect(window.herdr.openExternal).toHaveBeenCalledWith(
+      'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+    );
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('reports when the desktop is already up to date', async () => {
+    window.herdr.checkDesktopUpdate = vi.fn(async () => ({
+      currentVersion: packageMetadata.version,
+      latestVersion: packageMetadata.version,
+      updateAvailable: false,
+      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Update Herdr Desktop' }));
+
+    expect(
+      await screen.findByText(`Herdr Desktop is up to date (v${packageMetadata.version}).`),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('surfaces an engine update failure from the sidebar footer', async () => {
+    window.herdr.engineUpdate = vi.fn(async () => ({
+      bootstrap: connected,
+      updated: false,
+      version: '0.8.0',
+      message: 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`',
+      error: 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`',
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Update Herdr engine' }));
+
+    expect(
+      await screen.findByText(
+        'self-update is disabled for Homebrew installs; run `brew upgrade herdr`',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('shows a useful installation path when the Herdr binary is unavailable', async () => {
     window.herdr.bootstrap = vi.fn(
       async (): Promise<EngineBootstrap> => ({
@@ -1168,6 +1269,34 @@ describe('App', () => {
     expect(window.herdr.openExternal).toHaveBeenCalledWith(
       'https://github.com/herdrdev/herdr#installation',
     );
+  });
+
+  it('keeps the update actions available when the engine is not connected', async () => {
+    window.herdr.bootstrap = vi.fn(
+      async (): Promise<EngineBootstrap> => ({
+        state: 'missing',
+        message: 'Herdr was not found. Install Herdr or choose its binary in Settings.',
+      }),
+    );
+    window.herdr.checkDesktopUpdate = vi.fn(async () => ({
+      currentVersion: '0.1.7',
+      latestVersion: '0.1.8',
+      updateAvailable: true,
+      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole('heading', { name: 'Herdr engine not found' });
+    expect(screen.getByRole('button', { name: 'Update Herdr engine' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Update Herdr Desktop' })).toBeInTheDocument();
+    expect(screen.getByText(`Desktop v${packageMetadata.version}`)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Update Herdr Desktop' }));
+    expect(window.herdr.checkDesktopUpdate).toHaveBeenCalledOnce();
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Herdr Desktop update available');
   });
 
   it('can start a stopped Herdr server from the onboarding screen', async () => {

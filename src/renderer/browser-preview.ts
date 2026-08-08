@@ -132,6 +132,18 @@ export function createBrowserPreviewApi(): HerdrDesktopApi {
     },
     chooseHerdrBinary: async () => structuredClone(connected),
     resetHerdrBinary: async () => structuredClone(connected),
+    engineUpdate: async () => ({
+      bootstrap: structuredClone(connected),
+      updated: false,
+      version: '0.8.0',
+      message: 'Preview mode: the Herdr engine update is disabled.',
+    }),
+    checkDesktopUpdate: async () => ({
+      currentVersion: '0.0.0-preview',
+      latestVersion: null,
+      updateAvailable: false,
+      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+    }),
     applyRemoteEngine: async (target) => ({ state: 'off', host: target.host, port: target.port }),
     remoteEngineStatus: async () => ({ state: 'off', host: '', port: 22025 }),
     onDesktopAction: (listener) => {
