@@ -16,7 +16,7 @@ import {
   MAX_CHAT_IMAGE_TOTAL_BYTES,
   type PaneMoveDestination,
 } from '@/shared/desktop-api';
-import type { RemoteEngineTarget } from '@/shared/remote-engine';
+import { MAX_REMOTE_ENGINE_PORT, type RemoteEngineTarget } from '@/shared/remote-engine';
 import type {
   TerminalInputRequest,
   TerminalOpenRequest,
@@ -828,7 +828,7 @@ export function parseRemoteEngineTarget(value: unknown): RemoteEngineTarget {
     typeof value.port !== 'number' ||
     !Number.isInteger(value.port) ||
     value.port < 1 ||
-    value.port > 65535
+    value.port > MAX_REMOTE_ENGINE_PORT
   ) {
     throw new Error('Invalid remote engine target.');
   }

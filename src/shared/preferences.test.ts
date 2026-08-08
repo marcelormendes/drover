@@ -54,6 +54,7 @@ describe('parseDesktopPreferences', () => {
       { enabled: 'yes', host: 'user@host', port: 22025 },
       { enabled: true, host: 42, port: 22025 },
       { enabled: true, host: 'user@host', port: 0 },
+      { enabled: true, host: 'user@host', port: 65535 },
       { enabled: true, host: 'user@host', port: 70000 },
       { enabled: true, host: 'user@host', port: 22.5 },
     ]) {

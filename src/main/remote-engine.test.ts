@@ -1,12 +1,20 @@
 import { EventEmitter } from 'node:events';
+import { access, mkdtemp, rm } from 'node:fs/promises';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createRemoteEngineRelauncher,
   createWillQuitHandler,
+  establishPersistedRemoteEngineBeforeWindow,
+  type RemoteEngineRelaunchOptions,
   RemoteEngineTunnel,
   shouldApplyLocalFallback,
   type TunnelChildProcess,
 } from '@/main/remote-engine';
+import { DEFAULT_DESKTOP_PREFERENCES } from '@/shared/preferences';
 
 type FakeChild = TunnelChildProcess & {
   emit: (event: string, ...args: unknown[]) => boolean;
@@ -31,12 +39,32 @@ function setup() {
     createBridge,
     onStatusChange,
     socketPath: '/tmp/herdr-test-remote.sock',
+    clientSocketPath: '/tmp/herdr-test-remote-client.sock',
     sshSpawn,
+    waitForForwarding: async () => undefined,
   });
   return { bridgeClose, createBridge, onStatusChange, sshSpawn, tunnel };
 }
 
 const target = { enabled: true, host: 'user@host', port: 22025 };
+
+async function unusedTcpPort(): Promise<number> {
+  const server = net.createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Could not allocate a test TCP port.');
+  }
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return port;
+}
 
 describe('RemoteEngineTunnel', () => {
   it('starts off with no tunnel', () => {
@@ -61,12 +89,41 @@ describe('RemoteEngineTunnel', () => {
     expect(sshSpawn.mock.calls[0][1]).toContain('-N');
     expect(sshSpawn.mock.calls[0][1]).toContain('-L');
     expect(sshSpawn.mock.calls[0][1]).toContain('22025:127.0.0.1:22025');
+    expect(sshSpawn.mock.calls[0][1]).toContain('22026:127.0.0.1:22026');
     expect(sshSpawn.mock.calls[0][1]).toContain('user@host');
     expect(sshSpawn.mock.calls[0][1]).toContain('ExitOnForwardFailure=yes');
     expect(createBridge).toHaveBeenCalledWith('/tmp/herdr-test-remote.sock', 22025);
+    expect(createBridge).toHaveBeenCalledWith('/tmp/herdr-test-remote-client.sock', 22026);
     expect(status.state).toBe('starting');
     expect(status.socketPath).toBe('/tmp/herdr-test-remote.sock');
+    expect(status.clientSocketPath).toBe('/tmp/herdr-test-remote-client.sock');
     expect(tunnel.active).toBe(true);
+  });
+
+  it('creates and cleans up API and client socket bridges', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'herdr-remote-engine-'));
+    const socketPath = path.join(directory, 'herdr.sock');
+    const clientSocketPath = path.join(directory, 'herdr-client.sock');
+    const tunnel = new RemoteEngineTunnel({
+      clientSocketPath,
+      socketPath,
+      sshSpawn: vi.fn<SpawnCall>(() => fakeChild()),
+      waitForForwarding: async () => undefined,
+    });
+
+    try {
+      const status = await tunnel.apply({ ...target, port: await unusedTcpPort() });
+      expect(status).toMatchObject({ socketPath, clientSocketPath });
+      await expect(access(socketPath)).resolves.toBeUndefined();
+      await expect(access(clientSocketPath)).resolves.toBeUndefined();
+
+      await tunnel.stop();
+      await expect(access(socketPath)).rejects.toThrow();
+      await expect(access(clientSocketPath)).rejects.toThrow();
+    } finally {
+      await tunnel.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('rejects an empty SSH target', async () => {
@@ -80,7 +137,7 @@ describe('RemoteEngineTunnel', () => {
 
   it('rejects invalid ports', async () => {
     const { sshSpawn, tunnel } = setup();
-    for (const port of [0, 70000, 22.5, Number.NaN]) {
+    for (const port of [0, 65535, 70000, 22.5, Number.NaN]) {
       const status = await tunnel.apply({ enabled: true, host: 'user@host', port });
       expect(status.state).toBe('error');
       expect(status.message).toMatch(/Port/);
@@ -151,6 +208,62 @@ describe('RemoteEngineTunnel', () => {
     expect(sshSpawn).toHaveBeenCalledTimes(2);
     expect(sshSpawn.mock.calls[1][1]).toContain('other@host');
   });
+
+  it('waits for the SSH forwarding port before resolving apply', async () => {
+    const port = await unusedTcpPort();
+    const servers = [net.createServer(), net.createServer()];
+    const child = fakeChild();
+    const sshSpawn = vi.fn<SpawnCall>(() => {
+      setTimeout(() => {
+        servers[0].listen(port, '127.0.0.1');
+        servers[1].listen(port + 1, '127.0.0.1');
+      }, 20);
+      return child;
+    });
+    const tunnel = new RemoteEngineTunnel({
+      createBridge: vi.fn(async () => ({ close: vi.fn() })),
+      socketPath: '/tmp/herdr-test-remote-readiness.sock',
+      sshSpawn,
+    });
+
+    let settled = false;
+    const applying = tunnel.apply({ ...target, port }).then((status) => {
+      settled = true;
+      return status;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(false);
+
+    await expect(applying).resolves.toMatchObject({ state: 'starting', port });
+    expect(settled).toBe(true);
+    await tunnel.stop();
+    await Promise.all(
+      servers.map(
+        (server) =>
+          new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          }),
+      ),
+    );
+  });
+
+  it('returns an SSH failure when forwarding exits before becoming ready', async () => {
+    const child = fakeChild();
+    const sshSpawn = vi.fn<SpawnCall>(() => {
+      queueMicrotask(() => child.emit('exit', 255));
+      return child;
+    });
+    const tunnel = new RemoteEngineTunnel({
+      createBridge: vi.fn(async () => ({ close: vi.fn() })),
+      socketPath: '/tmp/herdr-test-remote-exit.sock',
+      sshSpawn,
+    });
+
+    await expect(tunnel.apply({ ...target, port: await unusedTcpPort() })).resolves.toMatchObject({
+      state: 'error',
+      message: expect.stringMatching(/SSH tunnel exited/),
+    });
+  });
 });
 
 describe('RemoteEngineTunnel lifecycle hardening', () => {
@@ -164,6 +277,7 @@ describe('RemoteEngineTunnel lifecycle hardening', () => {
       createBridge: vi.fn(async () => ({ close: bridgeClose })),
       socketPath,
       sshSpawn,
+      waitForForwarding: async () => undefined,
     });
     await tunnel.apply(target);
     const child = sshSpawn.mock.results[0].value;
@@ -188,6 +302,7 @@ describe('RemoteEngineTunnel lifecycle hardening', () => {
       }),
       socketPath: '/tmp/herdr-test-remote.sock',
       sshSpawn,
+      waitForForwarding: async () => undefined,
     });
     const first = tunnel.apply({ ...target, host: 'slow@host' });
     const second = tunnel.apply({ enabled: false, host: 'slow@host', port: 22025 });
@@ -236,6 +351,7 @@ describe('RemoteEngineTunnel shutdown and pending work', () => {
       }),
       socketPath: '/tmp/herdr-test-remote.sock',
       sshSpawn,
+      waitForForwarding: async () => undefined,
     });
     const pending = tunnel.apply(target);
     await vi.waitFor(() => expect(tunnel.active).toBe(true));
@@ -256,6 +372,7 @@ describe('RemoteEngineTunnel shutdown and pending work', () => {
       }),
       socketPath: '/tmp/herdr-test-remote.sock',
       sshSpawn,
+      waitForForwarding: async () => undefined,
     });
     const pending = tunnel.apply(target);
     const stopping = tunnel.stop();
@@ -347,5 +464,123 @@ describe('shouldApplyLocalFallback', () => {
     expect(shouldApplyLocalFallback(1, 1, false)).toBe(true);
     expect(shouldApplyLocalFallback(1, 2, false)).toBe(false);
     expect(shouldApplyLocalFallback(1, 1, true)).toBe(false);
+  });
+});
+
+describe('remote-engine relaunch boundary', () => {
+  it('persists the target before one deduplicated full-app relaunch', async () => {
+    const order: string[] = [];
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const relaunch = vi.fn(() => order.push('relaunch'));
+    const quit = vi.fn(() => order.push('quit'));
+    const persistTarget = vi.fn(async (_persistedTarget) => {
+      order.push('persist');
+      await writeGate;
+    });
+    const request = createRemoteEngineRelauncher({
+      persistTarget,
+      relaunch,
+      quit,
+    });
+
+    const first = request({ enabled: true, host: 'user@remote', port: 22025 });
+    const second = request({ enabled: true, host: 'other@remote', port: 22025 });
+    expect(second).toBe(first);
+    expect(order).toEqual(['persist']);
+    expect(relaunch).not.toHaveBeenCalled();
+
+    releaseWrite();
+    await expect(first).resolves.toMatchObject({ state: 'starting' });
+    expect(order).toEqual(['persist', 'relaunch', 'quit']);
+    expect(persistTarget).toHaveBeenCalledWith({
+      enabled: true,
+      host: 'user@remote',
+      port: 22025,
+    });
+    expect(relaunch).toHaveBeenCalledOnce();
+    expect(quit).toHaveBeenCalledOnce();
+  });
+
+  it('allows a later relaunch when target persistence fails', async () => {
+    const persistTarget = vi
+      .fn<RemoteEngineRelaunchOptions['persistTarget']>()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValueOnce(undefined);
+    const relaunch = vi.fn();
+    const quit = vi.fn();
+    const request = createRemoteEngineRelauncher({ persistTarget, relaunch, quit });
+
+    await expect(request(target)).rejects.toThrow('disk full');
+    await expect(request(target)).resolves.toMatchObject({ state: 'starting' });
+    expect(persistTarget).toHaveBeenCalledTimes(2);
+    expect(relaunch).toHaveBeenCalledOnce();
+    expect(quit).toHaveBeenCalledOnce();
+  });
+});
+
+describe('persisted remote-engine startup', () => {
+  it('establishes the persisted remote engine before creating the renderer window', async () => {
+    const order: string[] = [];
+    let releaseApply!: () => void;
+    const applyGate = new Promise<void>((resolve) => {
+      releaseApply = resolve;
+    });
+    const establish = vi.fn(async () => {
+      order.push('establish');
+      await applyGate;
+      order.push('established');
+    });
+    const createWindow = vi.fn(() => order.push('window'));
+
+    const starting = establishPersistedRemoteEngineBeforeWindow(
+      { ...DEFAULT_DESKTOP_PREFERENCES, remoteEngine: target },
+      establish,
+      createWindow,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order).toEqual(['establish']);
+    expect(createWindow).not.toHaveBeenCalled();
+
+    releaseApply();
+    await starting;
+    expect(order).toEqual(['establish', 'established', 'window']);
+    expect(establish).toHaveBeenCalledWith(target);
+    expect(createWindow).toHaveBeenCalledOnce();
+  });
+
+  it('clears inherited remote socket overrides before creating a local window', async () => {
+    const previousApiSocket = process.env.HERDR_SOCKET_PATH;
+    const previousClientSocket = process.env.HERDR_CLIENT_SOCKET_PATH;
+    process.env.HERDR_SOCKET_PATH = '/tmp/inherited-remote.sock';
+    process.env.HERDR_CLIENT_SOCKET_PATH = '/tmp/inherited-remote-client.sock';
+    const establish = vi.fn(async () => undefined);
+    const createWindow = vi.fn(() => {
+      expect(process.env.HERDR_SOCKET_PATH).toBeUndefined();
+      expect(process.env.HERDR_CLIENT_SOCKET_PATH).toBeUndefined();
+    });
+
+    try {
+      await establishPersistedRemoteEngineBeforeWindow(
+        DEFAULT_DESKTOP_PREFERENCES,
+        establish,
+        createWindow,
+      );
+      expect(establish).not.toHaveBeenCalled();
+      expect(createWindow).toHaveBeenCalledOnce();
+    } finally {
+      if (previousApiSocket === undefined) {
+        delete process.env.HERDR_SOCKET_PATH;
+      } else {
+        process.env.HERDR_SOCKET_PATH = previousApiSocket;
+      }
+      if (previousClientSocket === undefined) {
+        delete process.env.HERDR_CLIENT_SOCKET_PATH;
+      } else {
+        process.env.HERDR_CLIENT_SOCKET_PATH = previousClientSocket;
+      }
+    }
   });
 });

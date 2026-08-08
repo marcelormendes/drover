@@ -27,7 +27,10 @@ import {
   parseTerminalScroll,
 } from '@/main/ipc-validation';
 import {
+  clearRemoteSocketOverrides,
+  createRemoteEngineRelauncher,
   createWillQuitHandler,
+  establishPersistedRemoteEngineBeforeWindow,
   RemoteEngineTunnel,
   shouldApplyLocalFallback,
 } from '@/main/remote-engine';
@@ -61,6 +64,34 @@ let herdrBinary = defaultHerdrBinary();
 let engine = createEngine(herdrBinary);
 let binaryPreference: HerdrBinaryPreference | null = null;
 let desktopPreferences: DesktopPreferencesStore | null = null;
+let preferencesWriteQueue = Promise.resolve();
+
+function enqueuePreferencesWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const run = preferencesWriteQueue.then(operation);
+  preferencesWriteQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function persistRemoteEngineTarget(target: RemoteEngineTarget): Promise<void> {
+  return enqueuePreferencesWrite(async () => {
+    const store = desktopPreferences;
+    if (!store) {
+      throw new Error('Desktop preferences are unavailable.');
+    }
+    const current = await store.read();
+    const { schemaVersion: _schemaVersion, ...input } = current;
+    await store.write({ ...input, remoteEngine: target });
+  });
+}
+
+const requestRemoteEngineRelaunch = createRemoteEngineRelauncher({
+  persistTarget: persistRemoteEngineTarget,
+  relaunch: () => app.relaunch(),
+  quit: () => app.quit(),
+});
 const remoteTunnel = new RemoteEngineTunnel({
   onStatusChange: (status) => {
     publishSessionEvent({ event: 'desktop.remote_engine_state', data: { status } });
@@ -70,7 +101,7 @@ const remoteTunnel = new RemoteEngineTunnel({
       // fallback is generation-guarded so a slow local bootstrap can never
       // move the session back to local after a newer remote apply won.
       const generation = remoteApplyGeneration;
-      delete process.env.HERDR_SOCKET_PATH;
+      clearRemoteSocketOverrides();
       void engine.bootstrap().then((result) => {
         if (
           result.state === 'connected' &&
@@ -155,10 +186,11 @@ function remoteFailureMessage(result: EngineBootstrap): string {
 }
 
 /**
- * Applies the remote-engine tunnel: starts/stops ssh + the local socket
- * bridge, points HERDR_SOCKET_PATH at the tunnel while active, and confirms
- * reachability by bootstrapping through it. On failure the tunnel is torn
- * down and the env override removed so the local engine keeps working.
+ * Applies the remote-engine tunnel: starts/stops ssh + the local API/client
+ * socket bridges, points both Herdr socket environment variables at the
+ * tunnel while active, and confirms reachability by bootstrapping through it.
+ * On failure the tunnel is torn down and both env overrides are removed so
+ * the local engine keeps working.
  * Applies are generation-guarded so a stale bootstrap can never commit a
  * status for a target that was already superseded.
  */
@@ -179,7 +211,7 @@ async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngi
     // off: tunnel stopped cleanly. error: setup/validation/bridge failure —
     // never let a healthy local bootstrap overwrite it with "connected".
     if (status.state === 'off') {
-      delete process.env.HERDR_SOCKET_PATH;
+      clearRemoteSocketOverrides();
     }
     publishEngineChanged();
     return status;
@@ -187,12 +219,15 @@ async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngi
   if (status.socketPath) {
     process.env.HERDR_SOCKET_PATH = status.socketPath;
   }
+  if (status.clientSocketPath) {
+    process.env.HERDR_CLIENT_SOCKET_PATH = status.clientSocketPath;
+  }
   const result = await engine.bootstrap();
   if (generation !== remoteApplyGeneration) {
     return remoteTunnel.status;
   }
   if (result.state !== 'connected') {
-    delete process.env.HERDR_SOCKET_PATH;
+    clearRemoteSocketOverrides();
     await remoteTunnel.stop();
     const failed = remoteTunnel.setConnected(false, remoteFailureMessage(result));
     publishEngineChanged();
@@ -278,7 +313,11 @@ function registerIpcHandlers(): void {
       throw new Error('Invalid desktop preferences.');
     }
     const { schemaVersion: _schemaVersion, ...input } = parsed;
-    return desktopPreferences.write(input);
+    const store = desktopPreferences;
+    if (!store) {
+      throw new Error('Desktop preferences are unavailable.');
+    }
+    return enqueuePreferencesWrite(() => store.write(input));
   });
 
   ipcMain.handle(IPC_CHANNELS.chooseBinary, async (event) => {
@@ -311,7 +350,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.remoteEngineApply, async (event, candidate: unknown) => {
     assertTrustedSender(event.senderFrame?.url);
-    return applyRemoteEngine(parseRemoteEngineTarget(candidate));
+    return requestRemoteEngineRelaunch(parseRemoteEngineTarget(candidate));
   });
 
   ipcMain.handle(IPC_CHANNELS.remoteEngineStatus, async (event) => {
@@ -445,27 +484,42 @@ if (!started) {
       }
     }
     const storedPreferences = await desktopPreferences.read();
-    if (storedPreferences.remoteEngine.enabled) {
-      // Re-establish the SSH tunnel from the persisted settings; failures
-      // fall back to the local engine with the status surfaced in Settings.
-      void applyRemoteEngine({
-        enabled: true,
-        host: storedPreferences.remoteEngine.host,
-        port: storedPreferences.remoteEngine.port,
-      });
-    }
-    registerIpcHandlers();
-    configureApplicationMenu();
-    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-      callback(false);
-    });
-    createWindow();
-
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
+    await establishPersistedRemoteEngineBeforeWindow(
+      storedPreferences,
+      async (target) => {
+        try {
+          // Re-establish the SSH tunnel from persisted settings before any
+          // renderer can bootstrap the local engine.
+          await applyRemoteEngine(target);
+        } catch (error) {
+          // Leave startup usable even if an unexpected setup error escaped the
+          // normal tunnel/bootstrap failure paths.
+          console.error(
+            `Could not establish the persisted remote Herdr engine: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          clearRemoteSocketOverrides();
+          await remoteTunnel.stop().catch(() => undefined);
+        }
+      },
+      () => {
+        registerIpcHandlers();
+        configureApplicationMenu();
+        session.defaultSession.setPermissionRequestHandler(
+          (_webContents, _permission, callback) => {
+            callback(false);
+          },
+        );
         createWindow();
-      }
-    });
+
+        app.on('activate', () => {
+          if (BrowserWindow.getAllWindows().length === 0) {
+            createWindow();
+          }
+        });
+      },
+    );
   });
 }
 
