@@ -113,7 +113,7 @@ describe('SettingsDialog remote engine section', () => {
     expect(screen.getByRole('heading', { name: 'Remote engine' })).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Use a remote Herdr engine' })).toBeChecked();
     expect(screen.getByLabelText('SSH target')).toHaveValue('user@host');
-    expect(screen.getByLabelText('Forwarded port')).toHaveValue(22025);
+    expect(screen.getByLabelText('API forwarded port')).toHaveValue(22025);
   });
 
   it('routes the toggle through preferences and applies the tunnel', async () => {
@@ -165,10 +165,10 @@ describe('SettingsDialog remote engine section', () => {
     fireEvent.change(screen.getByLabelText('SSH target'), {
       target: { value: 'other@machine' },
     });
-    fireEvent.change(screen.getByLabelText('Forwarded port'), {
+    fireEvent.change(screen.getByLabelText('API forwarded port'), {
       target: { value: '22100' },
     });
-    expect(screen.getByLabelText('Forwarded port')).toHaveValue(22100);
+    expect(screen.getByLabelText('API forwarded port')).toHaveValue(22100);
     await user.click(screen.getByRole('button', { name: /Reconnect/ }));
     expect(onApplyRemoteEngine).toHaveBeenCalledWith({
       enabled: true,

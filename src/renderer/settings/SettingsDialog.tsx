@@ -22,7 +22,12 @@ import {
 import { Switch } from '@/components/ui/switch';
 import type { AgentManifestInfo } from '@/shared/desktop-api';
 import type { DesktopPreferences } from '@/shared/preferences';
-import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-engine';
+import {
+  MAX_REMOTE_ENGINE_PORT,
+  type RemoteEngineStatus,
+  type RemoteEngineTarget,
+  remoteClientPort,
+} from '@/shared/remote-engine';
 
 export interface IntegrationSummary {
   id: string;
@@ -79,6 +84,7 @@ export function SettingsDialog({
   onApplyRemoteEngine,
   remoteStatus,
 }: SettingsDialogProps) {
+  const clientPort = remoteClientPort(preferences.remoteEngine.port);
   const update = <Key extends keyof DesktopPreferences>(key: Key, value: DesktopPreferences[Key]) =>
     onPreferencesChange({ ...preferences, [key]: value });
   const [applying, setApplying] = useState(false);
@@ -373,17 +379,17 @@ export function SettingsDialog({
                     />
                   </div>
                   <div className="grid gap-1.5">
-                    <Label htmlFor="remote-engine-port">Forwarded port</Label>
+                    <Label htmlFor="remote-engine-port">API forwarded port</Label>
                     <Input
                       id="remote-engine-port"
-                      max={65535}
+                      max={MAX_REMOTE_ENGINE_PORT}
                       min={1}
                       onChange={(event) => {
                         const port = Number(event.target.value);
                         update('remoteEngine', {
                           ...preferences.remoteEngine,
                           port:
-                            Number.isInteger(port) && port >= 1 && port <= 65535
+                            Number.isInteger(port) && port >= 1 && port <= MAX_REMOTE_ENGINE_PORT
                               ? port
                               : preferences.remoteEngine.port,
                         });
@@ -425,12 +431,13 @@ export function SettingsDialog({
                   </div>
                   <p className="text-xs leading-relaxed opacity-70">
                     Runs agents, terminals, and files on the remote computer through an SSH tunnel.
-                    The target needs a running Herdr server and a socket bridge (
-                    <code className="font-mono">
-                      socat TCP-LISTEN:&lt;port&gt;,bind=127.0.0.1,reuseaddr,fork
-                      UNIX-CONNECT:$HOME/.config/herdr/herdr.sock
+                    On the target, run two loopback-only socket bridges:
+                    <code className="mt-1 block whitespace-pre-wrap font-mono">
+                      {`socat TCP-LISTEN:${preferences.remoteEngine.port},bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:$HOME/.config/herdr/herdr.sock\n`}
+                      {`socat TCP-LISTEN:${clientPort},bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:$HOME/.config/herdr/herdr-client.sock`}
                     </code>
-                    ). Both sides must run the same Herdr version.
+                    The second bridge uses port {clientPort}; choose an API port from 1 to{' '}
+                    {MAX_REMOTE_ENGINE_PORT}. Both sides must run the same Herdr version.
                   </p>
                 </div>
               </SettingSection>

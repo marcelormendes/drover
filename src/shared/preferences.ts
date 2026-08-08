@@ -1,3 +1,5 @@
+import { MAX_REMOTE_ENGINE_PORT } from '@/shared/remote-engine';
+
 export type DesktopAppearance = 'system' | 'light' | 'dark';
 export type IndicatorStyle = 'dot' | 'symbol';
 export type NotificationDelivery = 'off' | 'in-app' | 'system';
@@ -7,7 +9,7 @@ export interface RemoteEnginePreference {
   enabled: boolean;
   /** SSH target for the tunnel, e.g. `user@host`. */
   host: string;
-  /** TCP port forwarded by `ssh -L`; the remote socat bridge must listen on it. */
+  /** API TCP port forwarded by `ssh -L`; the client uses the next port. */
   port: number;
 }
 
@@ -74,7 +76,7 @@ function isRemoteEnginePreference(value: unknown): value is RemoteEnginePreferen
     typeof value.port === 'number' &&
     Number.isInteger(value.port) &&
     value.port >= 1 &&
-    value.port <= 65535
+    value.port <= MAX_REMOTE_ENGINE_PORT
   );
 }
 
