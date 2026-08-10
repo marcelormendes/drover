@@ -130,6 +130,7 @@ describe('Flatpak packaging contract', () => {
     expect(ci).toContain('dbus-run-session -- bash -euo pipefail');
     expect(ci).toContain('Exercise flatpak-spawn --host argument and stdio crossing');
     expect(ci).toContain('--host --watch-bus');
+    expect(ci).toContain("grep -Fxq 'fp-probe-stderr-sentinel'");
     expect(ci).toContain('Exercise the app data host-visible permission contract');
     expect(ci).toContain('Exercise the herdr config host-visible permission contract');
     expect(ci).toContain('HOST_XDG_CONFIG_HOME');

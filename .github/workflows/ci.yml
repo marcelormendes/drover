@@ -140,8 +140,11 @@ jobs:
           test "$argv_out" = "--flag|value"
           stdin_out="$(printf 'payload' | flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/cat)"
           test "$stdin_out" = "payload"
-          stderr_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/sh -c 'printf "eek" >&2' 2>&1 >/dev/null)"
-          test "$stderr_out" = "eek"
+          # The host child emits a unique newline-terminated sentinel on
+          # stderr; assert it as its own line so benign Flatpak/portal stderr
+          # (FUSE/doc-portal diagnostics) cannot cause a false negative.
+          stderr_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/sh -c 'printf "fp-probe-stderr-sentinel\n" >&2' 2>&1 >/dev/null)"
+          printf '%s' "$stderr_out" | grep -Fxq 'fp-probe-stderr-sentinel'
           set +e
           flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/false
           false_status=$?
