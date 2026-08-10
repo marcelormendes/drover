@@ -20,6 +20,13 @@ export interface ResolveHerdrBinaryOptions {
   pathEntries?: readonly string[];
   /** Executability probe (e.g. fs.accessSync with X_OK). */
   canExecute: (file: string) => boolean;
+  /**
+   * Inside the Herdr Desktop Flatpak: the sandbox cannot probe host paths,
+   * and the process bridge resolves commands on the host with a deterministic
+   * PATH. Skip sandbox executability checks; `envBinary` is accepted as a host
+   * path as-is, and a bare `herdr` resolves on the host PATH.
+   */
+  flatpakHost?: boolean;
 }
 
 /**
@@ -27,14 +34,19 @@ export interface ResolveHerdrBinaryOptions {
  * apps get a minimal PATH, so `herdr` may not resolve even when it is
  * installed. Returns the env override, a bare `herdr` when it is on the
  * PATH, or the first executable fallback location; null when nothing is
- * found.
+ * found. In Flatpak mode the host-side bridge performs the lookup instead.
  */
 export function resolveHerdrBinary({
   envBinary,
   home = '',
   pathEntries = [],
   canExecute,
+  flatpakHost = false,
 }: ResolveHerdrBinaryOptions): string | null {
+  if (flatpakHost) {
+    const normalized = envBinary?.trim();
+    return normalized ? normalized : 'herdr';
+  }
   if (envBinary && canExecute(envBinary)) {
     return envBinary;
   }

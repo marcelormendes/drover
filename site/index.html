@@ -154,6 +154,20 @@
           <h3>Linux</h3>
           <p>Install per-user with one command — no root, no package manager.</p>
           <pre><code>curl -fsSL https://marcelormendes.github.io/herdr-desktop/install.sh | sh</code></pre>
+          <p class="linux-alt">
+            Prefer Flatpak? Download <code>herdr-desktop-linux-x86_64.flatpak</code> from the
+            <a href="https://github.com/marcelormendes/herdr-desktop/releases/latest">releases page</a>
+            and install it per-user:
+          </p>
+          <pre><code>flatpak install --user ./herdr-desktop-linux-x86_64.flatpak
+flatpak run io.github.marcelormendes.herdr-desktop</code></pre>
+          <p class="linux-alt">
+            Remove it with
+            <code>flatpak uninstall --user io.github.marcelormendes.herdr-desktop</code>.
+            This bundle is updated by installing a newer release; it is not a
+            Flathub or repository-backed package. It requests host command access
+            because Herdr Desktop controls the host Herdr engine and terminals.
+          </p>
         </div>
       </section>
     </main>

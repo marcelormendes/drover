@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { FLATPAK_APP_ID } from '@/main/flatpak';
 import {
   type HerdrCommandRunner,
   HerdrEngine,
@@ -7,6 +8,11 @@ import {
   type HerdrServerLauncher,
 } from '@/main/herdr/engine';
 import type { HerdrCommand } from '@/shared/desktop-api';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 const runningStatus = {
   client: {
@@ -630,6 +636,45 @@ describe('HerdrEngine.execute', () => {
       expect(result.state).toBe('connected');
     },
   );
+
+  it('translates host-form status sockets to sandbox paths before direct connections', async () => {
+    vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
+    vi.stubEnv('HOST_XDG_CONFIG_HOME', '/host-config');
+    vi.stubEnv('XDG_CONFIG_HOME', '/sandbox-config');
+    const hostStatus = {
+      ...runningStatus,
+      server: { ...runningStatus.server, socket: '/host-config/herdr/herdr.sock' },
+    };
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'status') {
+        return { stdout: JSON.stringify(hostStatus), stderr: '' };
+      }
+      return {
+        stdout: JSON.stringify({
+          id: 'cli:api:snapshot',
+          result: { type: 'session_snapshot', snapshot },
+        }),
+        stderr: '',
+      };
+    });
+    const requestClient: HerdrRequestClient = {
+      request: vi.fn(async () => ({ type: 'ok' })),
+    };
+
+    const result = await new HerdrEngine(
+      runner,
+      { launch: vi.fn() },
+      async () => undefined,
+      requestClient,
+    ).execute({ type: 'focus-workspace', workspaceId: 'w1' });
+
+    expect(requestClient.request).toHaveBeenCalledWith(
+      '/sandbox-config/herdr/herdr.sock',
+      'workspace.focus',
+      expect.any(Object),
+    );
+    expect(result.state).toBe('connected');
+  });
 
   it('rejects a snapshot whose nested protocol fields are malformed', async () => {
     const malformedSnapshot = {

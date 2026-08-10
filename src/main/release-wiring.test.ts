@@ -57,6 +57,8 @@ describe('macOS release wiring', () => {
     expect(workflow).toContain('herdr-desktop-linux-x86_64.AppImage');
     expect(workflow).toContain('herdr-desktop-linux-amd64.deb');
     expect(workflow).toContain('herdr-desktop-linux-x86_64.rpm');
+    expect(workflow).toContain('herdr-desktop-linux-x86_64.flatpak');
+    expect(workflow).toContain('npm run build:flatpak');
     expect(workflow).toContain('sha256sum herdr-desktop-* > checksums.sha256');
   });
 

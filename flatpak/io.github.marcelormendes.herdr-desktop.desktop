@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Herdr Desktop
+Comment=A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.
+Exec=herdr-desktop-wrapper.sh
+Icon=io.github.marcelormendes.herdr-desktop
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=Herdr Desktop

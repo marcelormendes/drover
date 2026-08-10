@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events';
+import os from 'node:os';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { FLATPAK_APP_ID } from '@/main/flatpak';
 import {
   TerminalController,
   type TerminalProcess,
@@ -25,6 +27,44 @@ function fakeProcess(): FakeTerminalProcess {
 }
 
 describe('TerminalController', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('routes terminal control through flatpak-spawn --host inside the Herdr Desktop Flatpak', () => {
+    vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
+    vi.stubEnv('HERDR_SOCKET_PATH', '');
+    vi.stubEnv('HERDR_CLIENT_SOCKET_PATH', '');
+    vi.spyOn(os, 'homedir').mockReturnValue('/home/tester');
+    const child = fakeProcess();
+    const spawn: TerminalProcessSpawner = vi.fn(() => child);
+    const controller = new TerminalController(spawn, '/usr/local/bin/herdr');
+
+    controller.open({ paneId: 'w1:p1', cols: 120, rows: 40 }, vi.fn());
+
+    expect(spawn).toHaveBeenCalledWith(
+      'flatpak-spawn',
+      [
+        '--host',
+        '--watch-bus',
+        '--env=PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin',
+        '/usr/local/bin/herdr',
+        'terminal',
+        'session',
+        'control',
+        'w1:p1',
+        '--takeover',
+        '--cols',
+        '120',
+        '--rows',
+        '40',
+      ],
+      expect.objectContaining({ shell: false, stdio: ['pipe', 'pipe', 'pipe'] }),
+    );
+    controller.close();
+  });
+
   it('bridges Herdr terminal frames and NDJSON input without owning the PTY', async () => {
     const child = fakeProcess();
     const spawn: TerminalProcessSpawner = vi.fn(() => child);

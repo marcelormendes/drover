@@ -211,19 +211,29 @@ jobs:
       - name: Build the Linux artifacts
         run: npm run make
 
+      - name: Install Flatpak build tooling
+        run: |
+          sudo apt-get install -y flatpak flatpak-builder appstream appstream-compose desktop-file-utils
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Build the Flatpak bundle
+        run: npm run build:flatpak
+
       - name: Prepare stable artifact names
         run: |
           appimage_path="$(find out/make -type f -name '*.AppImage' -print -quit)"
           deb_path="$(find out/make -type f -name '*.deb' -print -quit)"
           rpm_path="$(find out/make -type f -name '*.rpm' -print -quit)"
-          if [ -z "${appimage_path}" ] || [ -z "${deb_path}" ] || [ -z "${rpm_path}" ]; then
-            echo "Forge did not produce AppImage, DEB, and RPM artifacts." >&2
+          flatpak_path="$(find out -type f -name '*.flatpak' -print -quit)"
+          if [ -z "${appimage_path}" ] || [ -z "${deb_path}" ] || [ -z "${rpm_path}" ] || [ -z "${flatpak_path}" ]; then
+            echo "Forge/Flatpak did not produce all four Linux artifacts." >&2
             exit 1
           fi
           mkdir -p dist/release
           cp "${appimage_path}" "dist/release/herdr-desktop-linux-x86_64.AppImage"
           cp "${deb_path}" "dist/release/herdr-desktop-linux-amd64.deb"
           cp "${rpm_path}" "dist/release/herdr-desktop-linux-x86_64.rpm"
+          cp "${flatpak_path}" "dist/release/herdr-desktop-linux-x86_64.flatpak"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -1,6 +1,6 @@
 import { accessSync, constants } from 'node:fs';
 import { access } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
@@ -10,6 +10,7 @@ import { applicationMenuTemplate } from '@/main/application-menu';
 import { stageChatImages } from '@/main/chat-images';
 import { DesktopPreferencesStore } from '@/main/desktop-preferences';
 import { checkDesktopUpdate } from '@/main/desktop-update';
+import { chatImageStagingDir, hostPathFromSandboxPath, isFlatpakHost } from '@/main/flatpak';
 import { resolveHerdrBinary } from '@/main/herdr/binary-locator';
 import { HerdrBinaryPreference } from '@/main/herdr/binary-preference';
 import { HerdrEngine, NodeHerdrCommandRunner, NodeHerdrServerLauncher } from '@/main/herdr/engine';
@@ -57,6 +58,7 @@ function defaultHerdrBinary(): string {
           return false;
         }
       },
+      flatpakHost: isFlatpakHost(),
     }) ?? 'herdr'
   );
 }
@@ -218,10 +220,10 @@ async function applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngi
     return status;
   }
   if (status.socketPath) {
-    process.env.HERDR_SOCKET_PATH = status.socketPath;
+    process.env.HERDR_SOCKET_PATH = hostPathFromSandboxPath(status.socketPath);
   }
   if (status.clientSocketPath) {
-    process.env.HERDR_CLIENT_SOCKET_PATH = status.clientSocketPath;
+    process.env.HERDR_CLIENT_SOCKET_PATH = hostPathFromSandboxPath(status.clientSocketPath);
   }
   const result = await engine.bootstrap();
   if (generation !== remoteApplyGeneration) {
@@ -293,10 +295,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.stageChatImages, async (event, candidate: unknown) => {
     assertTrustedSender(event.senderFrame?.url);
-    return stageChatImages(
-      path.join(tmpdir(), 'herdr-desktop-chat-images'),
-      parseChatImageDrafts(candidate),
-    );
+    // Files are staged at the sandbox-visible path (where the grant mounts
+    // the host directory); the renderer and the host agent receive the
+    // host-equivalent paths.
+    const staged = stageChatImages(chatImageStagingDir(), parseChatImageDrafts(candidate));
+    return staged.map((filePath) => hostPathFromSandboxPath(filePath));
   });
 
   ipcMain.handle(IPC_CHANNELS.readPreferences, async (event) => {

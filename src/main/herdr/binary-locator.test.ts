@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { resolveHerdrBinary } from '@/main/herdr/binary-locator';
 
@@ -93,5 +93,50 @@ describe('resolveHerdrBinary', () => {
         canExecute: canRun,
       }),
     ).toBe('/Users/me/.local/bin/herdr');
+  });
+
+  it('accepts HERDR_DESKTOP_BIN as a host path in Flatpak mode without probing the sandbox', () => {
+    const canRun = vi.fn(() => false);
+    expect(
+      resolveHerdrBinary({
+        envBinary: '/home/me/.local/bin/herdr',
+        home: '/sandbox-home',
+        pathEntries: ['/app/bin'],
+        canExecute: canRun,
+        flatpakHost: true,
+      }),
+    ).toBe('/home/me/.local/bin/herdr');
+    expect(canRun).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the bare herdr command in Flatpak mode, resolved on the host PATH', () => {
+    const canRun = vi.fn(() => false);
+    expect(
+      resolveHerdrBinary({
+        home: '/sandbox-home',
+        pathEntries: [],
+        canExecute: canRun,
+        flatpakHost: true,
+      }),
+    ).toBe('herdr');
+    expect(canRun).not.toHaveBeenCalled();
+  });
+
+  it('never returns an empty or whitespace-only program in Flatpak mode', () => {
+    const canRun = vi.fn(() => false);
+    expect(resolveHerdrBinary({ envBinary: '   ', canExecute: canRun, flatpakHost: true })).toBe(
+      'herdr',
+    );
+    expect(resolveHerdrBinary({ envBinary: '', canExecute: canRun, flatpakHost: true })).toBe(
+      'herdr',
+    );
+    expect(
+      resolveHerdrBinary({
+        envBinary: '  /opt/herdr/bin/herdr  ',
+        canExecute: canRun,
+        flatpakHost: true,
+      }),
+    ).toBe('/opt/herdr/bin/herdr');
+    expect(canRun).not.toHaveBeenCalled();
   });
 });
