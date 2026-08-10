@@ -57,7 +57,7 @@ const config: ForgeConfig = {
       format: 'ULFO',
       overwrite: true,
     }),
-    new MakerZIP({}, ['darwin']),
+    new MakerZIP({}, ['darwin', 'linux']),
     new MakerSquirrel({}),
     new MakerRpm({ options: { bin: APP_NAME } }),
     new MakerDeb({ options: { bin: APP_NAME } }),
