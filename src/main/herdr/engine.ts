@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-
+import { hostInvocation, sandboxPathFromHostPath } from '@/main/flatpak';
 import { HerdrApiClient } from '@/main/herdr/api-client';
 import { decodeHerdrQueryResult } from '@/main/herdr/query-decoder';
 import { decodeSessionSnapshot } from '@/main/herdr/snapshot-decoder';
@@ -44,7 +44,8 @@ export class NodeHerdrCommandRunner implements HerdrCommandRunner {
   constructor(private readonly binary = process.env.HERDR_DESKTOP_BIN || 'herdr') {}
 
   async run(args: string[], options?: { timeoutMs?: number }): Promise<HerdrCommandResult> {
-    const { stdout, stderr } = await execFileAsync(this.binary, args, {
+    const { program, args: bridgedArgs } = hostInvocation(this.binary, args);
+    const { stdout, stderr } = await execFileAsync(program, bridgedArgs, {
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
       timeout: options?.timeoutMs ?? 15_000,
@@ -60,7 +61,12 @@ export class NodeHerdrServerLauncher implements HerdrServerLauncher {
 
   launch(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, ['server'], {
+      const { program, args: bridgedArgs } = hostInvocation(this.binary, ['server'], {
+        // The server is intentionally detached and must outlive this app
+        // process, so it is not tied to the session bus lifetime.
+        watchBus: false,
+      });
+      const child = spawn(program, bridgedArgs, {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
@@ -99,6 +105,13 @@ function parseStatus(stdout: string): HerdrStatus {
     typeof value.client.version !== 'string'
   ) {
     throw new InvalidHerdrResponse('Herdr returned an invalid status response.');
+  }
+
+  // Inside the Flatpak, `herdr status` runs on the host and reports
+  // host-visible socket paths; every sandbox-direct API/event connection
+  // needs the equivalent sandbox path, so centralize the translation here.
+  if (typeof value.server.socket === 'string') {
+    value.server.socket = sandboxPathFromHostPath(value.server.socket);
   }
 
   return value as unknown as HerdrStatus;

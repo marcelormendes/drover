@@ -4,7 +4,7 @@ import {
   spawn,
 } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
-
+import { hostInvocation } from '@/main/flatpak';
 import type { TerminalEvent, TerminalOpenRequest, TerminalScrollCommand } from '@/shared/terminal';
 
 export interface TerminalProcess {
@@ -95,25 +95,22 @@ export class TerminalController {
   open(request: TerminalOpenRequest, onEvent: (event: TerminalEvent) => void): void {
     this.close();
     const generation = ++this.generation;
-    const child = this.spawner(
-      this.binary,
-      [
-        'terminal',
-        'session',
-        'control',
-        request.paneId,
-        '--takeover',
-        '--cols',
-        String(request.cols),
-        '--rows',
-        String(request.rows),
-      ],
-      {
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      },
-    );
+    const { program, args: bridgedArgs } = hostInvocation(this.binary, [
+      'terminal',
+      'session',
+      'control',
+      request.paneId,
+      '--takeover',
+      '--cols',
+      String(request.cols),
+      '--rows',
+      String(request.rows),
+    ]);
+    const child = this.spawner(program, bridgedArgs, {
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
     this.child = child;
 
     lines(child.stdout, (line) => {

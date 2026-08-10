@@ -60,6 +60,19 @@ The installer downloads the AppImage, verifies its SHA-256 against the checksums
 
 The AppImage's runtime carries its own FUSE support (statically linked), so the system libfuse libraries are not needed. If launch fails with a FUSE mount error (containers, restricted `/dev/fuse`, or no mount helper), force self-extraction with `APPIMAGE_EXTRACT_AND_RUN=1 herdr-desktop` (or pass `--appimage-extract-and-run`).
 
+### Flatpak
+
+Every release also publishes a Flatpak bundle as a manual GitHub Release download:
+
+```sh
+flatpak install --user ./herdr-desktop-linux-x86_64.flatpak
+flatpak run io.github.marcelormendes.herdr-desktop
+```
+
+Remove it with `flatpak uninstall --user io.github.marcelormendes.herdr-desktop`.
+
+This bundle is updated by installing a newer release; it is not a Flathub or repository-backed package. Herdr Desktop requests host command access (`flatpak-spawn --host`) because it controls the host Herdr engine, its sockets, terminals, and SSH tunnels — Flatpak manages installation and desktop integration, not a security boundary between the application and the host.
+
 ## Development
 
 ```sh

@@ -47,3 +47,119 @@ jobs:
 
       - name: Build website
         run: npm run site:build
+
+  flatpak:
+    name: Flatpak build and smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder appstream appstream-compose desktop-file-utils xvfb
+
+      - name: Build the Flatpak bundle
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          npm run build:flatpak
+
+      - name: Prepare an isolated test installation
+        # Persisted through GITHUB_ENV so every later flatpak step uses the
+        # isolated store; HOME and XDG_RUNTIME_DIR stay untouched for DBus
+        # reliability. The store has no remote and no runtime: bundle install
+        # must resolve the runtime through the embedded runtime-repo URL.
+        run: |
+          mkdir -p \
+            "$RUNNER_TEMP/flatpak-test-data" \
+            "$RUNNER_TEMP/flatpak-test-config" \
+            "$RUNNER_TEMP/flatpak-test-cache" \
+            "$RUNNER_TEMP/flatpak-test-user"
+          {
+            echo "FLATPAK_USER_DIR=$RUNNER_TEMP/flatpak-test-user"
+            echo "XDG_DATA_HOME=$RUNNER_TEMP/flatpak-test-data"
+            echo "XDG_CONFIG_HOME=$RUNNER_TEMP/flatpak-test-config"
+            echo "XDG_CACHE_HOME=$RUNNER_TEMP/flatpak-test-cache"
+          } >> "$GITHUB_ENV"
+
+      - name: Assert the test installation is empty
+        run: |
+          test -z "$(flatpak remotes --user)"
+          test -z "$(flatpak list --user)"
+
+      - name: Install the bundle into the empty isolated store
+        run: flatpak install --user --noninteractive ./out/flatpak/herdr-desktop-linux-x86_64.flatpak
+
+      - name: Inspect the installed application
+        run: |
+          flatpak info --user io.github.marcelormendes.herdr-desktop
+          flatpak info --user --show-permissions io.github.marcelormendes.herdr-desktop | grep -q "org.freedesktop.Flatpak"
+          test "$(flatpak info --user --show-ref io.github.marcelormendes.herdr-desktop)" = "app/io.github.marcelormendes.herdr-desktop/x86_64/stable"
+          test -f "$FLATPAK_USER_DIR/exports/share/applications/io.github.marcelormendes.herdr-desktop.desktop"
+          test -f "$FLATPAK_USER_DIR/exports/share/icons/hicolor/512x512/apps/io.github.marcelormendes.herdr-desktop.png"
+
+      - name: Exercise the herdr config host-visible permission contract
+        # Runs before ANY flatpak run: xdg-config/herdr:create can eagerly
+        # create the host directory on the first sandbox launch, so the
+        # not-exists assertion must precede every flatpak run. The sandbox
+        # creates the dir through the grant and writes, the host verifies,
+        # then the reverse direction is checked. HOST_XDG_CONFIG_HOME must
+        # equal the outer custom value passed as a positional argument.
+        run: |
+          test ! -e "$XDG_CONFIG_HOME/herdr"
+          flatpak run --user --command=sh io.github.marcelormendes.herdr-desktop -eu -c 'test "$1" = "$HOST_XDG_CONFIG_HOME"; mkdir -p "$XDG_CONFIG_HOME/herdr"; printf "probe-sandbox" > "$XDG_CONFIG_HOME/herdr/.fp-probe-sandbox"' sh "$XDG_CONFIG_HOME"
+          test "$(cat "$XDG_CONFIG_HOME/herdr/.fp-probe-sandbox")" = "probe-sandbox"
+          printf 'probe-host' > "$XDG_CONFIG_HOME/herdr/.fp-probe-host"
+          flatpak run --user --command=sh io.github.marcelormendes.herdr-desktop -eu -c 'test "$(cat "$XDG_CONFIG_HOME/herdr/.fp-probe-host")" = "probe-host"' sh "$XDG_CONFIG_HOME"
+          rm -f "$XDG_CONFIG_HOME/herdr/.fp-probe-sandbox" "$XDG_CONFIG_HOME/herdr/.fp-probe-host"
+
+      - name: Smoke-run the app under a virtual display
+        run: xvfb-run -a flatpak run --user --env=HERDR_DESKTOP_SMOKE_TEST=1 io.github.marcelormendes.herdr-desktop
+
+      - name: Exercise flatpak-spawn --host argument and stdio crossing
+        run: |
+          argv_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/sh -c 'printf "%s|%s" "$1" "$2"' sh --flag value)"
+          test "$argv_out" = "--flag|value"
+          stdin_out="$(printf 'payload' | flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/cat)"
+          test "$stdin_out" = "payload"
+          stderr_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/sh -c 'printf "eek" >&2' 2>&1 >/dev/null)"
+          test "$stderr_out" = "eek"
+          set +e
+          flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/false
+          false_status=$?
+          set -e
+          test "$false_status" -eq 1
+
+      - name: Exercise the app data host-visible permission contract
+        # Validates the xdg-data/herdr-desktop:create parent grant: the
+        # sandbox creates both child directories (chat-images, remote) and
+        # writes; the host verifies, then the reverse direction is checked.
+        # HOST_XDG_DATA_HOME must equal the outer custom value passed as a
+        # positional argument.
+        run: |
+          flatpak run --user --command=sh io.github.marcelormendes.herdr-desktop -eu -c 'test "$1" = "$HOST_XDG_DATA_HOME"; mkdir -p "$XDG_DATA_HOME/herdr-desktop/chat-images" "$XDG_DATA_HOME/herdr-desktop/remote"; printf "probe-chat" > "$XDG_DATA_HOME/herdr-desktop/chat-images/.fp-probe-chat"; printf "probe-remote" > "$XDG_DATA_HOME/herdr-desktop/remote/.fp-probe-remote"' sh "$XDG_DATA_HOME"
+          test "$(cat "$XDG_DATA_HOME/herdr-desktop/chat-images/.fp-probe-chat")" = "probe-chat"
+          test "$(cat "$XDG_DATA_HOME/herdr-desktop/remote/.fp-probe-remote")" = "probe-remote"
+          printf 'probe-host-chat' > "$XDG_DATA_HOME/herdr-desktop/chat-images/.fp-probe-host-chat"
+          printf 'probe-host-remote' > "$XDG_DATA_HOME/herdr-desktop/remote/.fp-probe-host-remote"
+          flatpak run --user --command=sh io.github.marcelormendes.herdr-desktop -eu -c 'test "$(cat "$XDG_DATA_HOME/herdr-desktop/chat-images/.fp-probe-host-chat")" = "probe-host-chat"; test "$(cat "$XDG_DATA_HOME/herdr-desktop/remote/.fp-probe-host-remote")" = "probe-host-remote"' sh "$XDG_DATA_HOME"
+          rm -f \
+            "$XDG_DATA_HOME/herdr-desktop/chat-images/.fp-probe-chat" \
+            "$XDG_DATA_HOME/herdr-desktop/remote/.fp-probe-remote" \
+            "$XDG_DATA_HOME/herdr-desktop/chat-images/.fp-probe-host-chat" \
+            "$XDG_DATA_HOME/herdr-desktop/remote/.fp-probe-host-remote"
+
+      - name: Uninstall the application
+        run: flatpak uninstall --user --noninteractive io.github.marcelormendes.herdr-desktop

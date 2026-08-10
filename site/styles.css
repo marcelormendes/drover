@@ -524,6 +524,18 @@ h2 {
   font-size: 14px;
 }
 
+.linux-install .linux-alt {
+  margin: 14px 0 0;
+  line-height: 1.5;
+}
+
+.linux-install .linux-alt code {
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  font-size: 13px;
+}
+
 footer {
   display: flex;
   flex-wrap: wrap;

@@ -3,11 +3,14 @@ import { access, mkdtemp, rm } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { FLATPAK_APP_ID } from '@/main/flatpak';
 import {
   createRemoteEngineRelauncher,
   createWillQuitHandler,
+  defaultTunnelClientSocketPath,
+  defaultTunnelSocketPath,
   establishPersistedRemoteEngineBeforeWindow,
   type RemoteEngineRelaunchOptions,
   RemoteEngineTunnel,
@@ -15,6 +18,11 @@ import {
   type TunnelChildProcess,
 } from '@/main/remote-engine';
 import { DEFAULT_DESKTOP_PREFERENCES } from '@/shared/preferences';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 type FakeChild = TunnelChildProcess & {
   emit: (event: string, ...args: unknown[]) => boolean;
@@ -79,6 +87,35 @@ describe('RemoteEngineTunnel', () => {
     const status = await tunnel.apply({ enabled: false, host: 'user@host', port: 22025 });
     expect(status.state).toBe('off');
     expect(sshSpawn).not.toHaveBeenCalled();
+  });
+
+  it('routes SSH through flatpak-spawn --host inside the Herdr Desktop Flatpak', async () => {
+    vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
+    vi.stubEnv('HERDR_SOCKET_PATH', '');
+    vi.stubEnv('HERDR_CLIENT_SOCKET_PATH', '');
+    vi.spyOn(os, 'homedir').mockReturnValue('/home/tester');
+    const { sshSpawn, tunnel } = setup();
+    const status = await tunnel.apply(target);
+    expect(sshSpawn).toHaveBeenCalledTimes(1);
+    const [program, args] = sshSpawn.mock.calls[0];
+    expect(program).toBe('flatpak-spawn');
+    expect(args[0]).toBe('--host');
+    expect(args[1]).toBe('--watch-bus');
+    expect(args[2]).toBe('--env=PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin');
+    expect(args[3]).toBe('ssh');
+    expect(args).toContain('22025:127.0.0.1:22025');
+    expect(status.state).toBe('starting');
+  });
+
+  it('places bridge sockets under the sandbox remote grant in Flatpak mode', () => {
+    vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
+    vi.stubEnv('XDG_DATA_HOME', '/sandbox-data');
+    expect(defaultTunnelSocketPath()).toBe(
+      path.join('/sandbox-data', 'herdr-desktop', 'remote', 'herdr-desktop-remote.sock'),
+    );
+    expect(defaultTunnelClientSocketPath()).toBe(
+      path.join('/sandbox-data', 'herdr-desktop', 'remote', 'herdr-desktop-remote-client.sock'),
+    );
   });
 
   it('spawns ssh and the bridge for a valid target', async () => {

@@ -1,8 +1,12 @@
 import { spawn } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+
+import { flatpakRemoteSocketDir, hostInvocation, isFlatpakHost } from '@/main/flatpak';
+
 import type { DesktopPreferences } from '@/shared/preferences';
 import {
   MAX_REMOTE_ENGINE_PORT,
@@ -158,10 +162,18 @@ export async function establishPersistedRemoteEngineBeforeWindow(
 }
 
 export function defaultTunnelSocketPath(): string {
+  if (isFlatpakHost()) {
+    // Sandbox-private tmp is unreachable by the host Herdr server; keep the
+    // bridge sockets under the host-visible remote grant instead.
+    return path.join(flatpakRemoteSocketDir(), 'herdr-desktop-remote.sock');
+  }
   return path.join(os.tmpdir(), 'herdr-desktop-remote.sock');
 }
 
 export function defaultTunnelClientSocketPath(): string {
+  if (isFlatpakHost()) {
+    return path.join(flatpakRemoteSocketDir(), 'herdr-desktop-remote-client.sock');
+  }
   return path.join(os.tmpdir(), 'herdr-desktop-remote-client.sock');
 }
 
@@ -178,6 +190,8 @@ export function clearRemoteSocketOverrides(): void {
  */
 export function createTcpBridge(socketPath: string, port: number): Promise<TunnelBridge> {
   return new Promise((resolve, reject) => {
+    // The host-visible Flatpak socket directory must exist before listen().
+    mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 });
     const server = net.createServer((client) => {
       const upstream = net.connect(port, '127.0.0.1');
       const teardown = () => {
@@ -318,24 +332,21 @@ export class RemoteEngineTunnel {
       await this.teardown();
       return this.setStatus('error', `Could not start the local socket bridge: ${message}`);
     }
-    const child = this.sshSpawn(
-      'ssh',
-      [
-        '-N',
-        '-L',
-        `${port}:127.0.0.1:${port}`,
-        '-L',
-        `${clientPort}:127.0.0.1:${clientPort}`,
-        trimmedHost,
-        '-o',
-        'ExitOnForwardFailure=yes',
-        '-o',
-        'ServerAliveInterval=30',
-        '-o',
-        'ServerAliveCountMax=3',
-      ],
-      { stdio: 'ignore' },
-    );
+    const { program: sshProgram, args: bridgedSshArgs } = hostInvocation('ssh', [
+      '-N',
+      '-L',
+      `${port}:127.0.0.1:${port}`,
+      '-L',
+      `${clientPort}:127.0.0.1:${clientPort}`,
+      trimmedHost,
+      '-o',
+      'ExitOnForwardFailure=yes',
+      '-o',
+      'ServerAliveInterval=30',
+      '-o',
+      'ServerAliveCountMax=3',
+    ]);
+    const child = this.sshSpawn(sshProgram, bridgedSshArgs, { stdio: 'ignore' });
     this.ssh = child;
     let readinessSettled = false;
     child.once('error', (error) => {
