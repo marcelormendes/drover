@@ -493,6 +493,37 @@ h2 {
   background: var(--main);
 }
 
+.linux-install {
+  margin-top: 28px;
+  padding: 20px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+}
+
+.linux-install h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.linux-install p {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
+.linux-install pre {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border: 2px solid var(--border);
+  background: var(--foreground);
+  color: var(--surface);
+}
+
+.linux-install code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+}
+
 footer {
   display: flex;
   flex-wrap: wrap;
