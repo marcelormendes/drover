@@ -1,0 +1,52 @@
+# Maintainer: Herdr Desktop contributors <herdr-desktop@users.noreply.github.com>
+# Contributor: Marcelo Ribeiro Mendes
+
+pkgname=herdr-desktop-bin
+pkgver=0.1.10
+pkgrel=1
+pkgdesc="A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions"
+arch=('x86_64')
+url="https://github.com/marcelormendes/herdr-desktop"
+license=('MIT')
+depends=('fuse2')
+provides=('herdr-desktop')
+conflicts=('herdr-desktop')
+# The AppImage is a self-contained ELF with an embedded filesystem; default
+# stripping would destroy it, so it must be disabled explicitly.
+options=('!strip' '!debug')
+optdepends=(
+  'herdr: the Herdr engine this desktop controls (install from the Herdr project)'
+)
+source=(
+  "herdr-desktop-linux-x86_64.AppImage::https://github.com/marcelormendes/herdr-desktop/releases/download/v${pkgver}/herdr-desktop-linux-x86_64.AppImage"
+  "icon-1024.png::https://raw.githubusercontent.com/marcelormendes/herdr-desktop/v${pkgver}/resources/icon-1024.png"
+  "LICENSE::https://raw.githubusercontent.com/marcelormendes/herdr-desktop/v${pkgver}/LICENSE"
+)
+sha256sums=(
+  '8305307a608bb81c979debbf1478d98ffa03a6705f1337b425cfda7f847a862c'
+  '26bc1e96021e651612ed207632d0992415a79deabf77634ca590666b0b400f93'
+  'c340e32ed2706b814e99e58e7cc87419a635fac31bfcf22567f8a6a0454729dd'
+)
+# Hashes are pinned from the immutable release/tag sources (release
+# checksums.sha256 for the AppImage, tagged raw files for icon and license).
+
+package() {
+  install -Dm755 "${srcdir}/herdr-desktop-linux-x86_64.AppImage" \
+    "${pkgdir}/usr/bin/herdr-desktop"
+  install -Dm644 "${srcdir}/icon-1024.png" \
+    "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/herdr-desktop.png"
+  install -Dm644 "${srcdir}/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+
+  install -Dm644 /dev/stdin "${pkgdir}/usr/share/applications/herdr-desktop.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Herdr Desktop
+Comment=A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.
+Exec=/usr/bin/herdr-desktop
+Icon=herdr-desktop
+Terminal=false
+Categories=Development;Utility;
+EOF
+}

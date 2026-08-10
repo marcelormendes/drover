@@ -1,0 +1,21 @@
+pkgbase = herdr-desktop-bin
+	pkgdesc = A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions
+	pkgver = 0.1.10
+	pkgrel = 1
+	url = https://github.com/marcelormendes/herdr-desktop
+	arch = x86_64
+	license = MIT
+	depends = fuse2
+	optdepends = herdr: the Herdr engine this desktop controls (install from the Herdr project)
+	provides = herdr-desktop
+	conflicts = herdr-desktop
+	options = !strip
+	options = !debug
+	source = herdr-desktop-linux-x86_64.AppImage::https://github.com/marcelormendes/herdr-desktop/releases/download/v0.1.10/herdr-desktop-linux-x86_64.AppImage
+	source = icon-1024.png::https://raw.githubusercontent.com/marcelormendes/herdr-desktop/v0.1.10/resources/icon-1024.png
+	source = LICENSE::https://raw.githubusercontent.com/marcelormendes/herdr-desktop/v0.1.10/LICENSE
+	sha256sums = 8305307a608bb81c979debbf1478d98ffa03a6705f1337b425cfda7f847a862c
+	sha256sums = 26bc1e96021e651612ed207632d0992415a79deabf77634ca590666b0b400f93
+	sha256sums = c340e32ed2706b814e99e58e7cc87419a635fac31bfcf22567f8a6a0454729dd
+
+pkgname = herdr-desktop-bin

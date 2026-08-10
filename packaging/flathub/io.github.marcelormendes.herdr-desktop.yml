@@ -1,0 +1,66 @@
+app-id: io.github.marcelormendes.herdr-desktop
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '25.08'
+command: herdr-desktop-wrapper.sh
+separate-locales: false
+
+finish-args:
+  # Standard Electron display/input/GPU access.
+  - --socket=x11
+  - --socket=wayland
+  - --share=ipc
+  - --share=network
+  - --device=dri
+  # Host command execution: Herdr Desktop controls the host Herdr engine, its
+  # Unix sockets, host PTYs, and SSH tunnels. `flatpak-spawn --host` is an
+  # intentional sandbox escape; this bundle is NOT a security boundary and the
+  # AppStream metadata says so explicitly.
+  - --talk-name=org.freedesktop.Flatpak
+  # Herdr API/client sockets and engine configuration; :create covers fresh
+  # users without a config directory yet.
+  - --filesystem=xdg-config/herdr:create
+  # Single narrow app-owned parent covering chat-image staging and the
+  # remote-engine bridge sockets (Flatpak 1.14 ignores overlapping nested
+  # xdg-data grants); the application creates both children with 0700.
+  - --filesystem=xdg-data/herdr-desktop:create
+
+modules:
+  - name: herdr-desktop
+    buildsystem: simple
+    build-commands:
+      # The official Forge Linux package (built by the repository release
+      # pipeline, not rebuilt here) is repackaged into the bundle.
+      - cp -a "Herdr Desktop-linux-x64"/. /app/herdr-desktop/
+      - mv /app/herdr-desktop/"Herdr Desktop" /app/herdr-desktop/herdr-desktop
+      # Zypak provides Chromium's sandbox under Flatpak; a setuid
+      # chrome-sandbox is both unneeded and rejected by flatpak-builder.
+      - find /app/herdr-desktop -name chrome-sandbox -exec chmod 0755 {} +
+      # Patch the Electron binary so its desktop identity matches the
+      # application ID (BaseApp helper derives the filename from FLATPAK_ID).
+      - patch-electron-desktop-filename /app/herdr-desktop/resources/app.asar
+      - install -Dm755 source/flatpak/herdr-desktop-wrapper.sh /app/bin/herdr-desktop-wrapper.sh
+      - install -Dm644 source/flatpak/io.github.marcelormendes.herdr-desktop.desktop /app/share/applications/io.github.marcelormendes.herdr-desktop.desktop
+      # Application license (Flathub requires the bundle to ship it).
+      - install -Dm644 source/LICENSE /app/share/licenses/io.github.marcelormendes.herdr-desktop/LICENSE
+      # The metainfo template carries __VERSION__/__DATE__ placeholders; inject
+      # the exact release values before installing.
+      - sed -e 's/__VERSION__/0.1.11/g' -e 's/__DATE__/2026-08-10/g' source/flatpak/io.github.marcelormendes.herdr-desktop.metainfo.xml > metainfo.xml
+      - install -Dm644 metainfo.xml /app/share/metainfo/io.github.marcelormendes.herdr-desktop.metainfo.xml
+      - install -Dm644 source/flatpak/icon-512.png /app/share/icons/hicolor/512x512/apps/io.github.marcelormendes.herdr-desktop.png
+      - install -Dm644 source/flatpak/icon.svg /app/share/icons/hicolor/scalable/apps/io.github.marcelormendes.herdr-desktop.svg
+    sources:
+      # Official Forge Linux package (zip) from the matching release; update
+      # url+sha256 (from the release checksums.sha256) per release. Requires a
+      # release that includes herdr-desktop-linux-x64.zip (v0.1.11+).
+      - type: archive
+        url: https://github.com/marcelormendes/herdr-desktop/releases/download/v0.1.11/herdr-desktop-linux-x64.zip
+        sha256: CHANGE-ME-from-release-checksums.sha256
+      # The flatpak/ assets (wrapper, desktop entry, metainfo, icons) come from
+      # the same release tag; the tag must match the archive version.
+      - type: git
+        url: https://github.com/marcelormendes/herdr-desktop.git
+        tag: v0.1.11
+        dest: source
