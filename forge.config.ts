@@ -9,6 +9,7 @@ import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import type { ForgeConfig } from '@electron-forge/shared-types';
+import { MakerAppImage } from '@reforged/maker-appimage';
 import { APP_DESCRIPTION, APP_NAME } from './src/main/app-branding';
 
 const applePlatforms = new Set(['darwin', 'mas']);
@@ -60,6 +61,18 @@ const config: ForgeConfig = {
     new MakerSquirrel({}),
     new MakerRpm({}),
     new MakerDeb({}),
+    new MakerAppImage({
+      options: {
+        bin: APP_NAME,
+        icon: 'resources/icon.svg',
+        categories: ['Development', 'Utility'],
+        // Vendored type-2 runtime (AppImage/type2-runtime, sha256
+        // 1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf) so
+        // builds embed a pinned runtime instead of the mutable `continuous`
+        // release. License notice: resources/appimage-runtime-x86_64.LICENSE.
+        runtime: 'resources/appimage-runtime-x86_64',
+      },
+    }),
   ],
   plugins: [
     new VitePlugin({

@@ -158,33 +158,31 @@ export function WorktreeSpaces({
               </button>
             ) : null}
             {isExpanded ? (
-              <>
-                {group.linkedWorkspaces.length === 0 ? (
-                  <p className="py-1 pl-7 font-mono text-xs opacity-50">No linked worktrees open</p>
-                ) : (
-                  group.linkedWorkspaces.map((workspace) => (
-                    <div className="group/worktree relative" key={workspace.workspace_id}>
-                      <button
-                        aria-label={`Focus workspace ${workspace.label}`}
-                        className={cn(workspaceRowClass(workspace.focused), 'pl-7 pr-8')}
-                        onClick={() => onFocusWorkspace(workspace.workspace_id)}
-                        type="button"
-                      >
-                        <WorkspaceStatus status={workspace.agent_status} />
-                        <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
-                      </button>
-                      <button
-                        aria-label={`Remove worktree ${workspace.label}`}
-                        className="absolute right-1.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-base opacity-0 hover:bg-background focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring group-hover/worktree:opacity-60 group-hover/worktree:hover:opacity-100"
-                        onClick={() => onRemoveWorktree(workspace)}
-                        type="button"
-                      >
-                        <Trash2 aria-hidden="true" className="size-3.5" />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </>
+              group.linkedWorkspaces.length === 0 ? (
+                <p className="py-1 pl-7 font-mono text-xs opacity-50">No linked worktrees open</p>
+              ) : (
+                group.linkedWorkspaces.map((workspace) => (
+                  <div className="group/worktree relative" key={workspace.workspace_id}>
+                    <button
+                      aria-label={`Focus workspace ${workspace.label}`}
+                      className={cn(workspaceRowClass(workspace.focused), 'pl-7 pr-8')}
+                      onClick={() => onFocusWorkspace(workspace.workspace_id)}
+                      type="button"
+                    >
+                      <WorkspaceStatus status={workspace.agent_status} />
+                      <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
+                    </button>
+                    <button
+                      aria-label={`Remove worktree ${workspace.label}`}
+                      className="absolute right-1.5 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-base opacity-0 hover:bg-background focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring group-hover/worktree:opacity-60 group-hover/worktree:hover:opacity-100"
+                      onClick={() => onRemoveWorktree(workspace)}
+                      type="button"
+                    >
+                      <Trash2 aria-hidden="true" className="size-3.5" />
+                    </button>
+                  </div>
+                ))
+              )
             ) : null}
             {source ? (
               <div className="flex items-center gap-1 pl-7">

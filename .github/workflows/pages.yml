@@ -9,6 +9,7 @@ on:
       - "package.json"
       - "resources/icon-1024.png"
       - "scripts/build-site.mjs"
+      - "scripts/install.sh"
       - "site/**"
   workflow_dispatch:
 
