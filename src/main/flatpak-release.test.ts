@@ -124,8 +124,12 @@ describe('Flatpak packaging contract', () => {
     expect(ci).toContain('FLATPAK_USER_DIR=');
     expect(ci).toContain('Assert the test installation is empty');
     expect(ci).toContain('flatpak install --user --noninteractive');
-    expect(ci).toContain('xvfb-run -a flatpak run --user --env=HERDR_DESKTOP_SMOKE_TEST=1');
+    expect(ci).toContain(
+      'dbus-run-session -- xvfb-run -a flatpak run --user --env=HERDR_DESKTOP_SMOKE_TEST=1',
+    );
+    expect(ci).toContain('dbus-run-session -- bash -euo pipefail');
     expect(ci).toContain('Exercise flatpak-spawn --host argument and stdio crossing');
+    expect(ci).toContain('--host --watch-bus');
     expect(ci).toContain('Exercise the app data host-visible permission contract');
     expect(ci).toContain('Exercise the herdr config host-visible permission contract');
     expect(ci).toContain('HOST_XDG_CONFIG_HOME');

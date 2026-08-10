@@ -126,21 +126,28 @@ jobs:
           rm -f "$XDG_CONFIG_HOME/herdr/.fp-probe-sandbox" "$XDG_CONFIG_HOME/herdr/.fp-probe-host"
 
       - name: Smoke-run the app under a virtual display
-        run: xvfb-run -a flatpak run --user --env=HERDR_DESKTOP_SMOKE_TEST=1 io.github.marcelormendes.herdr-desktop
+        # GitHub runners have no session D-Bus; Zypak and flatpak-spawn need
+        # one, so the Electron smoke runs inside a private session bus.
+        run: dbus-run-session -- xvfb-run -a flatpak run --user --env=HERDR_DESKTOP_SMOKE_TEST=1 io.github.marcelormendes.herdr-desktop
 
       - name: Exercise flatpak-spawn --host argument and stdio crossing
+        # One shared session bus for the whole fixture so flatpak-spawn --host
+        # and --watch-bus semantics are exercised on a single bus; exact
+        # output and exit assertions are preserved.
         run: |
-          argv_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/sh -c 'printf "%s|%s" "$1" "$2"' sh --flag value)"
+          dbus-run-session -- bash -euo pipefail <<'EOF'
+          argv_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/sh -c 'printf "%s|%s" "$1" "$2"' sh --flag value)"
           test "$argv_out" = "--flag|value"
-          stdin_out="$(printf 'payload' | flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/cat)"
+          stdin_out="$(printf 'payload' | flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/cat)"
           test "$stdin_out" = "payload"
-          stderr_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/sh -c 'printf "eek" >&2' 2>&1 >/dev/null)"
+          stderr_out="$(flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/sh -c 'printf "eek" >&2' 2>&1 >/dev/null)"
           test "$stderr_out" = "eek"
           set +e
-          flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host /bin/false
+          flatpak run --user --command=flatpak-spawn io.github.marcelormendes.herdr-desktop --host --watch-bus /bin/false
           false_status=$?
           set -e
           test "$false_status" -eq 1
+          EOF
 
       - name: Exercise the app data host-visible permission contract
         # Validates the xdg-data/herdr-desktop:create parent grant: the
