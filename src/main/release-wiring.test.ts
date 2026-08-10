@@ -60,6 +60,13 @@ describe('macOS release wiring', () => {
     expect(workflow).toContain('sha256sum herdr-desktop-* > checksums.sha256');
   });
 
+  it('points the Linux DEB and RPM makers at the packaged executable', async () => {
+    const forge = await read('forge.config.ts');
+
+    expect(forge).toContain('new MakerRpm({ options: { bin: APP_NAME } })');
+    expect(forge).toContain('new MakerDeb({ options: { bin: APP_NAME } })');
+  });
+
   it('lets the temporary Forge runner select an architecture and avoids ad-hoc re-signing releases', async () => {
     const runner = await read('scripts/forge-in-temp.mjs');
     const forge = await read('forge.config.ts');

@@ -59,8 +59,8 @@ const config: ForgeConfig = {
     }),
     new MakerZIP({}, ['darwin']),
     new MakerSquirrel({}),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerRpm({ options: { bin: APP_NAME } }),
+    new MakerDeb({ options: { bin: APP_NAME } }),
     new MakerAppImage({
       options: {
         bin: APP_NAME,
