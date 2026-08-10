@@ -1,7 +1,7 @@
 {
   "name": "herdr-desktop",
   "productName": "Herdr Desktop",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.",
   "main": ".vite/build/main.js",
   "private": true,
