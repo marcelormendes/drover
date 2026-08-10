@@ -199,7 +199,6 @@ EOF
   printf '\nInstalled Herdr Desktop %s\n' "$version"
   printf '  binary:  %s\n' "$bin_dir/herdr-desktop"
   printf '  menu:    %s\n' "$desktop_dir/herdr-desktop.desktop"
-  printf 'Run it with: herdr-desktop\n'
 }
 
 warn_missing_herdr() {
@@ -211,10 +210,14 @@ warn_missing_herdr() {
 
 warn_bin_dir_not_on_path() {
   case ":${PATH}:" in
-    *:"$HOME/.local/bin":*) ;;
+    *:"$HOME/.local/bin":*)
+      BIN_ON_PATH=1
+      ;;
     *)
+      BIN_ON_PATH=0
       printf 'note: %s is not on your PATH.\n' "$HOME/.local/bin" >&2
-      printf '      Run the app with %s, or add the directory to PATH.\n' "$HOME/.local/bin/herdr-desktop" >&2
+      printf '      Add it to PATH, or run the app with:\n' >&2
+      printf '      %s\n' "$HOME/.local/bin/herdr-desktop" >&2
       ;;
   esac
 }
@@ -231,6 +234,11 @@ main() {
   install_appimage
   warn_missing_herdr
   warn_bin_dir_not_on_path
+  if [ "$BIN_ON_PATH" -eq 1 ]; then
+    printf 'Run it with: herdr-desktop\n'
+  else
+    printf 'Run it with: %s\n' "$HOME/.local/bin/herdr-desktop"
+  fi
 }
 
 main "$@"
