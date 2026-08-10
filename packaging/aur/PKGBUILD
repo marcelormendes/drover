@@ -2,7 +2,7 @@
 # Contributor: Marcelo Ribeiro Mendes
 
 pkgname=herdr-desktop-bin
-pkgver=0.1.10
+pkgver=0.1.11
 pkgrel=1
 pkgdesc="A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions"
 arch=('x86_64')
