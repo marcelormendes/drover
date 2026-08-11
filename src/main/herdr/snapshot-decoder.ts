@@ -1,4 +1,9 @@
 import type {
+  ConversationCapability,
+  ConversationReasonCode,
+  ConversationSessionIdentity,
+} from '@/shared/conversation';
+import type {
   AgentInfo,
   AgentStatus,
   LayoutRect,
@@ -51,6 +56,58 @@ function stringMap(value: unknown): Record<string, string> | null {
     return null;
   }
   return value as Record<string, string>;
+}
+
+function opaque(value: unknown): string | null {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 256 &&
+    !/[\\/]/.test(value)
+    ? value
+    : null;
+}
+
+function conversationSession(value: unknown): ConversationSessionIdentity | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = opaque(value.id);
+  return id ? { id } : null;
+}
+
+function conversationCapability(value: unknown): ConversationCapability | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+  const availability = value.availability;
+  const reasons: ConversationReasonCode[] = [
+    'ready',
+    'adapter_missing',
+    'no_session',
+    'transcript_missing',
+    'transcript_invalid',
+    'source_unreadable',
+  ];
+  if (
+    (availability !== 'supported' &&
+      availability !== 'unavailable' &&
+      availability !== 'unsupported') ||
+    !reasons.includes(value.reason as ConversationReasonCode) ||
+    (value.message !== undefined && typeof value.message !== 'string')
+  ) {
+    return null;
+  }
+  return {
+    availability,
+    reason: value.reason as ConversationReasonCode,
+    ...(value.message === undefined ? {} : { message: value.message }),
+  };
 }
 
 function agentSession(value: unknown): PaneInfo['agent_session'] | null | undefined {
@@ -159,6 +216,8 @@ function pane(value: unknown): PaneInfo | null {
   const stateLabels = stringMap(value.state_labels);
   const tokens = stringMap(value.tokens);
   const session = agentSession(value.agent_session);
+  const conversation_session = conversationSession(value.conversation_session);
+  const conversation_capability = conversationCapability(value.conversation_capability);
   if (
     !isString(value.pane_id) ||
     !isString(value.terminal_id) ||
@@ -177,6 +236,8 @@ function pane(value: unknown): PaneInfo | null {
     stateLabels === null ||
     tokens === null ||
     session === null ||
+    conversation_session === null ||
+    conversation_capability === null ||
     !isNonNegativeInteger(value.revision)
   ) {
     return null;
@@ -219,6 +280,8 @@ function pane(value: unknown): PaneInfo | null {
     state_labels: stateLabels,
     tokens,
     ...(session === undefined ? {} : { agent_session: session }),
+    ...(conversation_session === undefined ? {} : { conversation_session }),
+    ...(conversation_capability === undefined ? {} : { conversation_capability }),
     ...(scroll === undefined ? {} : { scroll }),
     revision: value.revision,
   };
@@ -304,6 +367,8 @@ function agent(value: unknown): AgentInfo | null {
   const stateLabels = stringMap(value.state_labels);
   const tokens = stringMap(value.tokens);
   const session = agentSession(value.agent_session);
+  const conversation_session = conversationSession(value.conversation_session);
+  const conversation_capability = conversationCapability(value.conversation_capability);
   const screenDetectionSkipped = value.screen_detection_skipped ?? false;
   const launchPending = value.launch_pending ?? false;
   const interactiveReady = value.interactive_ready ?? false;
@@ -321,6 +386,8 @@ function agent(value: unknown): AgentInfo | null {
     stateLabels === null ||
     tokens === null ||
     session === null ||
+    conversation_session === null ||
+    conversation_capability === null ||
     !isString(value.workspace_id) ||
     !isString(value.tab_id) ||
     !isString(value.pane_id) ||
@@ -349,6 +416,8 @@ function agent(value: unknown): AgentInfo | null {
     state_labels: stateLabels,
     tokens,
     ...(session === undefined ? {} : { agent_session: session }),
+    ...(conversation_session === undefined ? {} : { conversation_session }),
+    ...(conversation_capability === undefined ? {} : { conversation_capability }),
     workspace_id: value.workspace_id,
     tab_id: value.tab_id,
     pane_id: value.pane_id,

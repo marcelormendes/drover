@@ -338,6 +338,36 @@ describe('TerminalPanel', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Could not copy selection');
   });
 
+  it('copies the terminal selection with Ctrl+Shift+C when a selection exists', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<TerminalPanel pane={pane} />);
+    terminalControl.selection = 'selected output';
+    act(() => terminalControl.selectionListener?.());
+
+    const intercepted = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, shiftKey: true }),
+    );
+
+    expect(intercepted).toBe(false);
+    expect(writeText).toHaveBeenCalledWith('selected output');
+    expect(await screen.findByRole('status')).toHaveTextContent('Selection copied');
+  });
+
+  it('lets plain Ctrl+C pass through to the pane when there is no selection', () => {
+    render(<TerminalPanel pane={pane} />);
+    terminalControl.selection = '';
+
+    const intercepted = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }),
+    );
+
+    expect(intercepted).toBe(true);
+  });
+
   it('opens only modifier-clicked HTTP links through the injected callback', () => {
     const onOpenExternal = vi.fn();
     render(<TerminalPanel onOpenExternal={onOpenExternal} pane={pane} />);

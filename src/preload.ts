@@ -1,5 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron';
-
+import type {
+  ConversationAttachmentAbortRequest,
+  ConversationAttachmentBeginRequest,
+  ConversationAttachmentBeginResult,
+  ConversationAttachmentChunkRequest,
+  ConversationAttachmentFinishRequest,
+  ConversationPromptRequest,
+  ConversationReadRequest,
+  ConversationReadResult,
+  ConversationRespondRequest,
+  ConversationRespondResult,
+  ConversationStagedAttachment,
+} from '@/shared/conversation';
 import type {
   DesktopAction,
   DesktopUpdateInfo,
@@ -35,8 +47,37 @@ const api: HerdrDesktopApi = {
     ipcRenderer.invoke(IPC_CHANNELS.command, command) as Promise<EngineBootstrap>,
   query: (query: HerdrQuery) =>
     ipcRenderer.invoke(IPC_CHANNELS.query, query) as Promise<HerdrQueryResult>,
-  stageChatImages: (images) =>
-    ipcRenderer.invoke(IPC_CHANNELS.stageChatImages, images) as Promise<string[]>,
+  conversation: Object.freeze({
+    read: (request: ConversationReadRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversationRead, request) as Promise<ConversationReadResult>,
+    prompt: (request: ConversationPromptRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversationPrompt, request) as Promise<EngineBootstrap>,
+    respond: (request: ConversationRespondRequest) =>
+      ipcRenderer.invoke(
+        IPC_CHANNELS.conversationRespond,
+        request,
+      ) as Promise<ConversationRespondResult>,
+    subscribe: (paneId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversationSubscribe, paneId) as Promise<void>,
+    unsubscribe: (paneId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversationUnsubscribe, paneId) as Promise<void>,
+    attachment: Object.freeze({
+      begin: (request: ConversationAttachmentBeginRequest) =>
+        ipcRenderer.invoke(
+          IPC_CHANNELS.attachmentBegin,
+          request,
+        ) as Promise<ConversationAttachmentBeginResult>,
+      chunk: (request: ConversationAttachmentChunkRequest) =>
+        ipcRenderer.invoke(IPC_CHANNELS.attachmentChunk, request) as Promise<void>,
+      finish: (request: ConversationAttachmentFinishRequest) =>
+        ipcRenderer.invoke(
+          IPC_CHANNELS.attachmentFinish,
+          request,
+        ) as Promise<ConversationStagedAttachment>,
+      abort: (request: ConversationAttachmentAbortRequest) =>
+        ipcRenderer.invoke(IPC_CHANNELS.attachmentAbort, request) as Promise<void>,
+    }),
+  }),
   readPreferences: () =>
     ipcRenderer.invoke(IPC_CHANNELS.readPreferences) as Promise<DesktopPreferences>,
   writePreferences: (preferences: DesktopPreferences) =>

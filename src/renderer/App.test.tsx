@@ -2,33 +2,34 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/renderer/chat/ChatPanel', async () => {
-  const { useState } = await import('react');
+vi.mock('@/renderer/chat/ConversationChatPanel', async () => {
+  const { useEffect, useState } = await import('react');
+  const drafts = new Map<string, string>();
   return {
-    createChatSessionState: () => ({
-      draft: '',
-      transcript: { messages: [], activeTurnId: null, liveResponseId: null },
-    }),
-    ChatPanel: ({
+    ConversationChatPanel: ({
       pane,
-      onPrompt,
-      onSessionChange,
-      session,
+      onOpenTerminal,
     }: {
       pane: { display_agent?: string; pane_id: string };
-      onPrompt: (target: string, text: string) => void | Promise<void>;
-      onSessionChange?: (update: (current: { draft: string }) => { draft: string }) => void;
-      session?: { draft: string };
+      onOpenTerminal?: () => void;
     }) => {
+      const [draft, setDraft] = useState(() => drafts.get(pane.pane_id) ?? '');
       const [promptOutcome, setPromptOutcome] = useState('pending');
+      useEffect(() => {
+        void window.herdr.conversation.read({ target: pane.pane_id, direction: 'newest' });
+      }, [pane.pane_id]);
       return (
         <div data-testid={`chat-${pane.pane_id}`}>
           Chat with {pane.display_agent}
-          <span>{session?.draft}</span>
+          <span>{draft}</span>
           <button
             onClick={() => {
               setPromptOutcome('pending');
-              void Promise.resolve(onPrompt(pane.pane_id, 'Ship the chat'))
+              void window.herdr.conversation
+                .prompt({
+                  target: pane.pane_id,
+                  text: 'Ship the chat',
+                })
                 .then(() => setPromptOutcome('resolved'))
                 .catch(() => setPromptOutcome('rejected'));
             }}
@@ -38,13 +39,19 @@ vi.mock('@/renderer/chat/ChatPanel', async () => {
           </button>
           <span data-testid="prompt-outcome">{promptOutcome}</span>
           <button
-            onClick={() =>
-              onSessionChange?.((current) => ({ ...current, draft: 'Preserved turn' }))
-            }
+            onClick={() => {
+              drafts.set(pane.pane_id, 'Preserved turn');
+              setDraft('Preserved turn');
+            }}
             type="button"
           >
             Test preserve chat
           </button>
+          {onOpenTerminal ? (
+            <button onClick={onOpenTerminal} type="button">
+              Open Terminal
+            </button>
+          ) : null}
         </div>
       );
     },
@@ -150,6 +157,10 @@ const snapshot: SessionSnapshot = {
       label: 'Desktop UI',
       display_agent: 'Codex',
       agent_status: 'working',
+      conversation_capability: {
+        availability: 'supported',
+        reason: 'ready',
+      },
       state_labels: {},
       tokens: {},
       revision: 1,
@@ -207,7 +218,11 @@ const connected: EngineBootstrap = {
       running: true,
       version: '0.8.0',
       protocol: 7,
-      capabilities: { live_handoff: true, detached_server_daemon: true },
+      capabilities: {
+        live_handoff: true,
+        detached_server_daemon: true,
+        agent_conversations: true,
+      },
       compatible: true,
       socket: '/tmp/herdr.sock',
       session: 'default',
@@ -225,7 +240,28 @@ describe('App', () => {
       startServer: vi.fn(async () => connected),
       command: vi.fn(async () => connected),
       query: vi.fn(async () => ({ type: 'plugin-list' as const, plugins: [] })),
-      stageChatImages: vi.fn(async () => []),
+      conversation: {
+        read: vi.fn(async () => ({
+          type: 'reset_required' as const,
+          session: { id: 'demo' },
+          reader_generation: 'demo',
+        })),
+        prompt: vi.fn(async () => connected),
+        respond: vi.fn(async () => ({
+          request_id: 'request',
+          decision_id: 'decision',
+          accepted: false,
+          reason: 'unknown_request' as const,
+        })),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+        attachment: {
+          begin: vi.fn(async () => ({ upload: { handle: 'upload' }, chunk_size: 8192 })),
+          chunk: vi.fn(async () => undefined),
+          finish: vi.fn(async () => ({ handle: 'staged' })),
+          abort: vi.fn(async () => undefined),
+        },
+      },
       readPreferences: vi.fn(async () => DEFAULT_DESKTOP_PREFERENCES),
       writePreferences: vi.fn(async (preferences) => preferences),
       chooseHerdrBinary: vi.fn(async () => connected),
@@ -308,32 +344,97 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Chat view' }));
     expect(screen.getByTestId('chat-w1:p1')).toBeInTheDocument();
+    expect(window.herdr.conversation.read).toHaveBeenCalledWith({
+      target: 'w1:p1',
+      direction: 'newest',
+    });
+    expect(window.herdr.query).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'read-pane-output' }),
+    );
 
     await user.click(screen.getByRole('button', { name: 'Test send chat' }));
-    expect(window.herdr.command).toHaveBeenCalledWith({
-      type: 'prompt-agent',
+    expect(window.herdr.conversation.prompt).toHaveBeenCalledWith({
       target: 'w1:p1',
       text: 'Ship the chat',
     });
     await waitFor(() => expect(screen.getByTestId('prompt-outcome')).toHaveTextContent('resolved'));
   });
 
-  it('rejects the chat prompt promise when the engine command fails', async () => {
-    const user = userEvent.setup();
-    const command = vi.mocked(window.herdr.command);
-    command.mockImplementation(async (candidate) => {
-      if (candidate.type === 'prompt-agent') {
-        throw new Error('engine busy');
-      }
-      return connected;
+  it('keeps Chat disabled when an older engine omits conversation capability', async () => {
+    const legacySnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map(({ conversation_capability: _capability, ...pane }) => pane),
+    };
+    const legacyConnected: EngineBootstrap = { ...connected, snapshot: legacySnapshot };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue(legacyConnected);
+    render(<App />);
+
+    expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-w1:p1')).not.toBeInTheDocument();
+    const chat = screen.getByRole('button', { name: 'Chat view' });
+    expect(chat).toBeDisabled();
+    fireEvent.focus(chat.parentElement as HTMLElement);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Update Herdr to use structured Chat.',
+    );
+  });
+
+  it('keeps Chat disabled when the server omits the global conversation capability', async () => {
+    const legacyConnected: EngineBootstrap = {
+      ...connected,
+      status: {
+        ...connected.status,
+        server: {
+          ...connected.status.server,
+          capabilities: { live_handoff: true, detached_server_daemon: true },
+        },
+      },
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue(legacyConnected);
+    render(<App />);
+
+    expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-w1:p1')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Chat view' })).toBeDisabled();
+  });
+
+  it.each([
+    [
+      { availability: 'unavailable' as const, reason: 'no_session' as const },
+      'Start or resume this agent to use Chat.',
+    ],
+    [
+      { availability: 'unsupported' as const, reason: 'adapter_missing' as const },
+      'Chat is not currently supported for this provider. Use Terminal instead.',
+    ],
+  ])('explains disabled Chat capabilities accessibly', async (capability, explanation) => {
+    const disabledSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1' ? { ...pane, conversation_capability: capability } : pane,
+      ),
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+      ...connected,
+      snapshot: disabledSnapshot,
     });
+    render(<App />);
+
+    const chat = await screen.findByRole('button', { name: 'Chat view' });
+    fireEvent.focus(chat.parentElement as HTMLElement);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(explanation);
+  });
+
+  it('rejects the structured chat prompt promise when delivery fails', async () => {
+    const user = userEvent.setup();
+    const prompt = vi.mocked(window.herdr.conversation.prompt);
+    prompt.mockRejectedValue(new Error('engine busy'));
     render(<App />);
     await screen.findByTestId('chat-w1:p1');
 
     await user.click(screen.getByRole('button', { name: 'Test send chat' }));
 
-    expect(command).toHaveBeenCalledWith({
-      type: 'prompt-agent',
+    expect(prompt).toHaveBeenCalledWith({
       target: 'w1:p1',
       text: 'Ship the chat',
     });

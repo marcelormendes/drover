@@ -2,8 +2,27 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { hostInvocation, sandboxPathFromHostPath } from '@/main/flatpak';
 import { HerdrApiClient } from '@/main/herdr/api-client';
+import {
+  decodeAttachmentBeginResult,
+  decodeAttachmentFinishedResult,
+  decodeConversationReadResult,
+  decodeConversationRespondResult,
+} from '@/main/herdr/conversation-decoder';
 import { decodeHerdrQueryResult } from '@/main/herdr/query-decoder';
 import { decodeSessionSnapshot } from '@/main/herdr/snapshot-decoder';
+import type {
+  ConversationAttachmentAbortRequest,
+  ConversationAttachmentBeginRequest,
+  ConversationAttachmentBeginResult,
+  ConversationAttachmentChunkRequest,
+  ConversationAttachmentFinishRequest,
+  ConversationPromptRequest,
+  ConversationReadRequest,
+  ConversationReadResult,
+  ConversationRespondRequest,
+  ConversationRespondResult,
+  ConversationStagedAttachment,
+} from '@/shared/conversation';
 import type {
   EngineUpdateResult,
   HerdrCommand,
@@ -113,7 +132,6 @@ function parseStatus(stdout: string): HerdrStatus {
   if (typeof value.server.socket === 'string') {
     value.server.socket = sandboxPathFromHostPath(value.server.socket);
   }
-
   return value as unknown as HerdrStatus;
 }
 
@@ -651,6 +669,94 @@ export class HerdrEngine {
       request.params,
     );
     return decodeHerdrQueryResult(query, result);
+  }
+
+  private async conversationSocket(): Promise<string> {
+    const status = parseStatus((await this.runner.run(['status', '--json'])).stdout);
+    if (!status.server.running) {
+      throw new Error('Herdr server is not running.');
+    }
+    if (status.server.compatible === false) {
+      throw new Error('Herdr server protocol is incompatible.');
+    }
+    return status.server.socket;
+  }
+
+  async conversationRead(request: ConversationReadRequest): Promise<ConversationReadResult> {
+    const socket = await this.conversationSocket();
+    const result = await this.requestClient.request(socket, 'agent.conversation.read', {
+      target: request.target,
+      ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
+      direction: request.direction ?? 'newest',
+      ...(request.limit === undefined ? {} : { limit: request.limit }),
+    });
+    return decodeConversationReadResult(result);
+  }
+
+  async conversationPrompt(request: ConversationPromptRequest): Promise<EngineBootstrap> {
+    const socket = await this.conversationSocket();
+    await this.requestClient.request(socket, 'agent.prompt', {
+      target: request.target,
+      text: request.text,
+      ...(request.attachments === undefined || request.attachments.length === 0
+        ? {}
+        : { attachments: request.attachments.map(({ handle }) => ({ handle })) }),
+    });
+    return this.bootstrap();
+  }
+
+  async conversationRespond(
+    request: ConversationRespondRequest,
+  ): Promise<ConversationRespondResult> {
+    const socket = await this.conversationSocket();
+    const result = await this.requestClient.request(socket, 'agent.conversation.respond', {
+      target: request.target,
+      reader_generation: request.reader_generation,
+      session: request.session,
+      request_id: request.request_id,
+      decision_id: request.decision_id,
+    });
+    return decodeConversationRespondResult(result);
+  }
+
+  async conversationAttachmentBegin(
+    request: ConversationAttachmentBeginRequest,
+  ): Promise<ConversationAttachmentBeginResult> {
+    const socket = await this.conversationSocket();
+    const result = await this.requestClient.request(socket, 'agent.attachment.begin', {
+      target: request.target,
+      media_type: request.media_type,
+      name: request.name,
+      byte_size: request.byte_size,
+      sha256_digest: request.sha256_digest,
+    });
+    return decodeAttachmentBeginResult(result);
+  }
+
+  async conversationAttachmentChunk(request: ConversationAttachmentChunkRequest): Promise<void> {
+    const socket = await this.conversationSocket();
+    await this.requestClient.request(socket, 'agent.attachment.chunk', {
+      upload: { handle: request.upload },
+      index: request.index,
+      data_base64: request.data_base64,
+    });
+  }
+
+  async conversationAttachmentFinish(
+    request: ConversationAttachmentFinishRequest,
+  ): Promise<ConversationStagedAttachment> {
+    const socket = await this.conversationSocket();
+    const result = await this.requestClient.request(socket, 'agent.attachment.finish', {
+      upload: { handle: request.upload },
+    });
+    return decodeAttachmentFinishedResult(result);
+  }
+
+  async conversationAttachmentAbort(request: ConversationAttachmentAbortRequest): Promise<void> {
+    const socket = await this.conversationSocket();
+    await this.requestClient.request(socket, 'agent.attachment.abort', {
+      upload: { handle: request.upload },
+    });
   }
 
   private async readVersion(): Promise<string | null> {

@@ -158,25 +158,6 @@ export function hostInvocation(
 }
 
 /**
- * Directory used to stage pasted/dropped chat images. Flatpak's private /tmp
- * is invisible to host agents, so inside the sandbox images must be staged in
- * the granted host-visible directory. The sandbox sees it at
- * `$XDG_DATA_HOME/herdr-desktop/chat-images` and the host at
- * `$HOST_XDG_DATA_HOME/herdr-desktop/chat-images` — two aliases of the same
- * files; staged results are translated to the host form on the way back to
- * the renderer/agent.
- */
-export function chatImageStagingDir(): string {
-  if (isFlatpakHost()) {
-    // The sandbox XDG_DATA_HOME is where the xdg-data grant mounts the host
-    // directory; staged results are translated to host-visible paths on the
-    // way back to the renderer/agent.
-    return path.join(flatpakSandboxDataDir(), 'herdr-desktop', 'chat-images');
-  }
-  return path.join(os.tmpdir(), 'herdr-desktop-chat-images');
-}
-
-/**
  * Sandbox-visible directory for the remote-engine bridge sockets in Flatpak
  * mode. The `--filesystem=xdg-data/herdr-desktop:create` parent grant mounts
  * it on both sides (this child is created 0700 by `createTcpBridge`); the

@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { createConnection, type Socket } from 'node:net';
+import { decodeConversationChangedEvent } from '@/main/herdr/conversation-decoder';
 import type { HerdrEventConnectionState, HerdrEventEnvelope } from '@/shared/events';
 
 export interface HerdrEventTarget {
   socketPath: string;
   paneIds: string[];
+  conversationPaneIds: string[];
 }
 
 interface HerdrEventSubscriptionOptions {
@@ -42,13 +44,20 @@ const lifecycleSubscriptions = [
   'layout.updated',
 ] as const;
 
-function subscriptionParams(paneIds: string[]): Array<Record<string, unknown>> {
+function subscriptionParams(
+  paneIds: string[],
+  conversationPaneIds: string[],
+): Array<Record<string, unknown>> {
   return [
     ...lifecycleSubscriptions.map((type) => ({ type })),
     ...paneIds.flatMap((paneId) => [
       { type: 'pane.agent_status_changed', pane_id: paneId },
       { type: 'pane.scroll_changed', pane_id: paneId },
     ]),
+    ...conversationPaneIds.map((pane_id) => ({
+      type: 'agent.conversation_changed',
+      pane_id,
+    })),
   ];
 }
 
@@ -59,13 +68,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseEvent(line: string): HerdrEventEnvelope | null {
   try {
     const value: unknown = JSON.parse(line);
-    if (isRecord(value) && typeof value.event === 'string' && isRecord(value.data)) {
-      return { event: value.event, data: value.data };
+    if (!isRecord(value) || typeof value.event !== 'string' || !isRecord(value.data)) {
+      return null;
     }
+    if (value.event === 'agent.conversation_changed') {
+      const data = decodeConversationChangedEvent(value.data);
+      return data ? { event: value.event, data: { ...data } } : null;
+    }
+    return { event: value.event, data: value.data };
   } catch {
     return null;
   }
-  return null;
 }
 
 export class HerdrEventSubscription {
@@ -74,6 +87,7 @@ export class HerdrEventSubscription {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempt = 0;
   private generation = 0;
+  private conversationPaneIds: string[] = [];
 
   constructor(
     private readonly onEvent: (event: HerdrEventEnvelope) => void,
@@ -83,7 +97,12 @@ export class HerdrEventSubscription {
 
   open(socketPath: string, paneIds: string[]): void {
     this.close();
-    this.target = { socketPath, paneIds: [...paneIds] };
+    const paneSet = new Set(paneIds);
+    this.target = {
+      socketPath,
+      paneIds: [...paneIds],
+      conversationPaneIds: this.conversationPaneIds.filter((paneId) => paneSet.has(paneId)),
+    };
     this.reconnectAttempt = 0;
     this.connect(this.target, false, this.generation);
   }
@@ -119,7 +138,9 @@ export class HerdrEventSubscription {
         `${JSON.stringify({
           id: `desktop:events:${randomUUID()}`,
           method: 'events.subscribe',
-          params: { subscriptions: subscriptionParams(target.paneIds) },
+          params: {
+            subscriptions: subscriptionParams(target.paneIds, target.conversationPaneIds),
+          },
         })}\n`,
       );
       this.emitState('connected');
@@ -164,7 +185,12 @@ export class HerdrEventSubscription {
       if (generation !== this.generation || !target) {
         return;
       }
-      this.target = { socketPath: target.socketPath, paneIds: [...target.paneIds] };
+      const paneSet = new Set(target.paneIds);
+      this.target = {
+        socketPath: target.socketPath,
+        paneIds: [...target.paneIds],
+        conversationPaneIds: target.conversationPaneIds.filter((paneId) => paneSet.has(paneId)),
+      };
       this.connect(this.target, true, generation);
     } catch (error) {
       if (generation !== this.generation) {
@@ -177,6 +203,25 @@ export class HerdrEventSubscription {
 
   private emitState(state: HerdrEventConnectionState): void {
     this.options.onStateChange?.(state);
+  }
+
+  getConversationPaneIds(): string[] {
+    return [...this.conversationPaneIds];
+  }
+
+  setConversationPanes(paneIds: readonly string[]): void {
+    const next = [...new Set(paneIds)];
+    const same =
+      next.length === this.conversationPaneIds.length &&
+      next.every((paneId) => this.conversationPaneIds.includes(paneId));
+    if (same) {
+      return;
+    }
+    this.conversationPaneIds = next;
+    const target = this.target;
+    if (target) {
+      this.open(target.socketPath, target.paneIds);
+    }
   }
 
   close(): void {
