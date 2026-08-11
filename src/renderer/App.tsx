@@ -112,6 +112,7 @@ import {
   RemoveWorktreeDialog,
   WorktreeSpaces,
 } from '@/renderer/worktrees';
+import { isPreSessionConversationCapability } from '@/shared/conversation';
 import {
   AGENT_KINDS,
   type AgentKind,
@@ -136,6 +137,14 @@ import packageMetadata from '../../package.json';
 
 const INSTALL_URL = 'https://github.com/herdrdev/herdr#installation';
 const currentPluginPlatform = pluginPlatformFromNavigator(navigator.platform, navigator.userAgent);
+const STRUCTURED_CHAT_AGENTS: Record<string, true> = {
+  claude: true,
+  'claude code': true,
+  codex: true,
+  pi: true,
+  omp: true,
+  'oh my pi': true,
+};
 
 function AppMark() {
   return (
@@ -790,7 +799,14 @@ function PaneStage({
         const hiddenByZoom = Boolean(layout?.zoomed && !focused);
         const hasAgent = Boolean(item.agent || item.display_agent);
         const chatCapability = item.conversation_capability;
-        const chatEnabled = structuredChatSupported && chatCapability?.availability === 'supported';
+        const preSessionChat = isPreSessionConversationCapability(chatCapability);
+        const agentName = (item.agent || item.display_agent)?.toLowerCase();
+        const providerSupportsChat =
+          agentName !== undefined && STRUCTURED_CHAT_AGENTS[agentName] === true;
+        const chatEnabled =
+          structuredChatSupported &&
+          providerSupportsChat &&
+          (chatCapability?.availability === 'supported' || preSessionChat);
         const chatUnavailableMessage =
           !structuredChatSupported || !chatCapability
             ? 'Update Herdr to use structured Chat.'

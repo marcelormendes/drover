@@ -5,12 +5,14 @@ import { ConversationChatPanel } from '@/renderer/chat/ConversationChatPanel';
 import type { ConversationItem, ConversationReadResult } from '@/shared/conversation';
 import type { PaneInfo } from '@/shared/herdr';
 
-function pane(paneId: string): PaneInfo {
+function pane(paneId: string, overrides: Partial<PaneInfo> = {}): PaneInfo {
   return {
     pane_id: paneId,
     display_agent: 'Codex',
     agent: 'codex',
+    agent_status: 'idle',
     conversation_capability: { availability: 'supported', reason: 'ready' },
+    ...overrides,
   } as PaneInfo;
 }
 
@@ -275,6 +277,161 @@ describe('ConversationChatPanel', () => {
   });
 });
 
+describe('ConversationChatPanel onboarding', () => {
+  it('shows a provider welcome and sends the first prompt before a session exists', async () => {
+    const read = vi.fn<Window['herdr']['conversation']['read']>();
+    const prompt = vi.fn(async () => ({}));
+    window.herdr = {
+      conversation: {
+        read,
+        prompt,
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+        attachment: {
+          begin: vi.fn(),
+          chunk: vi.fn(),
+          finish: vi.fn(),
+          abort: vi.fn(),
+        },
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+
+    render(
+      <ConversationChatPanel
+        pane={pane('w1:p1', {
+          agent: 'claude',
+          display_agent: 'Claude Code',
+          cwd: '/code/new-workspace',
+          conversation_capability: { availability: 'unavailable', reason: 'no_session' },
+        })}
+      />,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Claude Code' })).toBeInTheDocument();
+    expect(screen.getByText('/code/new-workspace')).toBeInTheDocument();
+    expect(screen.getByText('Provider default')).toBeInTheDocument();
+    expect(read).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Chat prompt' }), {
+      target: { value: 'Start from Chat' },
+    });
+    fireEvent.submit(
+      screen.getByRole('textbox', { name: 'Chat prompt' }).closest('form') as HTMLFormElement,
+    );
+
+    await waitFor(() =>
+      expect(prompt).toHaveBeenCalledWith({
+        target: 'w1:p1',
+        text: 'Start from Chat',
+      }),
+    );
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['claude', 'Claude Code'],
+    ['codex', 'Codex'],
+    ['pi', 'Pi'],
+    ['omp', 'Oh My Pi'],
+  ])('uses the shared Herdr welcome for %s', async (agent, label) => {
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValue(page([], 'cursor-1'));
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+        attachment: {
+          begin: vi.fn(),
+          chunk: vi.fn(),
+          finish: vi.fn(),
+          abort: vi.fn(),
+        },
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+
+    render(
+      <ConversationChatPanel
+        pane={pane('w1:p1', {
+          agent,
+          display_agent: label,
+          cwd: `/code/${agent}`,
+        })}
+      />,
+    );
+
+    expect(await screen.findByLabelText('Herdr Desktop')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: label })).toBeInTheDocument();
+    expect(screen.getByText(`/code/${agent}`)).toBeInTheDocument();
+  });
+
+  it('hides Claude local commands and uses their selected model in the welcome', async () => {
+    const read = vi.fn<Window['herdr']['conversation']['read']>().mockResolvedValue(
+      page(
+        [
+          {
+            id: 'model-command',
+            sequence: 1,
+            provider: 'claude',
+            session_id: 'session-1',
+            turn_id: 'command-1',
+            type: 'user_message',
+            text: '<command-name>/model</command-name>\\n<command-message>model</command-message>',
+          },
+          {
+            id: 'model-result',
+            sequence: 2,
+            provider: 'claude',
+            session_id: 'session-1',
+            turn_id: 'command-2',
+            type: 'user_message',
+            text: '<local-command-stdout>Set model to \u001b[1mFable 5\u001b[22m and saved as your default for new sessions</local-command-stdout>',
+          },
+        ],
+        'cursor-1',
+      ),
+    );
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+        attachment: {
+          begin: vi.fn(),
+          chunk: vi.fn(),
+          finish: vi.fn(),
+          abort: vi.fn(),
+        },
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+
+    render(
+      <ConversationChatPanel
+        pane={pane('w1:p1', {
+          agent: 'claude',
+          display_agent: 'Claude Code',
+          cwd: '/code/claude-project',
+        })}
+      />,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Claude Code' })).toBeInTheDocument();
+    expect(screen.getByText('Fable 5')).toBeInTheDocument();
+    expect(screen.getByText('/code/claude-project')).toBeInTheDocument();
+    expect(screen.queryByText(/command-name/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/local-command-stdout/)).not.toBeInTheDocument();
+  });
+});
+
 describe('ConversationChatPanel live state', () => {
   it('renders a prominent working indicator for an in-progress turn', async () => {
     const read = vi.fn<Window['herdr']['conversation']['read']>().mockResolvedValue(
@@ -314,6 +471,94 @@ describe('ConversationChatPanel live state', () => {
     render(<ConversationChatPanel pane={pane('w1:p1')} />);
     expect(await screen.findByRole('status')).toHaveTextContent('Working');
     expect(screen.getByText(/for \d+s/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['claude', 'Claude Code'],
+    ['codex', 'Codex'],
+    ['pi', 'Pi'],
+    ['omp', 'Oh My Pi'],
+  ])('shows pane-status work for %s before a started turn is readable', async (agent, label) => {
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValue(page([item(1)], 'cursor-1'));
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+        attachment: {
+          begin: vi.fn(),
+          chunk: vi.fn(),
+          finish: vi.fn(),
+          abort: vi.fn(),
+        },
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+
+    render(
+      <ConversationChatPanel
+        pane={pane('w1:p1', {
+          agent,
+          display_agent: label,
+          agent_status: 'working',
+        })}
+      />,
+    );
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Working');
+  });
+
+  it('stops showing work after an interrupted turn settles', async () => {
+    const read = vi.fn<Window['herdr']['conversation']['read']>().mockResolvedValue(
+      page(
+        [
+          {
+            id: 'turn-started',
+            sequence: 1,
+            provider: 'pi',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            type: 'turn_state',
+            state: 'started',
+            started_ms: Date.now() - 5_000,
+          },
+          {
+            id: 'turn-interrupted',
+            sequence: 2,
+            provider: 'pi',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            type: 'turn_state',
+            state: 'interrupted',
+          },
+        ],
+        'cursor-1',
+      ),
+    );
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+        attachment: {
+          begin: vi.fn(),
+          chunk: vi.fn(),
+          finish: vi.fn(),
+          abort: vi.fn(),
+        },
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+
+    render(<ConversationChatPanel pane={pane('w1:p1')} />);
+    await screen.findByText('Stopped');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('sends the prompt when Enter is pressed and keeps Shift+Enter for newlines', async () => {
