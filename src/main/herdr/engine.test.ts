@@ -7,7 +7,30 @@ import {
   type HerdrRequestClient,
   type HerdrServerLauncher,
 } from '@/main/herdr/engine';
+import {
+  defaultEngineInstallPath,
+  hasPinnedEngineRelease,
+  installPinnedEngineBinary,
+  pinnedEngineAsset,
+} from '@/main/herdr/fork-engine';
 import type { HerdrCommand } from '@/shared/desktop-api';
+
+vi.mock('@/main/herdr/fork-engine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/main/herdr/fork-engine')>();
+  return {
+    ...actual,
+    pinnedEngineAsset: vi.fn((platform: NodeJS.Platform, arch: string) =>
+      actual.pinnedEngineAsset(platform, arch),
+    ),
+    hasPinnedEngineRelease: vi.fn((platform: NodeJS.Platform, arch: string) =>
+      actual.hasPinnedEngineRelease(platform, arch),
+    ),
+    installPinnedEngineBinary: vi.fn(
+      (options: Parameters<typeof actual.installPinnedEngineBinary>[0]) =>
+        actual.installPinnedEngineBinary(options),
+    ),
+  };
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -88,8 +111,9 @@ const snapshot = {
 
 function createRunner(
   implementation: HerdrCommandRunner['run'],
+  binary = '/usr/local/bin/herdr',
 ): HerdrCommandRunner & { run: ReturnType<typeof vi.fn> } {
-  return { run: vi.fn(implementation) };
+  return { run: vi.fn(implementation), binary };
 }
 
 describe('HerdrEngine.bootstrap', () => {
@@ -886,133 +910,153 @@ describe('HerdrEngine.query', () => {
 });
 
 describe('HerdrEngine.update', () => {
-  const updatedStatus = {
+  const chatStatus = {
     ...runningStatus,
-    client: { ...runningStatus.client, version: '0.9.0' },
-    server: { ...runningStatus.server, version: '0.9.0' },
+    server: {
+      ...runningStatus.server,
+      capabilities: { ...runningStatus.server.capabilities, agent_conversations: true },
+    },
   };
 
-  it('installs a newer engine version and reports the fresh bootstrap', async () => {
-    let statusCalls = 0;
-    const runner = createRunner(async (args) => {
-      if (args[0] === 'update') {
-        return { stdout: '', stderr: 'downloading 0.9.0...\ninstalled 0.9.0\n' };
-      }
-      if (args[1] === 'snapshot') {
-        return {
-          stdout: JSON.stringify({
-            id: 'cli:api:snapshot',
-            result: { type: 'session_snapshot', snapshot },
-          }),
-          stderr: '',
-        };
-      }
-      statusCalls += 1;
-      return {
-        stdout: JSON.stringify(statusCalls === 1 ? runningStatus : updatedStatus),
-        stderr: '',
-      };
-    });
+  const fakeAsset = {
+    url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.1/herdr-linux-x86_64',
+    sha256: 'f'.repeat(64),
+  };
 
-    const result = await new HerdrEngine(runner).update();
+  const snapshotResponse = {
+    stdout: JSON.stringify({
+      id: 'cli:api:snapshot',
+      result: { type: 'session_snapshot', snapshot },
+    }),
+    stderr: '',
+  };
 
-    expect(runner.run).toHaveBeenNthCalledWith(1, ['status', '--json']);
-    expect(runner.run).toHaveBeenNthCalledWith(2, ['update', '--handoff'], {
-      timeoutMs: 10 * 60 * 1000,
-    });
-    expect(result).toMatchObject({
-      updated: true,
-      version: '0.9.0',
-      message: 'Herdr engine updated to v0.9.0.',
-    });
-    expect(result.bootstrap).toEqual({
-      state: 'connected',
-      status: updatedStatus,
-      snapshot,
-    });
+  afterEach(() => {
+    vi.mocked(pinnedEngineAsset).mockRestore();
+    vi.mocked(hasPinnedEngineRelease).mockRestore();
+    vi.mocked(installPinnedEngineBinary).mockRestore();
   });
 
-  it('warns when the binary was replaced but the running server stayed old', async () => {
-    const partialStatus = {
-      ...runningStatus,
-      client: { ...runningStatus.client, version: '0.9.0' },
-      server: { ...runningStatus.server, restart_needed: true },
-    };
-    let statusCalls = 0;
+  it('reports structured Chat already available without touching the engine', async () => {
     const runner = createRunner(async (args) => {
-      if (args[0] === 'update') {
-        return { stdout: '', stderr: 'installed 0.9.0' };
-      }
       if (args[1] === 'snapshot') {
-        return {
-          stdout: JSON.stringify({
-            id: 'cli:api:snapshot',
-            result: { type: 'session_snapshot', snapshot },
-          }),
-          stderr: '',
-        };
+        return snapshotResponse;
       }
-      statusCalls += 1;
-      return {
-        stdout: JSON.stringify(statusCalls === 1 ? runningStatus : partialStatus),
-        stderr: '',
-      };
-    });
-
-    const result = await new HerdrEngine(runner).update();
-
-    expect(result).toMatchObject({
-      updated: true,
-      version: '0.9.0',
-      message:
-        'Herdr engine updated to v0.9.0; the running server is still v0.8.0 and needs a restart.',
-    });
-  });
-
-  it('reports already up to date without changing the bootstrap', async () => {
-    const runner = createRunner(async (args) => {
-      if (args[0] === 'update') {
-        return { stdout: '', stderr: 'already up to date (0.8.0)' };
-      }
-      if (args[1] === 'snapshot') {
-        return {
-          stdout: JSON.stringify({
-            id: 'cli:api:snapshot',
-            result: { type: 'session_snapshot', snapshot },
-          }),
-          stderr: '',
-        };
-      }
-      return { stdout: JSON.stringify(runningStatus), stderr: '' };
+      return { stdout: JSON.stringify(chatStatus), stderr: '' };
     });
 
     const result = await new HerdrEngine(runner).update();
 
     expect(result).toEqual({
-      bootstrap: { state: 'connected', status: runningStatus, snapshot },
+      bootstrap: { state: 'connected', status: chatStatus, snapshot },
       updated: false,
       version: '0.8.0',
-      message: 'Herdr engine is already up to date (v0.8.0).',
+      message: 'Herdr engine already provides structured Chat (v0.8.0).',
+    });
+    expect(installPinnedEngineBinary).not.toHaveBeenCalled();
+  });
+
+  it('installs the pinned engine and live-hands the running server onto it', async () => {
+    vi.mocked(pinnedEngineAsset).mockReturnValue(fakeAsset);
+    vi.mocked(installPinnedEngineBinary).mockResolvedValue(undefined);
+    const updatedStatus = {
+      ...runningStatus,
+      client: { ...runningStatus.client, version: '0.8.1' },
+      server: { ...runningStatus.server, version: '0.8.1' },
+    };
+    let statusCalls = 0;
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'server' && args[1] === 'live-handoff') {
+        return { stdout: '', stderr: 'live handoff complete' };
+      }
+      if (args[0] === 'integration' && args[1] === 'status') {
+        return { stdout: 'pi: current (v11) (/x/herdr-agent-state.ts)\n', stderr: '' };
+      }
+      if (args[0] === 'integration' && args[1] === 'install') {
+        return { stdout: '', stderr: '' };
+      }
+      if (args[1] === 'snapshot') {
+        return snapshotResponse;
+      }
+      statusCalls += 1;
+      return {
+        stdout: JSON.stringify(statusCalls >= 3 ? updatedStatus : runningStatus),
+        stderr: '',
+      };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(installPinnedEngineBinary).toHaveBeenCalledWith({
+      asset: fakeAsset,
+      installTo: '/usr/local/bin/herdr',
+    });
+    expect(runner.run).toHaveBeenCalledWith(
+      ['server', 'live-handoff', '--import-exe', '/usr/local/bin/herdr'],
+      { timeoutMs: 10 * 60 * 1000 },
+    );
+    expect(runner.run).toHaveBeenCalledWith(['integration', 'install', 'pi']);
+    expect(result).toMatchObject({
+      updated: true,
+      version: '0.8.1',
+      message:
+        'Herdr engine updated to v0.8.1 with structured Chat. Restart your agent sessions to enable it.',
+    });
+    expect(result.bootstrap.state).toBe('connected');
+  });
+
+  it('refuses to install while the pinned release checksum is unpublished', async () => {
+    vi.mocked(pinnedEngineAsset).mockReturnValue({
+      url: 'https://example.invalid/herdr',
+      sha256: '',
+    });
+    const runner = createRunner(async (args) => {
+      if (args[1] === 'snapshot') {
+        return snapshotResponse;
+      }
+      return { stdout: JSON.stringify(runningStatus), stderr: '' };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(installPinnedEngineBinary).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      updated: false,
+      message:
+        'The pinned engine release v0.8.1 is not published yet; update Herdr Desktop to install it.',
+      error:
+        'The pinned engine release v0.8.1 is not published yet; update Herdr Desktop to install it.',
     });
   });
 
-  it('surfaces the engine error when the update command fails', async () => {
+  it('reports an honest error on platforms without a pinned release', async () => {
+    vi.mocked(pinnedEngineAsset).mockReturnValue(null);
+    vi.mocked(hasPinnedEngineRelease).mockReturnValue(false);
     const runner = createRunner(async (args) => {
-      if (args[0] === 'update') {
-        const error = new Error('Command failed: herdr update --handoff') as Error & {
-          stderr?: string;
-        };
-        error.stderr = 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`';
-        throw error;
-      }
       if (args[1] === 'snapshot') {
-        return {
-          stdout: JSON.stringify({
-            id: 'cli:api:snapshot',
-            result: { type: 'session_snapshot', snapshot },
-          }),
-          stderr: '',
-        };
+        return snapshotResponse;
+      }
+      return { stdout: JSON.stringify(runningStatus), stderr: '' };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(result).toMatchObject({
+      updated: false,
+      message:
+        'No pinned Herdr engine release for linux-x64; install the official Herdr engine instead.',
+    });
+    expect(installPinnedEngineBinary).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the engine error when the pinned install fails', async () => {
+    vi.mocked(pinnedEngineAsset).mockReturnValue(fakeAsset);
+    vi.mocked(installPinnedEngineBinary).mockRejectedValue(
+      Object.assign(new Error('Command failed'), { stderr: 'download failed' }),
+    );
+    const runner = createRunner(async (args) => {
+      if (args[1] === 'snapshot') {
+        return snapshotResponse;
       }
       return { stdout: JSON.stringify(runningStatus), stderr: '' };
     });
@@ -1022,17 +1066,55 @@ describe('HerdrEngine.update', () => {
     expect(result).toMatchObject({
       updated: false,
       version: '0.8.0',
-      message: 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`',
-      error: 'self-update is disabled for Homebrew installs; run `brew upgrade herdr`',
+      message: 'download failed',
+      error: 'download failed',
     });
     expect(result.bootstrap.state).toBe('connected');
   });
 
-  it('keeps the previous status when the engine is unreachable after a failed update', async () => {
+  it('installs to the default location and reconfigures the app on first install', async () => {
+    vi.mocked(pinnedEngineAsset).mockReturnValue(fakeAsset);
+    vi.mocked(installPinnedEngineBinary).mockResolvedValue(undefined);
+    const installed: string[] = [];
     const runner = createRunner(async (args) => {
-      if (args[0] === 'update') {
-        throw new Error('download failed');
+      if (args[0] === 'integration' && args[1] === 'status') {
+        return { stdout: 'omp: current (v13) (/x/herdr-omp-agent-state.ts)\n', stderr: '' };
       }
+      if (args[0] === 'integration' && args[1] === 'install') {
+        return { stdout: '', stderr: '' };
+      }
+      if (args[1] === 'snapshot') {
+        return snapshotResponse;
+      }
+      return {
+        stdout: JSON.stringify({
+          ...runningStatus,
+          server: { ...runningStatus.server, status: 'not_running', running: false },
+        }),
+        stderr: '',
+      };
+    }, 'herdr');
+
+    const result = await new HerdrEngine(
+      runner,
+      { launch: vi.fn() },
+      async () => undefined,
+      { request: vi.fn() },
+      (path) => installed.push(path),
+    ).update();
+
+    expect(installPinnedEngineBinary).toHaveBeenCalledWith({
+      asset: fakeAsset,
+      installTo: defaultEngineInstallPath(),
+    });
+    expect(installed).toEqual([defaultEngineInstallPath()]);
+    expect(result.bootstrap.state).toBe('stopped');
+  });
+
+  it('keeps the previous status when the engine is unreachable after a failed update', async () => {
+    vi.mocked(pinnedEngineAsset).mockReturnValue(fakeAsset);
+    vi.mocked(installPinnedEngineBinary).mockRejectedValue(new Error('download failed'));
+    const runner = createRunner(async () => {
       throw Object.assign(new Error('boom'), { code: 'ENOENT' });
     });
 

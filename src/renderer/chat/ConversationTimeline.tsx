@@ -119,7 +119,6 @@ function Turn({
       item.type !== 'turn_state' &&
       !(item.type === 'assistant_message' && item.phase === 'final'),
   );
-  const activeStep = active ? latestActivePlanStep(turn.items) : undefined;
 
   return (
     <section
@@ -129,9 +128,6 @@ function Turn({
       {users.map((item) => (
         <UserMessage key={item.id} item={item} />
       ))}
-      {active ? (
-        <WorkingIndicator startedMs={latestState.started_ms} activeStep={activeStep} />
-      ) : null}
       {active || !settled ? <WorkRows items={work} /> : null}
       {settled && work.length > 0 ? <SettledWork state={settled} items={work} /> : null}
       {approvals.map((approval) => (
@@ -160,7 +156,7 @@ function Turn({
   );
 }
 
-function latestActivePlanStep(items: readonly ConversationItem[]): string | undefined {
+export function latestActivePlanStep(items: readonly ConversationItem[]): string | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (item.type === 'plan_update') {
@@ -170,7 +166,13 @@ function latestActivePlanStep(items: readonly ConversationItem[]): string | unde
   return undefined;
 }
 
-function WorkingIndicator({ startedMs, activeStep }: { startedMs?: number; activeStep?: string }) {
+export function WorkingIndicator({
+  startedMs,
+  activeStep,
+}: {
+  startedMs?: number;
+  activeStep?: string;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);

@@ -171,7 +171,13 @@ if (started) {
 }
 
 function createEngine(binary: string): HerdrEngine {
-  return new HerdrEngine(new NodeHerdrCommandRunner(binary), new NodeHerdrServerLauncher(binary));
+  return new HerdrEngine(
+    new NodeHerdrCommandRunner(binary),
+    new NodeHerdrServerLauncher(binary),
+    undefined,
+    undefined,
+    (installed) => configureHerdrBinary(installed),
+  );
 }
 
 function configureHerdrBinary(binary: string): void {

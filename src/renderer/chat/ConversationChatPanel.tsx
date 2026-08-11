@@ -14,7 +14,11 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import { ConversationTimeline } from '@/renderer/chat/ConversationTimeline';
+import {
+  ConversationTimeline,
+  latestActivePlanStep,
+  WorkingIndicator,
+} from '@/renderer/chat/ConversationTimeline';
 import {
   applyConversationChanged,
   applyConversationRead,
@@ -347,6 +351,25 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
 
   const items = useMemo(() => store.items, [store.items]);
 
+  // The currently open turn, pinned above the composer so the working state
+  // stays visible no matter where the conversation is scrolled. The engine
+  // guarantees at most one started turn at a time.
+  const activeWork = useMemo(() => {
+    let startedMs: number | undefined;
+    let activeTurnId: string | undefined;
+    for (const item of store.items) {
+      if (item.type === 'turn_state' && item.state === 'started') {
+        startedMs = item.started_ms;
+        activeTurnId = item.turn_id;
+      }
+    }
+    if (activeTurnId === undefined) {
+      return null;
+    }
+    const turnItems = store.items.filter((item) => item.turn_id === activeTurnId);
+    return { startedMs, activeStep: latestActivePlanStep(turnItems) };
+  }, [store.items]);
+
   const respond = useCallback(
     async (
       approval: Extract<ConversationItem, { type: 'approval' }>,
@@ -534,6 +557,11 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
           ) : null}
         </div>
       </ScrollArea>
+      {activeWork ? (
+        <div className="shrink-0" data-slot="active-work">
+          <WorkingIndicator startedMs={activeWork.startedMs} activeStep={activeWork.activeStep} />
+        </div>
+      ) : null}
       <form
         className="space-y-2 border-t-2 border-border pt-3"
         onDragOver={handleDragOver}

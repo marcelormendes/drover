@@ -1,0 +1,117 @@
+import { createHash } from 'node:crypto';
+import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+/**
+ * The pinned Herdr engine build that provides structured Chat (the
+ * `agent_conversations` server capability). It is distributed from the fork
+ * release artifacts because `herdr update` always downloads the stock
+ * upstream binary, which lacks the capability.
+ *
+ * The Desktop installs this exact build itself: download, verify the SHA-256
+ * checksum, replace the resolved engine binary, and live-hand the running
+ * server onto it. Keep `sha256` values in sync with the published release
+ * assets for `version`; an empty checksum means the release is not published
+ * yet and the install is refused.
+ */
+export const PINNED_ENGINE = {
+  version: '0.8.1',
+  repository: 'marcelormendes/herdr',
+  assets: {
+    'linux-x64': {
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.1/herdr-linux-x86_64',
+      sha256: '5e5c5f39c49c49133d86ce8b32b14239e0c672d0ccbc75d869ed30b23c3387d2',
+    },
+    'linux-arm64': {
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.1/herdr-linux-aarch64',
+      sha256: '8a1fb1cec5edeb04c8349c379f6953c52966bdd5bd1e37342ab81744a89c64d4',
+    },
+    'darwin-x64': {
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.1/herdr-macos-x86_64',
+      sha256: 'fd163f07ccfe2b32ca22c919625df6352ed4f8674d7c01091ada26ff61931609',
+    },
+    'darwin-arm64': {
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.1/herdr-macos-aarch64',
+      sha256: 'd82a6b4c3220a1ecbaa37ce462716ce61b5ff7463ffa3c0533389119565ca9bb',
+    },
+  },
+} as const;
+
+export interface PinnedEngineAsset {
+  readonly url: string;
+  readonly sha256: string;
+}
+
+type PinnedAssetKey = keyof typeof PINNED_ENGINE.assets;
+
+/** The pinned asset for the running platform, or null when unsupported. */
+export function pinnedEngineAsset(
+  platform: NodeJS.Platform,
+  arch: string,
+): PinnedEngineAsset | null {
+  return (PINNED_ENGINE.assets as Record<string, PinnedEngineAsset>)[`${platform}-${arch}`] ?? null;
+}
+
+/** True when the platform has a pinned asset entry, even if unpublished. */
+export function hasPinnedEngineRelease(platform: NodeJS.Platform, arch: string): boolean {
+  return `${platform}-${arch}` in PINNED_ENGINE.assets;
+}
+
+export type BinaryFetcher = (url: string) => Promise<Buffer>;
+
+export async function fetchPinnedEngineBinary(url: string): Promise<Buffer> {
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`failed to download the pinned engine (HTTP ${response.status}).`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+export function sha256Of(data: Buffer): string {
+  return createHash('sha256').update(data).digest('hex');
+}
+
+/**
+ * The path a freshly installed engine lands on, mirroring the official
+ * installer location that the binary locator checks as a fallback.
+ */
+export function defaultEngineInstallPath(): string {
+  return join(homedir(), '.local', 'bin', 'herdr');
+}
+
+/**
+ * Downloads the pinned engine, verifies its checksum, and atomically
+ * replaces `installTo`. The previous inode stays alive for any running
+ * server process, so replacing an in-use binary is safe on POSIX.
+ */
+export async function installPinnedEngineBinary(options: {
+  asset: PinnedEngineAsset;
+  installTo: string;
+  fetchBinary?: BinaryFetcher;
+}): Promise<void> {
+  const { asset, installTo } = options;
+  const fetchBinary = options.fetchBinary ?? fetchPinnedEngineBinary;
+
+  if (asset.sha256.length === 0) {
+    throw new Error(
+      `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Herdr Desktop to install it.`,
+    );
+  }
+
+  const data = await fetchBinary(asset.url);
+  const digest = sha256Of(data);
+  if (digest !== asset.sha256) {
+    throw new Error(
+      `Pinned engine checksum mismatch: expected ${asset.sha256}, got ${digest}. Refusing to install.`,
+    );
+  }
+
+  const stagingPath = join(dirname(installTo), `.herdr-pinned-${process.pid}-${Date.now()}.tmp`);
+  await mkdir(dirname(installTo), { recursive: true });
+  await writeFile(stagingPath, data);
+  await chmod(stagingPath, 0o755);
+  await rename(stagingPath, installTo);
+}
+
+export type { PinnedAssetKey };
