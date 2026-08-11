@@ -8,6 +8,13 @@ import {
   decodeConversationReadResult,
   decodeConversationRespondResult,
 } from '@/main/herdr/conversation-decoder';
+import {
+  defaultEngineInstallPath,
+  hasPinnedEngineRelease,
+  installPinnedEngineBinary,
+  PINNED_ENGINE,
+  pinnedEngineAsset,
+} from '@/main/herdr/fork-engine';
 import { decodeHerdrQueryResult } from '@/main/herdr/query-decoder';
 import { decodeSessionSnapshot } from '@/main/herdr/snapshot-decoder';
 import type {
@@ -49,6 +56,8 @@ export interface HerdrCommandResult {
 
 export interface HerdrCommandRunner {
   run(args: string[], options?: { timeoutMs?: number }): Promise<HerdrCommandResult>;
+  /** The resolved engine binary path, or a bare command name like `herdr`. */
+  readonly binary: string;
 }
 
 export interface HerdrServerLauncher {
@@ -60,7 +69,7 @@ export interface HerdrRequestClient {
 }
 
 export class NodeHerdrCommandRunner implements HerdrCommandRunner {
-  constructor(private readonly binary = process.env.HERDR_DESKTOP_BIN || 'herdr') {}
+  constructor(readonly binary = process.env.HERDR_DESKTOP_BIN || 'herdr') {}
 
   async run(args: string[], options?: { timeoutMs?: number }): Promise<HerdrCommandResult> {
     const { program, args: bridgedArgs } = hostInvocation(this.binary, args);
@@ -558,6 +567,11 @@ export class HerdrEngine {
     private readonly wait: (milliseconds: number) => Promise<void> = (milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)),
     private readonly requestClient: HerdrRequestClient = new HerdrApiClient(),
+    /**
+     * Invoked after the pinned engine lands on a path different from the
+     * runner's current binary, so the app can switch to the new binary.
+     */
+    private readonly onBinaryInstalled?: (binaryPath: string) => void,
   ) {}
 
   async bootstrap(): Promise<EngineBootstrap> {
@@ -768,71 +782,127 @@ export class HerdrEngine {
   }
 
   /**
-   * Runs the engine self-update (`herdr update --handoff`). Live handoff is
-   * opted in so running servers restart onto the new binary without prompts;
-   * when a server is too old for handoff, the engine reports the failure and
-   * nothing is installed. Always returns an `EngineUpdateResult` instead of
-   * throwing, with a human-readable message for the renderer.
+   * Ensures the running engine provides structured Chat by installing the
+   * pinned fork build when the `agent_conversations` capability is missing.
+   * `herdr update` cannot be used here: it always downloads the stock
+   * upstream binary, which lacks the capability. The pinned build is
+   * downloaded from the fork release, checksum-verified, installed in place
+   * of the resolved engine binary, and the running server is live-handed
+   * onto it. Always returns an `EngineUpdateResult` instead of throwing,
+   * with a human-readable message for the renderer.
    */
   async update(): Promise<EngineUpdateResult> {
-    const before = await this.readVersion();
-
+    let before: string | null = null;
+    let status: HerdrStatus | null = null;
     try {
-      const { stderr } = await this.runner.run(['update', '--handoff'], {
-        timeoutMs: ENGINE_UPDATE_TIMEOUT_MS,
-      });
-      const status = parseStatus((await this.runner.run(['status', '--json'])).stdout);
-      const after = status.client.version;
-      const bootstrap = await this.bootstrap();
+      status = parseStatus((await this.runner.run(['status', '--json'])).stdout);
+      before = status.client.version;
+    } catch {
+      // The engine may be missing or unstartable; the install below fixes that.
+    }
+    const bootstrap = await this.bootstrap();
 
-      const installed = after !== null && before !== null && after !== before;
-      if (installed) {
-        // The binary can be replaced while the running server stays on the
-        // old version (for example when live handoff failed); only claim a
-        // complete update when the server actually runs the new version.
-        if (status.server.version === null || status.server.version === after) {
-          return {
-            bootstrap,
-            updated: true,
-            version: after,
-            message: `Herdr engine updated to v${after}.`,
-          };
-        }
-        return {
-          bootstrap,
-          updated: true,
-          version: after,
-          message: `Herdr engine updated to v${after}; the running server is still v${status.server.version} and needs a restart.`,
-        };
-      }
-
-      if (stderr.includes('already up to date')) {
-        return {
-          bootstrap,
-          updated: false,
-          version: after ?? before,
-          message: `Herdr engine is already up to date (v${after ?? before ?? 'unknown'}).`,
-        };
-      }
-
+    if (status?.server.capabilities?.agent_conversations === true) {
       return {
         bootstrap,
         updated: false,
-        version: after ?? before,
-        message: 'Herdr engine update completed without a version change.',
+        version: before,
+        message: `Herdr engine already provides structured Chat (v${before ?? 'unknown'}).`,
+      };
+    }
+
+    const asset = pinnedEngineAsset(process.platform, process.arch);
+    if (!asset) {
+      const supported = hasPinnedEngineRelease(process.platform, process.arch);
+      const message = supported
+        ? 'The pinned engine release is not published yet; update Herdr Desktop to install it.'
+        : `No pinned Herdr engine release for ${process.platform}-${process.arch}; install the official Herdr engine instead.`;
+      return { bootstrap, updated: false, version: before, message, error: message };
+    }
+
+    const resolvedBinary = this.runner.binary;
+    const installTo = resolvedBinary.includes('/') ? resolvedBinary : defaultEngineInstallPath();
+
+    try {
+      await installPinnedEngineBinary({ asset, installTo });
+      if (installTo !== resolvedBinary) {
+        this.onBinaryInstalled?.(installTo);
+      }
+
+      const after = (await this.readVersion()) ?? PINNED_ENGINE.version;
+      if (status?.server.running) {
+        // The old server still runs from its previous inode; the new binary
+        // requests the takeover so live panes move over without a restart.
+        await this.runner.run(['server', 'live-handoff', '--import-exe', installTo], {
+          timeoutMs: ENGINE_UPDATE_TIMEOUT_MS,
+        });
+      }
+      // The pinned build ships newer integration assets; without a reinstall
+      // the agent extensions stay on the old protocol version and their
+      // session reports (and structured Chat) are rejected by the new server.
+      const integrationsReinstalled = await this.reinstallInstalledIntegrations();
+      const fresh = await this.bootstrap().catch((): EngineBootstrap => {
+        return {
+          state: 'error',
+          message: 'Herdr could not be reached after the engine update.',
+          details: `installed ${PINNED_ENGINE.version} at ${installTo}`,
+        };
+      });
+      return {
+        bootstrap: fresh,
+        updated: true,
+        version: after,
+        message: integrationsReinstalled
+          ? `Herdr engine updated to v${after} with structured Chat. Restart your agent sessions to enable it.`
+          : `Herdr engine updated to v${after} with structured Chat.`,
       };
     } catch (error) {
       const stderr = isRecord(error) && typeof error.stderr === 'string' ? error.stderr.trim() : '';
       const message =
         stderr || (error instanceof Error ? error.message : 'Herdr engine update failed.');
-      const bootstrap = await this.bootstrap().catch((): EngineBootstrap => {
+      const fresh = await this.bootstrap().catch((): EngineBootstrap => {
         return {
           state: 'error',
           message: 'Herdr could not be reached after the update attempt.',
           details: errorDetails(error),
         };
       });
-      return { bootstrap, updated: false, version: before, message, error: message };
+      return { bootstrap: fresh, updated: false, version: before, message, error: message };
     }
+  }
+
+  /**
+   * Best-effort refresh of the agent integration extensions after the engine
+   * binary changed: every installed provider gets its extension rewritten
+   * from the new binary's bundled assets. Returns true when at least one
+   * provider was reinstalled.
+   */
+  private async reinstallInstalledIntegrations(): Promise<boolean> {
+    let installedTargets: string[] = [];
+    try {
+      const { stdout } = await this.runner.run(['integration', 'status']);
+      installedTargets = stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.includes('not installed'))
+        .map((line) => line.split(':')[0]?.trim())
+        .filter((target): target is string => Boolean(target));
+    } catch {
+      return false;
+    }
+    if (installedTargets.length === 0) {
+      return false;
+    }
+    let reinstalled = false;
+    for (const target of installedTargets) {
+      try {
+        await this.runner.run(['integration', 'install', target]);
+        reinstalled = true;
+      } catch {
+        // A failed extension rewrite must not fail the engine update; the
+        // agent session simply keeps the previous extension until restarted.
+      }
+    }
+    return reinstalled;
   }
 }

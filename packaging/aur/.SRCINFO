@@ -1,6 +1,6 @@
 pkgbase = herdr-desktop-bin
 	pkgdesc = A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions
-	pkgver = 0.1.12
+	pkgver = 0.1.13
 	pkgrel = 1
 	url = https://github.com/marcelormendes/herdr-desktop
 	arch = x86_64
