@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  parseChatImageDrafts,
+  parseConversationPromptRequest,
+  parseConversationReadRequest,
+  parseConversationRespondRequest,
   parseHerdrCommand,
   parseHerdrQuery,
   parsePaneId,
@@ -10,11 +12,6 @@ import {
   parseTerminalResize,
   parseTerminalScroll,
 } from '@/main/ipc-validation';
-import {
-  MAX_CHAT_IMAGE_ATTACHMENTS,
-  MAX_CHAT_IMAGE_BASE64_LENGTH,
-  MAX_CHAT_IMAGE_TOTAL_BYTES,
-} from '@/shared/desktop-api';
 
 describe('IPC validation', () => {
   it('accepts the finite Herdr command contract', () => {
@@ -368,6 +365,51 @@ describe('IPC validation', () => {
     expect(parsePaneId('w2:pA')).toBe('w2:pA');
   });
 
+  it('validates structured conversation requests without accepting paths', () => {
+    expect(
+      parseConversationReadRequest({
+        target: 'w1:p1',
+        direction: 'newer',
+        cursor: 'cursor-1',
+        limit: 64,
+      }),
+    ).toEqual({ target: 'w1:p1', direction: 'newer', cursor: 'cursor-1', limit: 64 });
+    expect(
+      parseConversationPromptRequest({
+        target: 'w1:p1',
+        text: 'hello',
+        attachments: [{ handle: 'att-1' }],
+      }),
+    ).toEqual({ target: 'w1:p1', text: 'hello', attachments: [{ handle: 'att-1' }] });
+    expect(
+      parseConversationRespondRequest({
+        target: 'w1:p1',
+        reader_generation: 'generation-1',
+        session: { id: 'session-1' },
+        request_id: 'approval-1',
+        decision_id: 'allow',
+      }),
+    ).toEqual({
+      target: 'w1:p1',
+      reader_generation: 'generation-1',
+      session: { id: 'session-1' },
+      request_id: 'approval-1',
+      decision_id: 'allow',
+    });
+    expect(() => parseConversationReadRequest({ target: 'w1:p1', cursor: '/tmp/file' })).toThrow(
+      'Invalid conversation read request.',
+    );
+    expect(() =>
+      parseConversationRespondRequest({
+        target: 'w1:p1',
+        reader_generation: 'generation-1',
+        session: { id: '/tmp/session' },
+        request_id: 'approval-1',
+        decision_id: 'allow',
+      }),
+    ).toThrow('Invalid conversation response request.');
+  });
+
   it('accepts normal terminal input and rejects oversized payloads', () => {
     expect(parseTerminalInput({ paneId: 'w1:p1', text: 'npm test\n' })).toEqual({
       paneId: 'w1:p1',
@@ -404,106 +446,6 @@ describe('IPC validation', () => {
     expect(() => parseTerminalScroll({ paneId: 'w1:p1', direction: 'sideways', lines: 1 })).toThrow(
       'Invalid terminal scroll.',
     );
-  });
-});
-
-describe('chat image draft validation', () => {
-  const VALID = [{ extension: 'png', data: 'aGVsbG8=' }];
-
-  it('accepts a finite array of chat image drafts', () => {
-    expect(parseChatImageDrafts(VALID)).toEqual(VALID);
-    expect(parseChatImageDrafts([])).toEqual([]);
-    expect(
-      parseChatImageDrafts([
-        { extension: 'jpg', data: 'aGVsbG8=' },
-        { extension: 'webp', data: 'aGVsbG8=' },
-      ]),
-    ).toEqual([
-      { extension: 'jpg', data: 'aGVsbG8=' },
-      { extension: 'webp', data: 'aGVsbG8=' },
-    ]);
-  });
-
-  it('rejects non-array payloads', () => {
-    expect(() => parseChatImageDrafts({ extension: 'png', data: 'aGVsbG8=' })).toThrow(
-      'Invalid chat image drafts.',
-    );
-    expect(() => parseChatImageDrafts('png')).toThrow('Invalid chat image drafts.');
-  });
-
-  it('rejects unknown image extensions', () => {
-    expect(() => parseChatImageDrafts([{ extension: 'svg', data: 'aGVsbG8=' }])).toThrow(
-      'Invalid chat image drafts.',
-    );
-    expect(() => parseChatImageDrafts([{ extension: 'PNG', data: 'aGVsbG8=' }])).toThrow(
-      'Invalid chat image drafts.',
-    );
-  });
-
-  it('rejects drafts with missing or malformed data', () => {
-    expect(() => parseChatImageDrafts([{ extension: 'png' }])).toThrow(
-      'Invalid chat image drafts.',
-    );
-    expect(() => parseChatImageDrafts([{ extension: 'png', data: 42 }])).toThrow(
-      'Invalid chat image drafts.',
-    );
-    expect(() => parseChatImageDrafts([{ extension: 'png', data: 'not base64!' }])).toThrow(
-      'Invalid chat image drafts.',
-    );
-  });
-
-  it('rejects drafts over the base64 chat image limit', () => {
-    const oversized = 'A'.repeat(MAX_CHAT_IMAGE_BASE64_LENGTH + 1);
-    expect(() => parseChatImageDrafts([{ extension: 'png', data: oversized }])).toThrow(
-      'Invalid chat image drafts.',
-    );
-  });
-
-  it('rejects non-canonical base64 payloads', () => {
-    for (const data of ['A', 'A=', 'AA=', 'AAA==', 'aGVsbG8']) {
-      expect(() => parseChatImageDrafts([{ extension: 'png', data }])).toThrow(
-        'Invalid chat image drafts.',
-      );
-    }
-  });
-
-  it('rejects more than the maximum attachment count', () => {
-    const drafts = Array.from({ length: MAX_CHAT_IMAGE_ATTACHMENTS + 1 }, () => ({
-      extension: 'png',
-      data: 'aGVsbG8=',
-    }));
-    expect(() => parseChatImageDrafts(drafts)).toThrow('Invalid chat image drafts.');
-  });
-
-  it('rejects drafts over the total chat image byte budget', () => {
-    const big = 'A'.repeat(Math.ceil(MAX_CHAT_IMAGE_TOTAL_BYTES / 3) * 4 + 4);
-    expect(() => parseChatImageDrafts([{ extension: 'png', data: big }])).toThrow(
-      'Invalid chat image drafts.',
-    );
-  });
-
-  it('accepts a batch whose exact decoded size is the total budget', () => {
-    // 16 MiB binary with == padding must not be overcounted as 16 MiB + 2.
-    const data = Buffer.alloc(MAX_CHAT_IMAGE_TOTAL_BYTES / 2).toString('base64');
-    const drafts = [
-      { extension: 'png', data },
-      { extension: 'png', data },
-    ];
-    expect(parseChatImageDrafts(drafts)).toEqual(drafts);
-  });
-
-  it('rejects non-canonical base64 pad bits', () => {
-    for (const data of ['AB==', 'AAB=']) {
-      expect(() => parseChatImageDrafts([{ extension: 'png', data }])).toThrow(
-        'Invalid chat image drafts.',
-      );
-    }
-    expect(parseChatImageDrafts([{ extension: 'png', data: 'AA==' }])).toEqual([
-      { extension: 'png', data: 'AA==' },
-    ]);
-    expect(parseChatImageDrafts([{ extension: 'png', data: 'AAA=' }])).toEqual([
-      { extension: 'png', data: 'AAA=' },
-    ]);
   });
 });
 

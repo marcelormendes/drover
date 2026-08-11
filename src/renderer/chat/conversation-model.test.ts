@@ -1,0 +1,164 @@
+import { describe, expect, it } from 'vitest';
+import {
+  applyConversationChanged,
+  applyConversationRead,
+  consumeChanged,
+  createConversationStore,
+} from '@/renderer/chat/conversation-model';
+import type { ConversationItem, ConversationReadResult } from '@/shared/conversation';
+
+function item(
+  sequence: number,
+  id = `item-${sequence}`,
+  text = `answer ${sequence}`,
+): ConversationItem {
+  return {
+    id,
+    sequence,
+    provider: 'codex',
+    session_id: 'session',
+    turn_id: 'turn',
+    type: 'assistant_message',
+    phase: 'final',
+    text,
+    state: 'completed',
+  };
+}
+
+function page(items: ConversationItem[], generation = 'reader-1', revision = items.length) {
+  return {
+    type: 'page' as const,
+    page: {
+      provider: 'codex',
+      session: { id: 'session' },
+      capability: { availability: 'supported' as const, reason: 'ready' as const },
+      items,
+      next_cursor: 'newer-cursor',
+      previous_cursor: 'older-cursor',
+      has_older: true,
+      revision,
+      reader_generation: generation,
+    },
+  } satisfies ConversationReadResult;
+}
+
+describe('conversation model', () => {
+  it('merges pages idempotently and keeps canonical order', () => {
+    let store = createConversationStore('w1:p1');
+    store = applyConversationRead(store, page([item(2), item(3)]));
+    store = applyConversationRead(
+      store,
+      page([item(1), item(2, 'item-2', 'revised')], 'reader-1', 4),
+    );
+
+    expect(store.items.map(({ sequence }) => sequence)).toEqual([1, 2, 3]);
+    const revised = store.items.find(({ id }) => id === 'item-2');
+    expect(revised?.type === 'assistant_message' && revised.text).toBe('revised');
+    expect(store.revision).toBe(4);
+    expect(store.olderCursor).toBe('older-cursor');
+  });
+
+  it('resets before applying data from a changed reader generation', () => {
+    let store = applyConversationRead(createConversationStore('w1:p1'), page([item(10)]));
+    store = applyConversationRead(store, page([item(1)], 'reader-2', 1));
+
+    expect(store.items.map(({ sequence }) => sequence)).toEqual([1]);
+    expect(store.revision).toBe(1);
+    expect(store.resetRequired).toBe(false);
+  });
+
+  it('marks an explicit reset and accepts the next page', () => {
+    let store = applyConversationRead(createConversationStore('w1:p1'), {
+      type: 'reset_required',
+      session: { id: 'new-session' },
+      reader_generation: 'reader-2',
+    });
+    expect(store.resetRequired).toBe(true);
+    expect(store.items).toHaveLength(0);
+
+    store = applyConversationRead(store, page([item(1)], 'reader-2', 1));
+    expect(store.resetRequired).toBe(false);
+    expect(store.items).toHaveLength(1);
+  });
+
+  it('ignores conversation events for other panes and resets matching panes', () => {
+    let store = applyConversationRead(createConversationStore('w1:p1'), page([item(1)]));
+    const other = applyConversationChanged(store, {
+      pane_id: 'w1:p2',
+      workspace_id: 'w1',
+      session: { id: 'session' },
+      reader_generation: 'reader-1',
+      revision: 2,
+      reset_required: false,
+    });
+    expect(other).toBe(store);
+
+    store = applyConversationChanged(store, {
+      pane_id: 'w1:p1',
+      workspace_id: 'w1',
+      session: { id: 'session-2' },
+      reader_generation: 'reader-2',
+      revision: 1,
+      reset_required: false,
+    });
+    expect(store.resetRequired).toBe(true);
+    // The last complete timeline stays visible while the replacement loads.
+    expect(store.items).toHaveLength(1);
+  });
+
+  it('keeps history pagination from replacing the live-tail cursor', () => {
+    let store = applyConversationRead(createConversationStore('w1:p1'), page([item(10)]));
+    const history = {
+      ...page([item(1)], 'reader-1', 1),
+      page: {
+        ...page([item(1)], 'reader-1', 1).page,
+        next_cursor: 'history-next',
+        previous_cursor: 'history-previous',
+      },
+    } satisfies ConversationReadResult;
+    store = applyConversationRead(store, history, 'older');
+    expect(store.olderCursor).toBe('history-previous');
+    expect(store.newerCursor).toBe('newer-cursor');
+
+    const live = {
+      ...page([item(11)], 'reader-1', 3),
+      page: {
+        ...page([item(11)], 'reader-1', 3).page,
+        next_cursor: 'live-next',
+        previous_cursor: 'history-previous',
+      },
+    } satisfies ConversationReadResult;
+    store = applyConversationRead(store, live, 'newer');
+    expect(store.olderCursor).toBe('history-previous');
+    expect(store.newerCursor).toBe('live-next');
+    expect(store.items.map(({ sequence }) => sequence)).toEqual([1, 10, 11]);
+  });
+
+  it('allows callers to clear the changed marker after batching', () => {
+    const store = applyConversationRead(createConversationStore('w1:p1'), page([item(1)]));
+    expect(consumeChanged(store).changed).toBe(false);
+  });
+
+  it('reconciles only one optimistic echo for each durable same-text message', () => {
+    const store = {
+      ...createConversationStore('w1:p1'),
+      pending: [
+        { id: 'pending-1', text: 'same prompt', status: 'syncing' as const },
+        { id: 'pending-2', text: 'same prompt', status: 'syncing' as const },
+      ],
+    };
+    const durable: ConversationItem = {
+      id: 'user-1',
+      sequence: 1,
+      provider: 'codex',
+      session_id: 'session',
+      turn_id: 'turn',
+      type: 'user_message',
+      text: 'same prompt',
+    };
+
+    const next = applyConversationRead(store, page([durable]));
+
+    expect(next.pending).toEqual([{ id: 'pending-2', text: 'same prompt', status: 'syncing' }]);
+  });
+});

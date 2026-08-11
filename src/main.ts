@@ -7,10 +7,9 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'elect
 import started from 'electron-squirrel-startup';
 import { APP_NAME, configureApplicationBranding } from '@/main/app-branding';
 import { applicationMenuTemplate } from '@/main/application-menu';
-import { stageChatImages } from '@/main/chat-images';
 import { DesktopPreferencesStore } from '@/main/desktop-preferences';
 import { checkDesktopUpdate } from '@/main/desktop-update';
-import { chatImageStagingDir, hostPathFromSandboxPath, isFlatpakHost } from '@/main/flatpak';
+import { hostPathFromSandboxPath, isFlatpakHost } from '@/main/flatpak';
 import { resolveHerdrBinary } from '@/main/herdr/binary-locator';
 import { HerdrBinaryPreference } from '@/main/herdr/binary-preference';
 import { HerdrEngine, NodeHerdrCommandRunner, NodeHerdrServerLauncher } from '@/main/herdr/engine';
@@ -18,7 +17,13 @@ import { HerdrEventSubscription } from '@/main/herdr/event-subscription';
 import { TerminalController } from '@/main/herdr/terminal-controller';
 import { TerminalControllerPool } from '@/main/herdr/terminal-controller-pool';
 import {
-  parseChatImageDrafts,
+  parseConversationAttachmentAbortRequest,
+  parseConversationAttachmentBeginRequest,
+  parseConversationAttachmentChunkRequest,
+  parseConversationAttachmentFinishRequest,
+  parseConversationPromptRequest,
+  parseConversationReadRequest,
+  parseConversationRespondRequest,
   parseHerdrCommand,
   parseHerdrQuery,
   parsePaneId,
@@ -68,6 +73,7 @@ let engine = createEngine(herdrBinary);
 let binaryPreference: HerdrBinaryPreference | null = null;
 let desktopPreferences: DesktopPreferencesStore | null = null;
 let preferencesWriteQueue = Promise.resolve();
+const conversationSubscriptions = new Set<string>();
 
 function enqueuePreferencesWrite<T>(operation: () => Promise<T>): Promise<T> {
   const run = preferencesWriteQueue.then(operation);
@@ -140,6 +146,7 @@ const eventSubscription = new HerdrEventSubscription(
       return {
         socketPath: result.status.server.socket,
         paneIds: result.snapshot.panes.map((pane) => pane.pane_id),
+        conversationPaneIds: eventSubscription.getConversationPaneIds(),
       };
     },
     onStateChange: (state) =>
@@ -293,13 +300,76 @@ function registerIpcHandlers(): void {
     return engine.query(parseHerdrQuery(candidate));
   });
 
-  ipcMain.handle(IPC_CHANNELS.stageChatImages, async (event, candidate: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.conversationRead, async (event, candidate: unknown) => {
     assertTrustedSender(event.senderFrame?.url);
-    // Files are staged at the sandbox-visible path (where the grant mounts
-    // the host directory); the renderer and the host agent receive the
-    // host-equivalent paths.
-    const staged = stageChatImages(chatImageStagingDir(), parseChatImageDrafts(candidate));
-    return staged.map((filePath) => hostPathFromSandboxPath(filePath));
+    if (demoMode) {
+      throw new Error('Structured Chat is unavailable in demo mode.');
+    }
+    return engine.conversationRead(parseConversationReadRequest(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.conversationPrompt, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (demoMode) {
+      return DEMO_BOOTSTRAP;
+    }
+    return trackConnectedSession(
+      await engine.conversationPrompt(parseConversationPromptRequest(candidate)),
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.conversationRespond, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (demoMode) {
+      throw new Error('Structured Chat is unavailable in demo mode.');
+    }
+    return engine.conversationRespond(parseConversationRespondRequest(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.attachmentBegin, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (demoMode) {
+      throw new Error('Structured Chat is unavailable in demo mode.');
+    }
+    return engine.conversationAttachmentBegin(parseConversationAttachmentBeginRequest(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.attachmentChunk, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (demoMode) {
+      throw new Error('Structured Chat is unavailable in demo mode.');
+    }
+    return engine.conversationAttachmentChunk(parseConversationAttachmentChunkRequest(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.attachmentFinish, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (demoMode) {
+      throw new Error('Structured Chat is unavailable in demo mode.');
+    }
+    return engine.conversationAttachmentFinish(parseConversationAttachmentFinishRequest(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.attachmentAbort, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (demoMode) {
+      throw new Error('Structured Chat is unavailable in demo mode.');
+    }
+    return engine.conversationAttachmentAbort(parseConversationAttachmentAbortRequest(candidate));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.conversationSubscribe, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    const paneId = parsePaneId(candidate);
+    conversationSubscriptions.add(paneId);
+    eventSubscription.setConversationPanes([...conversationSubscriptions]);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.conversationUnsubscribe, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    const paneId = parsePaneId(candidate);
+    conversationSubscriptions.delete(paneId);
+    eventSubscription.setConversationPanes([...conversationSubscriptions]);
   });
 
   ipcMain.handle(IPC_CHANNELS.readPreferences, async (event) => {

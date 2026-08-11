@@ -1,11 +1,8 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import os, { tmpdir } from 'node:os';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { stageChatImages } from '@/main/chat-images';
 import {
-  chatImageStagingDir,
   FLATPAK_APP_ID,
   flatpakHostDataDir,
   flatpakRemoteSocketDir,
@@ -200,41 +197,6 @@ describe('hostInvocation', () => {
     const { program: resolvedProgram, args: resolvedArgs } = hostInvocation(program, args);
     expect(resolvedProgram).toBe('flatpak-spawn');
     expect(resolvedArgs).toEqual(['--host', '--watch-bus', HOST_PATH, program, ...args]);
-  });
-});
-
-describe('chatImageStagingDir', () => {
-  it('uses the temporary directory outside Flatpak', () => {
-    vi.unstubAllEnvs();
-    expect(chatImageStagingDir()).toBe(path.join(os.tmpdir(), 'herdr-desktop-chat-images'));
-  });
-
-  it('stages at the sandbox XDG_DATA_HOME inside the Herdr Desktop Flatpak', () => {
-    vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
-    vi.stubEnv('XDG_DATA_HOME', '/sandbox-data');
-    expect(chatImageStagingDir()).toBe(path.join('/sandbox-data', 'herdr-desktop', 'chat-images'));
-  });
-
-  it('returns host-visible paths after translation for the renderer and agent', () => {
-    const sandboxData = mkdtempSync(path.join(tmpdir(), 'fp-sandbox-data-'));
-    const hostData = mkdtempSync(path.join(tmpdir(), 'fp-host-data-'));
-    try {
-      vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
-      vi.stubEnv('XDG_DATA_HOME', sandboxData);
-      vi.stubEnv('HOST_XDG_DATA_HOME', hostData);
-      const staged = stageChatImages(chatImageStagingDir(), [
-        { extension: 'png', data: Buffer.from('hello').toString('base64') },
-      ]);
-      const hostVisible = staged.map((filePath) => hostPathFromSandboxPath(filePath));
-      expect(hostVisible.length).toBe(1);
-      expect(hostVisible[0]).toMatch(
-        new RegExp(`^${hostData}/herdr-desktop/chat-images/herdr-desktop-chat-[\\d-]+\\.png$`),
-      );
-      expect(existsSync(staged[0])).toBe(true);
-    } finally {
-      rmSync(sandboxData, { recursive: true, force: true });
-      rmSync(hostData, { recursive: true, force: true });
-    }
   });
 });
 

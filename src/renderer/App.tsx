@@ -84,12 +84,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { AgentSidebar } from '@/renderer/agents/AgentSidebar';
-import {
-  ChatPanel,
-  type ChatSessionState,
-  type ChatSessionUpdate,
-  createChatSessionState,
-} from '@/renderer/chat/ChatPanel';
+import { ConversationChatPanel } from '@/renderer/chat/ConversationChatPanel';
 import { ShortcutHelpDialog } from '@/renderer/help/ShortcutHelpDialog';
 import { WhatsNewDialog } from '@/renderer/help/WhatsNewDialog';
 import { Navigator, planTabMove, planWorkspaceMove, ReorderControls } from '@/renderer/navigation';
@@ -125,7 +120,6 @@ import {
   type DesktopUpdateInfo,
   type EngineUpdateResult,
   type HerdrCommand,
-  type HerdrQueryResult,
   INTEGRATION_TARGETS,
   type InstalledPluginInfo,
   type PluginActionInfo,
@@ -137,7 +131,7 @@ import {
   DEFAULT_REMOTE_ENGINE_PREFERENCE,
   type DesktopPreferences,
 } from '@/shared/preferences';
-import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-engine';
+import type { RemoteEngineStatus } from '@/shared/remote-engine';
 import packageMetadata from '../../package.json';
 
 const INSTALL_URL = 'https://github.com/herdrdev/herdr#installation';
@@ -745,11 +739,7 @@ function PaneStage({
   onOpenControls,
   onClose,
   onSetSplitRatio,
-  onPrompt,
-  onSendInput,
-  readOutput,
-  chatSessions,
-  onChatSessionChange,
+  structuredChatSupported,
   showPaneLabels,
 }: {
   pane?: PaneInfo;
@@ -763,11 +753,7 @@ function PaneStage({
   onOpenControls: (pane: PaneInfo) => void;
   onClose: (pane: PaneInfo) => void;
   onSetSplitRatio: (tabId: string, path: boolean[], ratio: number) => void;
-  onPrompt: (target: string, text: string) => void | Promise<void>;
-  onSendInput: (paneId: string, input: { text?: string; keys?: string[] }) => void | Promise<void>;
-  readOutput: (paneId: string) => Promise<Extract<HerdrQueryResult, { type: 'pane-output' }>>;
-  chatSessions: Readonly<Record<string, ChatSessionState>>;
-  onChatSessionChange: (paneId: string, update: ChatSessionUpdate) => void;
+  structuredChatSupported: boolean;
   showPaneLabels: boolean;
 }) {
   const [viewByPane, setViewByPane] = useState<Record<string, 'chat' | 'terminal'>>({});
@@ -803,7 +789,16 @@ function PaneStage({
         const focused = item.pane_id === pane.pane_id;
         const hiddenByZoom = Boolean(layout?.zoomed && !focused);
         const hasAgent = Boolean(item.agent || item.display_agent);
-        const view = hasAgent ? viewByPane[item.pane_id] || 'chat' : 'terminal';
+        const chatCapability = item.conversation_capability;
+        const chatEnabled = structuredChatSupported && chatCapability?.availability === 'supported';
+        const chatUnavailableMessage =
+          !structuredChatSupported || !chatCapability
+            ? 'Update Herdr to use structured Chat.'
+            : (chatCapability.message ??
+              (chatCapability.availability === 'unsupported'
+                ? 'Chat is not currently supported for this provider. Use Terminal instead.'
+                : 'Start or resume this agent to use Chat.'));
+        const view = hasAgent && chatEnabled ? viewByPane[item.pane_id] || 'chat' : 'terminal';
         return (
           <div
             aria-hidden={hiddenByZoom || undefined}
@@ -841,25 +836,37 @@ function PaneStage({
                         aria-label="Pane view"
                         className="m-0 flex min-w-0 overflow-hidden rounded-base border-2 border-border bg-secondary-background p-0"
                       >
-                        <Button
-                          aria-label="Chat view"
-                          aria-pressed={view === 'chat'}
-                          className={cn(
-                            'h-7 rounded-none border-0 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
-                            view === 'chat' && 'bg-main text-main-foreground',
-                          )}
-                          onClick={() =>
-                            setViewByPane((current) => ({
-                              ...current,
-                              [item.pane_id]: 'chat',
-                            }))
-                          }
-                          size="sm"
-                          variant="neutral"
-                        >
-                          <MessageSquare aria-hidden="true" />
-                          <span className="hidden xl:inline">Chat</span>
-                        </Button>
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span tabIndex={chatEnabled ? -1 : 0}>
+                                <Button
+                                  aria-label="Chat view"
+                                  aria-pressed={view === 'chat'}
+                                  disabled={!chatEnabled}
+                                  className={cn(
+                                    'h-7 rounded-none border-0 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
+                                    view === 'chat' && 'bg-main text-main-foreground',
+                                  )}
+                                  onClick={() =>
+                                    setViewByPane((current) => ({
+                                      ...current,
+                                      [item.pane_id]: 'chat',
+                                    }))
+                                  }
+                                  size="sm"
+                                  variant="neutral"
+                                >
+                                  <MessageSquare aria-hidden="true" />
+                                  <span className="hidden xl:inline">Chat</span>
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            {!chatEnabled ? (
+                              <TooltipContent>{chatUnavailableMessage}</TooltipContent>
+                            ) : null}
+                          </Tooltip>
+                        </TooltipProvider>
                         <Button
                           aria-label="Terminal view"
                           aria-pressed={view === 'terminal'}
@@ -945,20 +952,14 @@ function PaneStage({
                 ) : null}
               </div>
               {view === 'chat' ? (
-                <ChatPanel
+                <ConversationChatPanel
                   onOpenTerminal={() =>
                     setViewByPane((current) => ({
                       ...current,
                       [item.pane_id]: 'terminal',
                     }))
                   }
-                  onPrompt={onPrompt}
-                  onSendInput={onSendInput}
-                  onSessionChange={(update) => onChatSessionChange(item.pane_id, update)}
                   pane={item}
-                  readOutput={readOutput}
-                  session={chatSessions[item.pane_id]}
-                  stageImages={(images) => window.herdr.stageChatImages(images)}
                 />
               ) : (
                 <TerminalPanel
@@ -1155,19 +1156,6 @@ function ConnectedShell({
   busy: boolean;
 }) {
   const { snapshot, status } = result;
-  const runChatCommand = useCallback(
-    async (command: HerdrCommand): Promise<void> => {
-      const next = await onCommand(command);
-      if (next.state !== 'connected') {
-        throw new Error(
-          next.state === 'error' || next.state === 'missing'
-            ? next.message
-            : 'Herdr command failed.',
-        );
-      }
-    },
-    [onCommand],
-  );
   const [workspaceId, setWorkspaceId] = useState(
     snapshot.focused_workspace_id || snapshot.workspaces[0]?.workspace_id,
   );
@@ -1195,26 +1183,6 @@ function ConnectedShell({
   const [paneControlsTarget, setPaneControlsTarget] = useState<PaneInfo | null>(null);
   const [mobileSwitcherOpen, setMobileSwitcherOpen] = useState(false);
   const [mobileSection, setMobileSection] = useState<MobileSwitcherSection>('agents');
-  const [chatSessions, setChatSessions] = useState<Record<string, ChatSessionState>>({});
-  const updateChatSession = useCallback((paneId: string, update: ChatSessionUpdate) => {
-    setChatSessions((current) => {
-      const previous = current[paneId] || createChatSessionState();
-      const next = update(previous);
-      return next === previous ? current : { ...current, [paneId]: next };
-    });
-  }, []);
-  const readPaneOutput = useCallback(async (paneId: string) => {
-    const output = await window.herdr.query({
-      type: 'read-pane-output',
-      paneId,
-      lines: 500,
-      ansi: true,
-    });
-    if (output.type !== 'pane-output') {
-      throw new Error('Herdr returned an unexpected pane output response.');
-    }
-    return output;
-  }, []);
   const controlsPane = paneControlsTarget
     ? snapshot.panes.find((item) => item.pane_id === paneControlsTarget.pane_id) ||
       paneControlsTarget
@@ -1646,9 +1614,7 @@ function ConnectedShell({
             </div>
             <PaneStage
               busy={busy}
-              chatSessions={chatSessions}
               layout={layout}
-              onChatSessionChange={updateChatSession}
               onClose={(item) =>
                 setCloseTarget({
                   kind: 'pane',
@@ -1669,15 +1635,11 @@ function ConnectedShell({
               onSetSplitRatio={(tabId, path, ratio) =>
                 onCommand({ type: 'set-split-ratio', tabId, path, ratio })
               }
-              onPrompt={(target, text) => runChatCommand({ type: 'prompt-agent', target, text })}
-              onSendInput={(paneId, input) =>
-                runChatCommand({ type: 'send-pane-input', paneId, ...input })
-              }
               onZoom={(paneId) => onCommand({ type: 'zoom-pane', paneId, mode: 'toggle' })}
               pane={pane}
               panes={panes}
-              readOutput={readPaneOutput}
               showPaneLabels={preferences.paneLabels}
+              structuredChatSupported={status.server.capabilities?.agent_conversations === true}
             />
           </Tabs>
         </main>

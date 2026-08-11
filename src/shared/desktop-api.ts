@@ -1,3 +1,17 @@
+import type {
+  ConversationAttachmentAbortRequest,
+  ConversationAttachmentBeginRequest,
+  ConversationAttachmentBeginResult,
+  ConversationAttachmentChunkRequest,
+  ConversationAttachmentFinishRequest,
+  ConversationPromptRequest,
+  ConversationReadRequest,
+  ConversationReadResult,
+  ConversationRespondRequest,
+  ConversationRespondResult,
+  ConversationStagedAttachment,
+} from '@/shared/conversation';
+
 import type { HerdrEventEnvelope } from '@/shared/events';
 import type { EngineBootstrap } from '@/shared/herdr';
 import type { DesktopPreferences } from '@/shared/preferences';
@@ -9,8 +23,6 @@ import type {
   TerminalResizeRequest,
   TerminalScrollRequest,
 } from '@/shared/terminal';
-
-export const CHAT_IMAGE_EXTENSIONS = ['png', 'jpg', 'gif', 'webp', 'bmp'] as const;
 
 /** Result of running `herdr update` (engine self-update) from the desktop. */
 export interface EngineUpdateResult {
@@ -38,75 +50,14 @@ export interface DesktopUpdateInfo {
   releaseUrl: string;
 }
 
-export type ChatImageExtension = (typeof CHAT_IMAGE_EXTENSIONS)[number];
-
-/** Mirrors Herdr's clipboard image payload limit for paste bridging. */
+/** Mirrors Herdr's per-image upload limit. */
 export const MAX_CHAT_IMAGE_BYTES = 16 * 1024 * 1024;
-
-export const MAX_CHAT_IMAGE_BASE64_LENGTH = Math.ceil(MAX_CHAT_IMAGE_BYTES / 3) * 4;
 
 /** Maximum images in a single chat submission. */
 export const MAX_CHAT_IMAGE_ATTACHMENTS = 8;
 
 /** Total decoded-byte budget for one chat submission. */
 export const MAX_CHAT_IMAGE_TOTAL_BYTES = 32 * 1024 * 1024;
-
-/** Canonical base64: whole four-character groups with correct trailing padding. */
-export function isCanonicalBase64(data: string): boolean {
-  if (data.length === 0 || data.length % 4 !== 0) {
-    return false;
-  }
-  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
-  const body = data.length - padding;
-  if (padding === 1 && data[body - 1] === '=') {
-    return false;
-  }
-  for (let index = 0; index < body; index += 1) {
-    const code = data.charCodeAt(index);
-    const valid =
-      (code >= 65 && code <= 90) ||
-      (code >= 97 && code <= 122) ||
-      (code >= 48 && code <= 57) ||
-      code === 43 ||
-      code === 47;
-    if (!valid) {
-      return false;
-    }
-  }
-  // RFC 4648 requires unused pad bits to be zero.
-  if (padding > 0) {
-    const value = base64Value(data.charCodeAt(body - 1));
-    if (padding === 2 ? (value & 0x0f) !== 0 : (value & 0x03) !== 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Exact decoded length of a canonical base64 string. */
-export function base64DecodedLength(data: string): number {
-  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
-  return (data.length / 4) * 3 - padding;
-}
-
-function base64Value(code: number): number {
-  if (code >= 65 && code <= 90) {
-    return code - 65;
-  }
-  if (code >= 97 && code <= 122) {
-    return code - 97 + 26;
-  }
-  if (code >= 48 && code <= 57) {
-    return code - 48 + 52;
-  }
-  return code === 43 ? 62 : 63;
-}
-
-export interface ChatImageDraft {
-  extension: string;
-  /** Base64-encoded image bytes. */
-  data: string;
-}
 
 export type HerdrCommand =
   | { type: 'focus-workspace'; workspaceId: string }
@@ -500,7 +451,21 @@ export interface HerdrDesktopApi {
   startServer(): Promise<EngineBootstrap>;
   command(command: HerdrCommand): Promise<EngineBootstrap>;
   query(query: HerdrQuery): Promise<HerdrQueryResult>;
-  stageChatImages(images: ChatImageDraft[]): Promise<string[]>;
+  conversation: {
+    read(request: ConversationReadRequest): Promise<ConversationReadResult>;
+    prompt(request: ConversationPromptRequest): Promise<EngineBootstrap>;
+    respond(request: ConversationRespondRequest): Promise<ConversationRespondResult>;
+    subscribe(paneId: string): Promise<void>;
+    unsubscribe(paneId: string): Promise<void>;
+    attachment: {
+      begin(
+        request: ConversationAttachmentBeginRequest,
+      ): Promise<ConversationAttachmentBeginResult>;
+      chunk(request: ConversationAttachmentChunkRequest): Promise<void>;
+      finish(request: ConversationAttachmentFinishRequest): Promise<ConversationStagedAttachment>;
+      abort(request: ConversationAttachmentAbortRequest): Promise<void>;
+    };
+  };
   readPreferences(): Promise<DesktopPreferences>;
   writePreferences(preferences: DesktopPreferences): Promise<DesktopPreferences>;
   chooseHerdrBinary(): Promise<EngineBootstrap | null>;

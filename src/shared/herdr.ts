@@ -1,3 +1,5 @@
+import type { ConversationCapability, ConversationSessionIdentity } from '@/shared/conversation';
+
 export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
 
 export interface HerdrClientStatus {
@@ -16,6 +18,7 @@ export interface HerdrServerStatus {
   capabilities: {
     live_handoff: boolean;
     detached_server_daemon: boolean;
+    agent_conversations?: boolean;
   } | null;
   compatible: boolean | null;
   socket: string;
@@ -81,6 +84,8 @@ export interface PaneInfo {
     kind: string;
     value: string;
   };
+  conversation_session?: ConversationSessionIdentity;
+  conversation_capability?: ConversationCapability;
   scroll?: {
     offset_from_bottom: number;
     max_offset_from_bottom: number;
@@ -107,6 +112,8 @@ export interface AgentInfo {
     kind: string;
     value: string;
   };
+  conversation_session?: ConversationSessionIdentity;
+  conversation_capability?: ConversationCapability;
   workspace_id: string;
   tab_id: string;
   pane_id: string;

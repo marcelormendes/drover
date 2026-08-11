@@ -1,3 +1,10 @@
+import type {
+  ConversationPromptRequest,
+  ConversationReadRequest,
+  ConversationReadResult,
+  ConversationRespondRequest,
+  ConversationRespondResult,
+} from '@/shared/conversation';
 import { DEMO_BOOTSTRAP, demoQueryResult } from '@/shared/demo';
 import type {
   HerdrCommand,
@@ -150,7 +157,27 @@ export function createBrowserPreviewApi(): HerdrDesktopApi {
       desktopListeners.add(listener);
       return () => desktopListeners.delete(listener);
     },
-    stageChatImages: async () => [],
+    conversation: {
+      read: async (_request: ConversationReadRequest): Promise<ConversationReadResult> => {
+        throw new Error('Structured Chat is unavailable in browser preview.');
+      },
+      prompt: async (_request: ConversationPromptRequest): Promise<EngineBootstrap> => connected,
+      respond: async (_request: ConversationRespondRequest): Promise<ConversationRespondResult> => {
+        throw new Error('Structured Chat is unavailable in browser preview.');
+      },
+      subscribe: async (_paneId: string) => undefined,
+      unsubscribe: async (_paneId: string) => undefined,
+      attachment: {
+        begin: async () => {
+          throw new Error('Structured Chat is unavailable in browser preview.');
+        },
+        chunk: async () => undefined,
+        finish: async () => {
+          throw new Error('Structured Chat is unavailable in browser preview.');
+        },
+        abort: async () => undefined,
+      },
+    },
     onSessionEvent: (listener) => {
       sessionListeners.add(listener);
       return () => sessionListeners.delete(listener);

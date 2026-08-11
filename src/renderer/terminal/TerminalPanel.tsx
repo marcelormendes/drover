@@ -135,6 +135,19 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         setSearchOpen(true);
         return false;
       }
+      if (
+        event.type === 'keydown' &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'c' &&
+        terminalRef.current?.hasSelection()
+      ) {
+        // Standard terminal copy shortcut; only intercepts when a selection
+        // exists so Ctrl+C keeps sending the interrupt to the pane.
+        event.preventDefault();
+        void copySelection();
+        return false;
+      }
       return true;
     });
 

@@ -1,19 +1,22 @@
+import type {
+  ConversationAttachmentAbortRequest,
+  ConversationAttachmentBeginRequest,
+  ConversationAttachmentChunkRequest,
+  ConversationAttachmentFinishRequest,
+  ConversationPromptRequest,
+  ConversationReadRequest,
+  ConversationRespondRequest,
+} from '@/shared/conversation';
 import {
   AGENT_KINDS,
   type AgentViewField,
   type AgentViewFilter,
   type AgentViewSort,
   type AgentViewValue,
-  base64DecodedLength,
-  CHAT_IMAGE_EXTENSIONS,
-  type ChatImageDraft,
   type HerdrCommand,
   type HerdrQuery,
   INTEGRATION_TARGETS,
-  isCanonicalBase64,
   MAX_CHAT_IMAGE_ATTACHMENTS,
-  MAX_CHAT_IMAGE_BASE64_LENGTH,
-  MAX_CHAT_IMAGE_TOTAL_BYTES,
   type PaneMoveDestination,
 } from '@/shared/desktop-api';
 import { MAX_REMOTE_ENGINE_PORT, type RemoteEngineTarget } from '@/shared/remote-engine';
@@ -38,6 +41,23 @@ const MAX_FILTER_DEPTH = 8;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isCanonicalBase64(data: string): boolean {
+  if (data.length === 0 || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    return false;
+  }
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  const body = data.length - padding;
+  if (padding === 1 && data[body - 1] === '=') {
+    return false;
+  }
+  if (padding === 0) {
+    return true;
+  }
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const value = alphabet.indexOf(data[body - 1]);
+  return padding === 2 ? (value & 0x0f) === 0 : (value & 0x03) === 0;
 }
 
 function optionalText(value: unknown): value is string | undefined {
@@ -76,6 +96,12 @@ function nonNegativeInteger(value: unknown): value is number {
 
 function positiveInteger(value: unknown): value is number {
   return nonNegativeInteger(value) && value > 0;
+}
+
+function validOpaque(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\\/]/.test(value)
+  );
 }
 
 function validAgentArguments(value: unknown): value is string[] {
@@ -716,6 +742,165 @@ export function parseHerdrQuery(value: unknown): HerdrQuery {
   throw new Error('Invalid Herdr query.');
 }
 
+export function parseConversationReadRequest(value: unknown): ConversationReadRequest {
+  if (
+    isRecord(value) &&
+    typeof value.target === 'string' &&
+    value.target.length > 0 &&
+    value.target.length <= MAX_TEXT_LENGTH &&
+    (value.cursor === undefined || validOpaque(value.cursor)) &&
+    (value.direction === undefined ||
+      value.direction === 'newest' ||
+      value.direction === 'older' ||
+      value.direction === 'newer') &&
+    (value.limit === undefined || (positiveInteger(value.limit) && value.limit <= 256))
+  ) {
+    return {
+      target: value.target,
+      ...(value.cursor === undefined ? {} : { cursor: value.cursor }),
+      ...(value.direction === undefined ? {} : { direction: value.direction }),
+      ...(value.limit === undefined ? {} : { limit: value.limit }),
+    };
+  }
+  throw new Error('Invalid conversation read request.');
+}
+
+export function parseConversationPromptRequest(value: unknown): ConversationPromptRequest {
+  if (
+    !isRecord(value) ||
+    typeof value.target !== 'string' ||
+    value.target.length === 0 ||
+    value.target.length > MAX_TEXT_LENGTH ||
+    typeof value.text !== 'string' ||
+    value.text.length > MAX_TERMINAL_INPUT_LENGTH ||
+    (value.text.length === 0 && value.attachments === undefined)
+  ) {
+    throw new Error('Invalid conversation prompt request.');
+  }
+  if (value.attachments === undefined) {
+    return { target: value.target, text: value.text };
+  }
+  if (
+    !Array.isArray(value.attachments) ||
+    value.attachments.length > MAX_CHAT_IMAGE_ATTACHMENTS ||
+    !value.attachments.every((attachment) => isRecord(attachment) && validOpaque(attachment.handle))
+  ) {
+    throw new Error('Invalid conversation prompt request.');
+  }
+  return {
+    target: value.target,
+    text: value.text,
+    attachments: value.attachments as ConversationPromptRequest['attachments'],
+  };
+}
+
+export function parseConversationRespondRequest(value: unknown): ConversationRespondRequest {
+  if (
+    isRecord(value) &&
+    typeof value.target === 'string' &&
+    value.target.length > 0 &&
+    value.target.length <= MAX_TEXT_LENGTH &&
+    validOpaque(value.reader_generation) &&
+    isRecord(value.session) &&
+    validOpaque(value.session.id) &&
+    validOpaque(value.request_id) &&
+    validOpaque(value.decision_id)
+  ) {
+    return {
+      target: value.target,
+      reader_generation: value.reader_generation,
+      session: { id: value.session.id },
+      request_id: value.request_id,
+      decision_id: value.decision_id,
+    };
+  }
+  throw new Error('Invalid conversation response request.');
+}
+
+// Attachment upload bounds mirror the engine's attachment store:
+// 8 KiB chunks, 25 MiB per file, and short allowlisted metadata fields.
+const MAX_ATTACHMENT_MEDIA_TYPE_LENGTH = 128;
+const MAX_ATTACHMENT_NAME_LENGTH = 255;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_CHUNK_BYTES = 8 * 1024;
+const MAX_ATTACHMENT_CHUNK_BASE64_LENGTH = Math.ceil(MAX_ATTACHMENT_CHUNK_BYTES / 3) * 4;
+const MAX_ATTACHMENT_CHUNK_INDEX = 4_096;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+export function parseConversationAttachmentBeginRequest(
+  value: unknown,
+): ConversationAttachmentBeginRequest {
+  if (
+    !isRecord(value) ||
+    typeof value.target !== 'string' ||
+    value.target.length === 0 ||
+    value.target.length > MAX_TEXT_LENGTH ||
+    typeof value.media_type !== 'string' ||
+    value.media_type.length === 0 ||
+    value.media_type.length > MAX_ATTACHMENT_MEDIA_TYPE_LENGTH ||
+    typeof value.name !== 'string' ||
+    value.name.length === 0 ||
+    value.name.length > MAX_ATTACHMENT_NAME_LENGTH ||
+    typeof value.byte_size !== 'number' ||
+    !Number.isSafeInteger(value.byte_size) ||
+    value.byte_size <= 0 ||
+    value.byte_size > MAX_ATTACHMENT_BYTES ||
+    typeof value.sha256_digest !== 'string' ||
+    !SHA256_HEX.test(value.sha256_digest)
+  ) {
+    throw new Error('Invalid attachment begin request.');
+  }
+  return {
+    target: value.target,
+    media_type: value.media_type,
+    name: value.name,
+    byte_size: value.byte_size,
+    sha256_digest: value.sha256_digest,
+  };
+}
+
+export function parseConversationAttachmentChunkRequest(
+  value: unknown,
+): ConversationAttachmentChunkRequest {
+  if (
+    !isRecord(value) ||
+    !validOpaque(value.upload) ||
+    typeof value.index !== 'number' ||
+    !Number.isSafeInteger(value.index) ||
+    value.index < 0 ||
+    value.index > MAX_ATTACHMENT_CHUNK_INDEX ||
+    typeof value.data_base64 !== 'string' ||
+    value.data_base64.length === 0 ||
+    value.data_base64.length > MAX_ATTACHMENT_CHUNK_BASE64_LENGTH ||
+    !isCanonicalBase64(value.data_base64)
+  ) {
+    throw new Error('Invalid attachment chunk request.');
+  }
+  return {
+    upload: value.upload as string,
+    index: value.index,
+    data_base64: value.data_base64,
+  };
+}
+
+export function parseConversationAttachmentFinishRequest(
+  value: unknown,
+): ConversationAttachmentFinishRequest {
+  if (!isRecord(value) || !validOpaque(value.upload)) {
+    throw new Error('Invalid attachment finish request.');
+  }
+  return { upload: value.upload as string };
+}
+
+export function parseConversationAttachmentAbortRequest(
+  value: unknown,
+): ConversationAttachmentAbortRequest {
+  if (!isRecord(value) || !validOpaque(value.upload)) {
+    throw new Error('Invalid attachment abort request.');
+  }
+  return { upload: value.upload as string };
+}
+
 export function parseTerminalOpen(value: unknown): TerminalOpenRequest {
   if (!isRecord(value) || typeof value.paneId !== 'string' || !PANE_ID.test(value.paneId)) {
     throw new Error('Invalid terminal pane identifier.');
@@ -791,33 +976,6 @@ export function parseTerminalScroll(value: unknown): TerminalScrollRequest {
     return value as unknown as TerminalScrollRequest;
   }
   throw new Error('Invalid terminal scroll.');
-}
-
-export function parseChatImageDrafts(value: unknown): ChatImageDraft[] {
-  if (
-    Array.isArray(value) &&
-    value.length <= MAX_CHAT_IMAGE_ATTACHMENTS &&
-    value.every(
-      (draft) =>
-        isRecord(draft) &&
-        typeof draft.extension === 'string' &&
-        (CHAT_IMAGE_EXTENSIONS as readonly string[]).includes(draft.extension) &&
-        typeof draft.data === 'string' &&
-        draft.data.length > 0 &&
-        draft.data.length <= MAX_CHAT_IMAGE_BASE64_LENGTH &&
-        isCanonicalBase64(draft.data),
-    ) &&
-    value.reduce(
-      (sum, draft) =>
-        isRecord(draft) && typeof draft.data === 'string'
-          ? sum + base64DecodedLength(draft.data)
-          : sum,
-      0,
-    ) <= MAX_CHAT_IMAGE_TOTAL_BYTES
-  ) {
-    return value as unknown as ChatImageDraft[];
-  }
-  throw new Error('Invalid chat image drafts.');
 }
 
 export function parseRemoteEngineTarget(value: unknown): RemoteEngineTarget {

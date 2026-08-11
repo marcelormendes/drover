@@ -1,0 +1,486 @@
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ConversationChatPanel } from '@/renderer/chat/ConversationChatPanel';
+import type { ConversationItem, ConversationReadResult } from '@/shared/conversation';
+import type { PaneInfo } from '@/shared/herdr';
+
+const pane = {
+  pane_id: 'w1:p1',
+  display_agent: 'Pi',
+  agent: 'pi',
+  conversation_capability: { availability: 'supported', reason: 'ready' },
+} as PaneInfo;
+
+function page(
+  items: ConversationItem[],
+  options: { previousCursor?: string; nextCursor?: string } = {},
+): ConversationReadResult {
+  return {
+    type: 'page',
+    page: {
+      provider: 'pi',
+      session: { id: 'session-1' },
+      capability: { availability: 'supported', reason: 'ready' },
+      items,
+      ...(options.previousCursor ? { previous_cursor: options.previousCursor } : {}),
+      ...(options.nextCursor ? { next_cursor: options.nextCursor } : {}),
+      has_older: Boolean(options.previousCursor),
+      revision: items.at(-1)?.sequence ?? 0,
+      reader_generation: 'generation-1',
+    },
+  };
+}
+
+function assistant(
+  sequence: number,
+  phase: 'commentary' | 'final',
+  text: string,
+): ConversationItem {
+  return {
+    id: `assistant-${sequence}`,
+    sequence,
+    provider: 'pi',
+    session_id: 'session-1',
+    turn_id: 'turn-1',
+    type: 'assistant_message',
+    phase,
+    text,
+    state: 'completed',
+  };
+}
+
+function tool(
+  sequence: number,
+  action = `tool-${sequence}`,
+  detail?: string,
+): Extract<ConversationItem, { type: 'tool_activity' }> {
+  return {
+    id: `tool-${sequence}`,
+    sequence,
+    provider: 'pi',
+    session_id: 'session-1',
+    turn_id: 'turn-1',
+    type: 'tool_activity',
+    action,
+    label: 'completed',
+    status: 'completed',
+    ...(detail ? { detail } : {}),
+  };
+}
+
+function setup(
+  initial: ConversationReadResult,
+  overrides: Partial<Window['herdr']['conversation']> = {},
+) {
+  const read = vi.fn<Window['herdr']['conversation']['read']>().mockResolvedValue(initial);
+  const prompt = vi.fn(async () => ({}));
+  const respond = vi.fn(async () => ({
+    request_id: 'approval-1',
+    decision_id: 'allow',
+    accepted: true,
+    reason: 'accepted' as const,
+  }));
+  let onEvent: ((event: { event: string; data: Record<string, unknown> }) => void) | undefined;
+  window.herdr = {
+    conversation: {
+      read,
+      prompt,
+      respond,
+      subscribe: vi.fn(async () => undefined),
+      unsubscribe: vi.fn(async () => undefined),
+      attachment: {
+        begin: vi.fn(),
+        chunk: vi.fn(),
+        finish: vi.fn(),
+        abort: vi.fn(),
+      },
+      ...overrides,
+    },
+    onSessionEvent: vi.fn((callback) => {
+      onEvent = callback;
+      return () => undefined;
+    }),
+  } as unknown as Window['herdr'];
+
+  const view = render(<ConversationChatPanel pane={pane} />);
+  return { read, prompt, respond, onEvent: () => onEvent, view };
+}
+
+describe('ConversationChatPanel turn projection', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows the active plan step beside the live working duration', async () => {
+    setup(
+      page([
+        {
+          id: 'started',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'started',
+          started_ms: Date.now() - 3_000,
+        },
+        {
+          id: 'plan',
+          sequence: 2,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'plan_update',
+          steps: [
+            { label: 'Inspect source', status: 'completed' },
+            { label: 'Write regression tests', status: 'active' },
+          ],
+        },
+      ]),
+    );
+
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(/Working for \d+s/);
+    expect(status).toHaveTextContent('Write regression tests');
+  });
+
+  it('folds settled work while keeping the rendered final answer prominent and visible', async () => {
+    setup(
+      page([
+        assistant(1, 'commentary', 'I am checking the implementation.'),
+        tool(2, 'bash', 'cargo test'),
+        assistant(3, 'final', '## Result\n\n**Everything passes.**'),
+        {
+          id: 'completed',
+          sequence: 4,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'completed',
+          duration_ms: 6_000,
+        },
+      ]),
+    );
+
+    const work = await screen.findByTestId('turn-work-summary');
+    expect(work).not.toHaveAttribute('open');
+    expect(within(work).getByText('Worked for 6s')).toBeInTheDocument();
+    const answer = screen.getByTestId('final-answer');
+    expect(answer).not.toBe(work);
+    expect(within(answer).getByRole('heading', { name: 'Result' })).toBeInTheDocument();
+    expect(within(answer).getByText('Everything passes.').tagName).toBe('STRONG');
+    expect(answer).not.toHaveTextContent('**');
+  });
+
+  it('keeps commentary between chronological work rows in an active turn', async () => {
+    setup(
+      page([
+        {
+          id: 'started',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'started',
+        },
+        tool(2, 'first tool'),
+        assistant(3, 'commentary', 'Between the tools'),
+        tool(4, 'second tool'),
+      ]),
+    );
+
+    await screen.findByText('first tool');
+    const first = screen.getByText('first tool');
+    const commentary = screen.getByText('Between the tools');
+    const second = screen.getByText('second tool');
+    expect(
+      first.compareDocumentPosition(commentary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      commentary.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('groups repetitive tools after four visible rows and keeps all rows accessible', async () => {
+    setup(
+      page([
+        {
+          id: 'started',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'started',
+        },
+        ...Array.from({ length: 6 }, (_, index) => tool(index + 2)),
+      ]),
+    );
+
+    const disclosure = await screen.findByText('+2 tool calls');
+    const grouped = disclosure.closest('details');
+    expect(grouped).not.toBeNull();
+    expect(within(grouped as HTMLElement).getByText('tool-6')).toBeInTheDocument();
+    expect(within(grouped as HTMLElement).getByText('tool-7')).toBeInTheDocument();
+  });
+
+  it('does not render a useless disclosure for a tool with no detail', async () => {
+    setup(page([tool(1, 'bash')]));
+
+    const label = await screen.findByText('bash');
+    expect(label.closest('details')).toBeNull();
+  });
+
+  it('keeps a running bash command collapsed and reveals it in a black command block', async () => {
+    setup(
+      page([
+        {
+          ...tool(1, 'bash'),
+          status: 'running',
+          label: 'bash',
+          preview: "printf 'hello\\n'",
+        },
+      ]),
+    );
+
+    const label = await screen.findByText('bash');
+    const disclosure = label.closest('details');
+    expect(disclosure).not.toBeNull();
+    expect(disclosure).not.toHaveAttribute('open');
+    const command = within(disclosure as HTMLElement).getByText("printf 'hello\\n'");
+    expect(command.tagName).toBe('CODE');
+    expect(command.parentElement).toHaveClass('bg-black', 'text-white');
+
+    fireEvent.click((disclosure as HTMLElement).querySelector('summary') as HTMLElement);
+    expect(disclosure).toHaveAttribute('open');
+  });
+
+  it('attaches a bounded changed-files summary below the final answer', async () => {
+    setup(
+      page([
+        assistant(1, 'final', 'Done.'),
+        ...Array.from(
+          { length: 10 },
+          (_, index): ConversationItem => ({
+            id: `file-${index}`,
+            sequence: index + 2,
+            provider: 'pi',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            type: 'file_change',
+            path: `src/file-${index}.ts`,
+            change: 'modified',
+          }),
+        ),
+        {
+          id: 'completed',
+          sequence: 12,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'completed',
+        },
+      ]),
+    );
+
+    const response = (await screen.findByTestId('final-answer')).closest(
+      '[data-testid="turn-response"]',
+    );
+    expect(response).not.toBeNull();
+    expect(within(response as HTMLElement).getByText('Changed files')).toBeInTheDocument();
+    expect(within(response as HTMLElement).getByText('src/file-0.ts')).toBeInTheDocument();
+    expect(within(response as HTMLElement).getByText('+2 more files')).toBeInTheDocument();
+  });
+});
+
+describe('ConversationChatPanel approval and delivery states', () => {
+  it('preserves provider slash-command discovery in the structured composer', async () => {
+    setup(page([]));
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: '/mod' } });
+
+    const commands = await screen.findByRole('listbox', { name: 'Slash commands' });
+    fireEvent.click(within(commands).getByRole('option', { name: /\/model/i }));
+
+    expect(input).toHaveValue('/model ');
+  });
+
+  it('submits only engine-advertised structured approval IDs', async () => {
+    const { respond } = setup(
+      page([
+        {
+          id: 'approval',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'approval',
+          request_id: 'approval-1',
+          prompt: 'Allow this command?',
+          decisions: [
+            { id: 'allow', label: 'Allow' },
+            { id: 'deny', label: 'Deny' },
+          ],
+          status: 'pending',
+          structured_response: true,
+        },
+      ]),
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow' }));
+    await waitFor(() =>
+      expect(respond).toHaveBeenCalledWith({
+        target: 'w1:p1',
+        reader_generation: 'generation-1',
+        session: { id: 'session-1' },
+        request_id: 'approval-1',
+        decision_id: 'allow',
+      }),
+    );
+  });
+
+  it('offers a real terminal fallback for a read-only approval', async () => {
+    const openTerminal = vi.fn();
+    const { view } = setup(
+      page([
+        {
+          id: 'approval',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'approval',
+          request_id: 'approval-1',
+          prompt: 'Confirm in terminal',
+          decisions: [],
+          status: 'pending',
+          structured_response: false,
+        },
+      ]),
+    );
+
+    view.rerender(<ConversationChatPanel pane={pane} onOpenTerminal={openTerminal} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Terminal to respond' }));
+    expect(openTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a failed optimistic message retryable without restoring the draft', async () => {
+    const prompt = vi
+      .fn<Window['herdr']['conversation']['prompt']>()
+      .mockRejectedValueOnce(new Error('delivery failed'))
+      .mockResolvedValueOnce({} as never);
+    setup(page([]), { prompt });
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'retry me' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(input).toHaveValue('');
+    fireEvent.click(retry);
+    await waitFor(() => expect(prompt).toHaveBeenCalledTimes(2));
+    expect(prompt).toHaveBeenLastCalledWith({ target: 'w1:p1', text: 'retry me' });
+  });
+
+  it('shows syncing after delivery until the durable user item arrives', async () => {
+    let resolveRead: ((value: ConversationReadResult) => void) | undefined;
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([]))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ConversationReadResult>((resolve) => {
+            resolveRead = resolve;
+          }),
+      );
+    setup(page([]), { read });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'sync me' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(await screen.findByText('Syncing')).toBeInTheDocument();
+    act(() =>
+      resolveRead?.(
+        page([
+          {
+            id: 'durable',
+            sequence: 1,
+            provider: 'pi',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            type: 'user_message',
+            text: 'sync me',
+          },
+        ]),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByText('Syncing')).not.toBeInTheDocument());
+  });
+});
+
+describe('ConversationChatPanel scroll following', () => {
+  it('does not follow new output after the user scrolls away from the bottom', async () => {
+    const setupResult = setup(page([assistant(1, 'final', 'old')], { nextCursor: 'cursor-1' }));
+    const viewport = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, value: 1_000 },
+    });
+    viewport.scrollTop = 100;
+    fireEvent.scroll(viewport);
+
+    setupResult.read.mockResolvedValueOnce(
+      page([assistant(2, 'commentary', 'new output')], { nextCursor: 'cursor-2' }),
+    );
+    act(() => {
+      setupResult.onEvent()?.({
+        event: 'agent.conversation_changed',
+        data: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          session: { id: 'session-1' },
+          reader_generation: 'generation-1',
+          revision: 2,
+          reset_required: false,
+        },
+      });
+    });
+
+    await screen.findByText('new output');
+    expect(viewport.scrollTop).toBe(100);
+  });
+
+  it('preserves the viewport anchor when older history is prepended', async () => {
+    let scrollHeight = 1_000;
+    const older = assistant(1, 'commentary', 'older item');
+    const setupResult = setup(
+      page([assistant(2, 'final', 'current item')], { previousCursor: 'older-1' }),
+    );
+    const viewport = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+    });
+    viewport.scrollTop = 100;
+    setupResult.read.mockImplementationOnce(async () => {
+      scrollHeight = 1_600;
+      return page([older], { previousCursor: 'older-0' });
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load older history' }));
+    await screen.findByText('older item');
+    await waitFor(() => expect(viewport.scrollTop).toBe(700));
+  });
+});
