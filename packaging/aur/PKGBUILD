@@ -23,7 +23,7 @@ source=(
   "LICENSE::https://raw.githubusercontent.com/marcelormendes/herdr-desktop/v${pkgver}/LICENSE"
 )
 sha256sums=(
-  '8305307a608bb81c979debbf1478d98ffa03a6705f1337b425cfda7f847a862c'
+  '4deea5322e9675a4fa2df5eb0bbd418bf372881bcde2684994a0f4534898fd30'
   '26bc1e96021e651612ed207632d0992415a79deabf77634ca590666b0b400f93'
   'c340e32ed2706b814e99e58e7cc87419a635fac31bfcf22567f8a6a0454729dd'
 )
