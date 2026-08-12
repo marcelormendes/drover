@@ -16,15 +16,19 @@ const FLATHUB_JSON = path.join(ROOT, 'packaging', 'flathub', 'flathub.json');
 const packageVersion = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 describe('AUR packaging contract', () => {
-  it('tracks the package version, uses the -bin name, and pins every source', () => {
+  it('uses the -bin name, trails no future package version, and pins every source', () => {
     const pkgbuild = readFileSync(PKGBUILD, 'utf8');
+    const aurVersion = pkgbuild.match(/^pkgver=(\d+\.\d+\.\d+)$/m)?.[1];
 
     // Prebuilt upstream artifact while source is available -> -bin suffix,
     // providing/conflicting with the source package name.
     expect(pkgbuild).toMatch(/^pkgname=herdr-desktop-bin$/m);
     expect(pkgbuild).toContain("provides=('herdr-desktop')");
     expect(pkgbuild).toContain("conflicts=('herdr-desktop')");
-    expect(pkgbuild).toContain(`pkgver=${packageVersion}`);
+    expect(aurVersion).toBeDefined();
+    expect(
+      aurVersion?.localeCompare(packageVersion, undefined, { numeric: true, sensitivity: 'base' }),
+    ).not.toBeGreaterThan(0);
     expect(pkgbuild).toContain("arch=('x86_64')");
     expect(pkgbuild).toContain("depends=('fuse2')");
     // The AppImage is a self-contained ELF; stripping destroys it.
@@ -41,11 +45,14 @@ describe('AUR packaging contract', () => {
   });
 
   it('keeps .SRCINFO in sync with the PKGBUILD', () => {
+    const pkgbuild = readFileSync(PKGBUILD, 'utf8');
     const srcinfo = readFileSync(SRCINFO, 'utf8');
     const lines = srcinfo.split('\n').map((line) => line.trim());
+    const aurVersion = pkgbuild.match(/^pkgver=(\d+\.\d+\.\d+)$/m)?.[1];
 
+    expect(aurVersion).toBeDefined();
     expect(lines).toContain('pkgbase = herdr-desktop-bin');
-    expect(lines).toContain(`pkgver = ${packageVersion}`);
+    expect(lines).toContain(`pkgver = ${aurVersion}`);
     expect(lines).toContain('pkgname = herdr-desktop-bin');
   });
 });
