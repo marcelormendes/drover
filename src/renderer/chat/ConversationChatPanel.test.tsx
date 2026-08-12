@@ -1,7 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConversationChatPanel } from '@/renderer/chat/ConversationChatPanel';
+import {
+  ConversationChatPanel,
+  pruneConversationChatState,
+} from '@/renderer/chat/ConversationChatPanel';
 import type { ConversationItem, ConversationReadResult } from '@/shared/conversation';
 import type { PaneInfo } from '@/shared/herdr';
 
@@ -46,6 +49,10 @@ function page(items: ConversationItem[], nextCursor: string): ConversationReadRe
     },
   };
 }
+
+beforeEach(() => {
+  pruneConversationChatState([]);
+});
 
 describe('ConversationChatPanel', () => {
   beforeEach(() => {
@@ -320,6 +327,52 @@ describe('ConversationChatPanel', () => {
       'Keep this draft',
     );
     expect(screen.getByText('keep-me.png')).toBeInTheDocument();
+  });
+  it('shows the cached timeline immediately while a remounted session refreshes', async () => {
+    let finishRefresh: ((result: ConversationReadResult) => void) | undefined;
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([item(1)], 'cursor-1'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ConversationReadResult>((resolve) => {
+            finishRefresh = resolve;
+          }),
+      );
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+    const sessionPane = pane('w-large:p1', {
+      conversation_session: { id: 'session-1' },
+    });
+
+    const first = render(<ConversationChatPanel pane={sessionPane} />);
+    expect(await screen.findByText('answer 1')).toBeInTheDocument();
+    first.unmount();
+
+    const second = render(<ConversationChatPanel pane={sessionPane} />);
+    expect(screen.getByText('answer 1')).toBeInTheDocument();
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+
+    act(() => finishRefresh?.(page([item(2)], 'cursor-2')));
+    expect(await screen.findByText('answer 2')).toBeInTheDocument();
+    second.unmount();
+
+    const replacement = render(
+      <ConversationChatPanel
+        pane={pane('w-large:p1', { conversation_session: { id: 'session-2' } })}
+      />,
+    );
+    expect(screen.queryByText('answer 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('answer 2')).not.toBeInTheDocument();
+    replacement.unmount();
   });
 });
 

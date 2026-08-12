@@ -22,6 +22,7 @@ import {
 import {
   applyConversationChanged,
   applyConversationRead,
+  type ConversationStore,
   createConversationStore,
   decodeConversationChangedEvent,
 } from '@/renderer/chat/conversation-model';
@@ -53,22 +54,31 @@ interface ComposerState {
   attachmentNotice?: string;
 }
 
-// Pane stages unmount during view, tab, and workspace navigation. Retain
-// unsent local-only composer state and fallback timing while the pane exists.
+// Pane stages unmount during view, tab, and workspace navigation. Retain the
+// rendered timeline and local composer state while the pane still exists.
+const conversationStoreByPane = new Map<string, ConversationStore>();
 const composerStateByPane = new Map<string, ComposerState>();
 const workingStartedMsByPane = new Map<string, number>();
 
 export function pruneConversationChatState(activePaneIds: readonly string[]): void {
   const active = new Set(activePaneIds);
   for (const [paneId, state] of composerStateByPane) {
-    if (active.has(paneId)) {
-      continue;
+    if (!active.has(paneId)) {
+      for (const attachment of state.attachments) {
+        URL.revokeObjectURL(attachment.url);
+      }
+      composerStateByPane.delete(paneId);
     }
-    for (const attachment of state.attachments) {
-      URL.revokeObjectURL(attachment.url);
+  }
+  for (const paneId of conversationStoreByPane.keys()) {
+    if (!active.has(paneId)) {
+      conversationStoreByPane.delete(paneId);
     }
-    composerStateByPane.delete(paneId);
-    workingStartedMsByPane.delete(paneId);
+  }
+  for (const paneId of workingStartedMsByPane.keys()) {
+    if (!active.has(paneId)) {
+      workingStartedMsByPane.delete(paneId);
+    }
   }
 }
 
@@ -208,8 +218,11 @@ export function ConversationChatPanel(props: ConversationChatPanelProps) {
 }
 
 function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChatPanelProps) {
+  const cachedStore = conversationStoreByPane.get(pane.pane_id);
+  const savedStore =
+    cachedStore?.session?.id === pane.conversation_session?.id ? cachedStore : undefined;
   const savedComposer = composerStateByPane.get(pane.pane_id);
-  const [store, setStore] = useState(() => createConversationStore(pane.pane_id));
+  const [store, setStore] = useState(() => savedStore ?? createConversationStore(pane.pane_id));
   const [draft, setDraft] = useState(savedComposer?.draft ?? '');
   const [attachments, setAttachments] = useState<readonly ChatAttachment[]>(
     savedComposer?.attachments ?? [],
@@ -219,7 +232,7 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
   );
   const [slashMenuSelectedIndex, setSlashMenuSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(savedStore === undefined);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const capability = pane.conversation_capability;
@@ -249,6 +262,7 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
   useEffect(
     () => () => {
       composerStateByPane.set(pane.pane_id, composerStateRef.current);
+      conversationStoreByPane.set(pane.pane_id, storeRef.current);
     },
     [pane.pane_id],
   );
@@ -422,9 +436,8 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
     const epoch = ++requestEpochRef.current;
     readQueueRef.current = Promise.resolve();
     let cancelled = false;
-    setLoading(conversationReadable);
+    setLoading(conversationReadable && storeRef.current.items.length === 0);
     setError(undefined);
-    setStore(createConversationStore(pane.pane_id));
     if (conversationReadable) {
       void read('newest', undefined, epoch)
         .catch((reason: unknown) => {
@@ -633,12 +646,27 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       olderAnchorRef.current = undefined;
       return;
     }
-    if (!followLatestRef.current || items.length + store.pending.length === 0) {
+    if (!viewport || !followLatestRef.current || items.length + store.pending.length === 0) {
       return;
     }
-    if (viewport) {
-      viewport.scrollTop = viewport.scrollHeight;
+
+    const scrollToLatest = () => {
+      if (scrollViewportRef.current === viewport && followLatestRef.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    };
+    scrollToLatest();
+    const frame = window.requestAnimationFrame(scrollToLatest);
+    const content = viewport.firstElementChild;
+    let observer: ResizeObserver | undefined;
+    if (content && typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(scrollToLatest);
+      observer.observe(content);
     }
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [items, store.pending]);
 
   const loadOlder = useCallback(async () => {
