@@ -11,6 +11,7 @@ import {
   defaultEngineInstallPath,
   hasPinnedEngineRelease,
   installPinnedEngineBinary,
+  PINNED_ENGINE,
   pinnedEngineAsset,
 } from '@/main/herdr/fork-engine';
 import type { HerdrCommand } from '@/shared/desktop-api';
@@ -919,7 +920,7 @@ describe('HerdrEngine.update', () => {
   };
 
   const fakeAsset = {
-    url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.1/herdr-linux-x86_64',
+    url: `https://github.com/marcelormendes/herdr/releases/download/v${PINNED_ENGINE.version}/herdr-linux-x86_64`,
     sha256: 'f'.repeat(64),
   };
 
@@ -961,8 +962,8 @@ describe('HerdrEngine.update', () => {
     vi.mocked(installPinnedEngineBinary).mockResolvedValue(undefined);
     const updatedStatus = {
       ...runningStatus,
-      client: { ...runningStatus.client, version: '0.8.1' },
-      server: { ...runningStatus.server, version: '0.8.1' },
+      client: { ...runningStatus.client, version: PINNED_ENGINE.version },
+      server: { ...runningStatus.server, version: PINNED_ENGINE.version },
     };
     let statusCalls = 0;
     const runner = createRunner(async (args) => {
@@ -998,9 +999,8 @@ describe('HerdrEngine.update', () => {
     expect(runner.run).toHaveBeenCalledWith(['integration', 'install', 'pi']);
     expect(result).toMatchObject({
       updated: true,
-      version: '0.8.1',
-      message:
-        'Herdr engine updated to v0.8.1 with structured Chat. Restart your agent sessions to enable it.',
+      version: PINNED_ENGINE.version,
+      message: `Herdr engine updated to v${PINNED_ENGINE.version} with structured Chat. Restart your agent sessions to enable it.`,
     });
     expect(result.bootstrap.state).toBe('connected');
   });
@@ -1022,10 +1022,8 @@ describe('HerdrEngine.update', () => {
     expect(installPinnedEngineBinary).toHaveBeenCalled();
     expect(result).toMatchObject({
       updated: false,
-      message:
-        'The pinned engine release v0.8.1 is not published yet; update Herdr Desktop to install it.',
-      error:
-        'The pinned engine release v0.8.1 is not published yet; update Herdr Desktop to install it.',
+      message: `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Herdr Desktop to install it.`,
+      error: `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Herdr Desktop to install it.`,
     });
   });
 

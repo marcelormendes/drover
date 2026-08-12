@@ -55,6 +55,7 @@ vi.mock('@/renderer/chat/ConversationChatPanel', async () => {
         </div>
       );
     },
+    pruneConversationChatState: vi.fn(),
   };
 });
 
@@ -156,6 +157,7 @@ const snapshot: SessionSnapshot = {
       cwd: '/code/herdr-desktop',
       label: 'Desktop UI',
       display_agent: 'Codex',
+      agent_has_arguments: false,
       agent_status: 'working',
       conversation_capability: {
         availability: 'supported',
@@ -898,7 +900,88 @@ describe('App', () => {
     });
   });
 
-  it('opens Chat by default after launching a supported agent in the focused pane', async () => {
+  it.each([
+    {
+      caseName: 'without native arguments',
+      argumentText: undefined,
+      args: [] as string[],
+      expectedView: 'chat',
+    },
+    {
+      caseName: 'with native arguments',
+      argumentText: '--full-auto --model gpt-5',
+      args: ['--full-auto', '--model', 'gpt-5'],
+      expectedView: 'terminal',
+    },
+  ])(
+    'opens $expectedView after launching a supported agent $caseName',
+    async ({ argumentText, args, expectedView }) => {
+      const user = userEvent.setup();
+      const terminalSnapshot: SessionSnapshot = {
+        ...snapshot,
+        panes: snapshot.panes.map((pane) =>
+          pane.pane_id === 'w1:p1'
+            ? {
+                ...pane,
+                display_agent: undefined,
+                agent: undefined,
+                conversation_capability: undefined,
+              }
+            : pane,
+        ),
+        agents: [],
+      };
+      const launchedSnapshot: SessionSnapshot = {
+        ...snapshot,
+        panes: snapshot.panes.map((pane) =>
+          pane.pane_id === 'w1:p1'
+            ? {
+                ...pane,
+                agent: 'codex',
+                display_agent: 'Codex',
+                agent_has_arguments: args.length > 0,
+                conversation_session: undefined,
+                conversation_capability: {
+                  availability: 'unavailable',
+                  reason: 'transcript_missing',
+                },
+              }
+            : pane,
+        ),
+      };
+      const beforeLaunch: EngineBootstrap = { ...connected, snapshot: terminalSnapshot };
+      const afterLaunch: EngineBootstrap = { ...connected, snapshot: launchedSnapshot };
+      vi.mocked(window.herdr.bootstrap).mockResolvedValue(beforeLaunch);
+      window.herdr.command = vi.fn(async (command) =>
+        command.type === 'start-agent' ? afterLaunch : beforeLaunch,
+      );
+      render(<App />);
+
+      expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Launch agent' }));
+      await user.type(screen.getByLabelText('Agent name'), 'reviewer');
+      if (argumentText) {
+        await user.type(screen.getByLabelText('Agent arguments'), argumentText);
+      }
+      await user.clear(screen.getByLabelText('Startup timeout in seconds'));
+      await user.type(screen.getByLabelText('Startup timeout in seconds'), '45');
+      await user.click(screen.getByRole('button', { name: 'Start agent' }));
+
+      expect(window.herdr.command).toHaveBeenCalledWith({
+        type: 'start-agent',
+        paneId: 'w1:p1',
+        name: 'reviewer',
+        kind: 'codex',
+        args,
+        timeoutMs: 45_000,
+      });
+      expect(await screen.findByTestId(`${expectedView}-w1:p1`)).toBeInTheDocument();
+      const hiddenView = expectedView === 'chat' ? 'terminal' : 'chat';
+      expect(screen.queryByTestId(`${hiddenView}-w1:p1`)).not.toBeInTheDocument();
+    },
+  );
+
+  it('keeps Terminal selected when an agent launch fails before detection', async () => {
     const user = userEvent.setup();
     const terminalSnapshot: SessionSnapshot = {
       ...snapshot,
@@ -908,54 +991,129 @@ describe('App', () => {
               ...pane,
               display_agent: undefined,
               agent: undefined,
+              agent_has_arguments: undefined,
               conversation_capability: undefined,
             }
           : pane,
       ),
       agents: [],
     };
-    const launchedSnapshot: SessionSnapshot = {
-      ...snapshot,
-      panes: snapshot.panes.map((pane) =>
-        pane.pane_id === 'w1:p1'
-          ? {
-              ...pane,
-              agent: 'codex',
-              display_agent: 'Codex',
-              conversation_session: undefined,
-              conversation_capability: {
-                availability: 'unavailable',
-                reason: 'transcript_missing',
-              },
-            }
-          : pane,
-      ),
-    };
-    const beforeLaunch: EngineBootstrap = { ...connected, snapshot: terminalSnapshot };
-    const afterLaunch: EngineBootstrap = { ...connected, snapshot: launchedSnapshot };
-    vi.mocked(window.herdr.bootstrap).mockResolvedValue(beforeLaunch);
-    window.herdr.command = vi.fn(async (command) =>
-      command.type === 'start-agent' ? afterLaunch : beforeLaunch,
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+      ...connected,
+      snapshot: terminalSnapshot,
+    });
+    window.herdr.command = vi.fn(
+      async (): Promise<EngineBootstrap> => ({
+        state: 'error',
+        message: 'Agent launch failed.',
+        details: 'executable not found',
+      }),
     );
     render(<App />);
 
     expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Launch agent' }));
     await user.type(screen.getByLabelText('Agent name'), 'reviewer');
-    await user.type(screen.getByLabelText('Agent arguments'), '--full-auto --model gpt-5');
-    await user.clear(screen.getByLabelText('Startup timeout in seconds'));
-    await user.type(screen.getByLabelText('Startup timeout in seconds'), '45');
     await user.click(screen.getByRole('button', { name: 'Start agent' }));
 
-    expect(window.herdr.command).toHaveBeenCalledWith({
-      type: 'start-agent',
-      paneId: 'w1:p1',
-      name: 'reviewer',
-      kind: 'codex',
-      args: ['--full-auto', '--model', 'gpt-5'],
-      timeoutMs: 45_000,
+    expect(await screen.findByText('executable not found')).toBeInTheDocument();
+    expect(screen.getByTestId('terminal-w1:p1')).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-w1:p1')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { agentHasArguments: false, expectedView: 'chat' },
+    { agentHasArguments: true, expectedView: 'terminal' },
+  ])(
+    'opens $expectedView after engine-confirmed agent process metadata',
+    async ({ agentHasArguments, expectedView }) => {
+      let sessionEvent:
+        | ((event: { event: string; data: Record<string, unknown> }) => void)
+        | undefined;
+      const terminalSnapshot: SessionSnapshot = {
+        ...snapshot,
+        panes: snapshot.panes.map((pane) =>
+          pane.pane_id === 'w1:p1'
+            ? {
+                ...pane,
+                display_agent: undefined,
+                agent: undefined,
+                agent_has_arguments: undefined,
+                conversation_capability: undefined,
+              }
+            : pane,
+        ),
+        agents: [],
+      };
+      const detectedSnapshot: SessionSnapshot = {
+        ...snapshot,
+        panes: snapshot.panes.map((pane) =>
+          pane.pane_id === 'w1:p1'
+            ? {
+                ...pane,
+                agent: 'claude',
+                display_agent: 'Claude Code',
+                agent_has_arguments: agentHasArguments,
+                conversation_session: undefined,
+                conversation_capability: {
+                  availability: 'unavailable',
+                  reason: 'transcript_missing',
+                },
+              }
+            : pane,
+        ),
+      };
+      vi.mocked(window.herdr.bootstrap)
+        .mockResolvedValueOnce({ ...connected, snapshot: terminalSnapshot })
+        .mockResolvedValue({ ...connected, snapshot: detectedSnapshot });
+      window.herdr.onSessionEvent = vi.fn((listener) => {
+        sessionEvent = listener;
+        return () => undefined;
+      });
+      render(<App />);
+
+      expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
+      act(() => sessionEvent?.({ event: 'pane.agent_status_changed', data: {} }));
+
+      await waitFor(() => expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2), {
+        timeout: 2_000,
+      });
+      expect(screen.getByTestId(`${expectedView}-w1:p1`)).toBeInTheDocument();
+      const hiddenView = expectedView === 'chat' ? 'terminal' : 'chat';
+      expect(screen.queryByTestId(`${hiddenView}-w1:p1`)).not.toBeInTheDocument();
+    },
+  );
+
+  it('preserves an explicit Chat selection across agent metadata refreshes', async () => {
+    const user = userEvent.setup();
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    const argumentSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1' ? { ...pane, agent_has_arguments: true } : pane,
+      ),
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+      ...connected,
+      snapshot: argumentSnapshot,
     });
-    expect(await screen.findByTestId('chat-w1:p1')).toBeInTheDocument();
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    render(<App />);
+
+    expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Chat view' }));
+    expect(screen.getByTestId('chat-w1:p1')).toBeInTheDocument();
+
+    act(() => sessionEvent?.({ event: 'pane.agent_status_changed', data: {} }));
+    await waitFor(() => expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2), {
+      timeout: 2_000,
+    });
+    expect(screen.getByTestId('chat-w1:p1')).toBeInTheDocument();
     expect(screen.queryByTestId('terminal-w1:p1')).not.toBeInTheDocument();
   });
 
