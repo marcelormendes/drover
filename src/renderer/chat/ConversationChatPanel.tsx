@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Command, X } from 'lucide-react';
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -22,7 +22,6 @@ import {
 import {
   applyConversationChanged,
   applyConversationRead,
-  type ConversationStore,
   createConversationStore,
   decodeConversationChangedEvent,
 } from '@/renderer/chat/conversation-model';
@@ -39,10 +38,11 @@ import {
   type SlashCommand,
   slashCommandsForAgent,
 } from '@/renderer/chat/slash-commands';
-import type {
-  ConversationItem,
-  ConversationReadResult,
-  ConversationRespondResult,
+import {
+  type ConversationItem,
+  type ConversationReadResult,
+  type ConversationRespondResult,
+  isPreSessionConversationCapability,
 } from '@/shared/conversation';
 import type { HerdrEventEnvelope } from '@/shared/events';
 import type { PaneInfo } from '@/shared/herdr';
@@ -51,10 +51,14 @@ interface ConversationChatPanelProps {
   pane: PaneInfo;
   onOpenTerminal?: () => void;
 }
-
-function itemText(store: ConversationStore): string {
-  const lastTurn = [...store.items].reverse().find((item) => item.turn_id)?.turn_id;
-  return lastTurn ?? '';
+function itemText(items: readonly ConversationItem[]): string {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const turnId = items[index]?.turn_id;
+    if (turnId) {
+      return turnId;
+    }
+  }
+  return '';
 }
 
 function eventForPane(event: HerdrEventEnvelope, paneId: string) {
@@ -63,6 +67,115 @@ function eventForPane(event: HerdrEventEnvelope, paneId: string) {
   }
   const changed = decodeConversationChangedEvent(event.data);
   return changed?.pane_id === paneId ? changed : null;
+}
+
+const PROVIDER_NAME_BY_AGENT: Record<string, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  pi: 'Pi',
+  omp: 'Oh My Pi',
+};
+
+function isClaudeAdministrativeMessage(item: ConversationItem): boolean {
+  if (item.provider !== 'claude' || item.type !== 'user_message') {
+    return false;
+  }
+  const text = item.text.trimStart();
+  return (
+    text.startsWith('<command-name>') ||
+    text.startsWith('<local-command-stdout>') ||
+    text.startsWith('<local-command-stderr>')
+  );
+}
+
+function stripAnsiSgr(value: string): string {
+  let plainText = '';
+  let index = 0;
+  while (index < value.length) {
+    if (value.charCodeAt(index) === 27 && value[index + 1] === '[') {
+      let end = index + 2;
+      while (
+        end < value.length &&
+        ((value.charCodeAt(end) >= 48 && value.charCodeAt(end) <= 57) || value[end] === ';')
+      ) {
+        end += 1;
+      }
+      if (value[end] === 'm') {
+        index = end + 1;
+        continue;
+      }
+    }
+    plainText += value[index];
+    index += 1;
+  }
+  return plainText;
+}
+
+function selectedModel(pane: PaneInfo, items: readonly ConversationItem[]): string {
+  const reported =
+    pane.tokens?.model ||
+    pane.tokens?.model_name ||
+    pane.state_labels?.model ||
+    pane.state_labels?.model_name;
+  if (reported) {
+    return reported;
+  }
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (
+      item.provider !== 'claude' ||
+      item.type !== 'user_message' ||
+      !item.text.trimStart().startsWith('<local-command-stdout>')
+    ) {
+      continue;
+    }
+    const plainText = stripAnsiSgr(item.text);
+    const selected = plainText.match(/Set model to\s+(.+?)\s+and saved/i)?.[1]?.trim();
+    if (selected) {
+      return selected;
+    }
+  }
+  return 'Provider default';
+}
+
+function ProviderWelcome({ pane, items }: { pane: PaneInfo; items: readonly ConversationItem[] }) {
+  const provider =
+    pane.display_agent || PROVIDER_NAME_BY_AGENT[pane.agent?.toLowerCase() || ''] || pane.agent;
+  const cwd = pane.foreground_cwd || pane.cwd || 'Not reported';
+  return (
+    <section className="grid min-h-full place-items-center px-4 py-8" data-slot="provider-welcome">
+      <div className="w-full max-w-lg rounded-base border-2 border-border bg-secondary-background p-6 shadow-shadow">
+        <div
+          role="img"
+          aria-label="Herdr Desktop"
+          className="mx-auto mb-4 grid size-16 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-shadow"
+        >
+          <Command aria-hidden="true" className="size-8 stroke-[3]" />
+        </div>
+        <div className="text-center">
+          <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            Herdr Desktop
+          </p>
+          <h2 className="mt-1 text-xl font-heading">{provider || 'Agent'}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Start the conversation here. Terminal remains available at any time.
+          </p>
+        </div>
+        <dl className="mt-6 grid gap-3 text-sm">
+          <div className="grid gap-1 rounded-base border-2 border-border bg-background p-3">
+            <dt className="font-bold">Model</dt>
+            <dd className="break-words font-mono text-xs text-muted-foreground">
+              {selectedModel(pane, items)}
+            </dd>
+          </div>
+          <div className="grid gap-1 rounded-base border-2 border-border bg-background p-3">
+            <dt className="font-bold">Working directory</dt>
+            <dd className="break-all font-mono text-xs text-muted-foreground">{cwd}</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+  );
 }
 
 export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChatPanelProps) {
@@ -75,6 +188,11 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
+  const capability = pane.conversation_capability;
+  const preSessionChat = isPreSessionConversationCapability(capability);
+  const conversationReadable = capability?.availability === 'supported';
+  const paneWorking = pane.agent_status === 'working';
+  const [statusStartedMs, setStatusStartedMs] = useState<number>();
   const paneRef = useRef(pane);
   paneRef.current = pane;
   const storeRef = useRef(store);
@@ -85,6 +203,15 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
   const olderAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(undefined);
   const slashMenuId = useId();
   storeRef.current = store;
+
+  useEffect(() => {
+    setStatusStartedMs((current) => {
+      if (!paneWorking) {
+        return undefined;
+      }
+      return current ?? Date.now();
+    });
+  }, [paneWorking]);
 
   const addAttachments = useCallback((files: File[]) => {
     if (files.length === 0) {
@@ -244,20 +371,22 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
     const epoch = ++requestEpochRef.current;
     readQueueRef.current = Promise.resolve();
     let cancelled = false;
-    setLoading(true);
+    setLoading(conversationReadable);
     setError(undefined);
     setStore(createConversationStore(pane.pane_id));
-    void read('newest', undefined, epoch)
-      .catch((reason: unknown) => {
-        if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : 'Could not load conversation.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
+    if (conversationReadable) {
+      void read('newest', undefined, epoch)
+        .catch((reason: unknown) => {
+          if (!cancelled) {
+            setError(reason instanceof Error ? reason.message : 'Could not load conversation.');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        });
+    }
     void window.herdr.conversation.subscribe(pane.pane_id).catch(() => undefined);
     const unsubscribe = window.herdr.onSessionEvent((event) => {
       const changed = eventForPane(event, pane.pane_id);
@@ -273,8 +402,8 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
     // keeps streaming while the agent is working even if an event is dropped.
     const livePoll = window.setInterval(() => {
       if (
-        paneRef.current.agent_status === 'working' ||
-        paneRef.current.agent_status === 'blocked'
+        paneRef.current.conversation_capability?.availability === 'supported' &&
+        (paneRef.current.agent_status === 'working' || paneRef.current.agent_status === 'blocked')
       ) {
         void read('newer').catch(() => undefined);
       }
@@ -286,7 +415,7 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
       unsubscribe();
       void window.herdr.conversation.unsubscribe(pane.pane_id).catch(() => undefined);
     };
-  }, [pane.pane_id, read]);
+  }, [conversationReadable, pane.pane_id, read]);
 
   const send = async (retry?: { id: string; text: string }) => {
     const text = retry?.text ?? draft.trim();
@@ -333,7 +462,9 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
         URL.revokeObjectURL(attachment.url);
       }
       setAttachments([]);
-      await read('newer', store.newerCursor);
+      if (paneRef.current.conversation_capability?.availability === 'supported') {
+        await read('newer', store.newerCursor);
+      }
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'Could not send prompt.');
       if (text) {
@@ -349,26 +480,61 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
     }
   };
 
-  const items = useMemo(() => store.items, [store.items]);
+  const items = useMemo(
+    () => store.items.filter((item) => !isClaudeAdministrativeMessage(item)),
+    [store.items],
+  );
 
-  // The currently open turn, pinned above the composer so the working state
-  // stays visible no matter where the conversation is scrolled. The engine
-  // guarantees at most one started turn at a time.
+  // Native turn events win when available. Claude can report pane Working
+  // before its transcript exposes a started turn, so pane state fills only
+  // that gap and never overrides a settled latest turn without new activity.
   const activeWork = useMemo(() => {
-    let startedMs: number | undefined;
-    let activeTurnId: string | undefined;
-    for (const item of store.items) {
-      if (item.type === 'turn_state' && item.state === 'started') {
-        startedMs = item.started_ms;
-        activeTurnId = item.turn_id;
+    let latestState: Extract<ConversationItem, { type: 'turn_state' }> | undefined;
+    let latestStateIndex = -1;
+    for (let index = store.items.length - 1; index >= 0; index -= 1) {
+      const item = store.items[index];
+      if (item.type === 'turn_state') {
+        latestState = item;
+        latestStateIndex = index;
+        break;
       }
     }
-    if (activeTurnId === undefined) {
+    if (latestState?.state === 'started') {
+      const turnItems = store.items.filter((item) => item.turn_id === latestState.turn_id);
+      return {
+        startedMs: latestState.started_ms,
+        activeStep: latestActivePlanStep(turnItems),
+      };
+    }
+    if (!paneWorking) {
       return null;
     }
-    const turnItems = store.items.filter((item) => item.turn_id === activeTurnId);
-    return { startedMs, activeStep: latestActivePlanStep(turnItems) };
-  }, [store.items]);
+
+    const pendingTurn = store.pending.some((pending) => pending.status !== 'failed');
+    let activeTurnId: string | undefined;
+    for (let index = store.items.length - 1; index > latestStateIndex; index -= 1) {
+      const item = store.items[index];
+      if (
+        item.type === 'user_message' &&
+        !isClaudeAdministrativeMessage(item) &&
+        !item.text.trimStart().startsWith('<task-notification>') &&
+        item.turn_id !== latestState?.turn_id
+      ) {
+        activeTurnId = item.turn_id;
+        break;
+      }
+    }
+    if (latestState && !pendingTurn && !activeTurnId) {
+      return null;
+    }
+    const turnItems = activeTurnId
+      ? store.items.filter((item) => item.turn_id === activeTurnId)
+      : store.items;
+    return {
+      startedMs: statusStartedMs,
+      activeStep: latestActivePlanStep(turnItems),
+    };
+  }, [paneWorking, statusStartedMs, store.items, store.pending]);
 
   const respond = useCallback(
     async (
@@ -453,8 +619,7 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
     setSlashMenuDismissed(true);
   }, []);
 
-  const capability = pane.conversation_capability;
-  if (capability?.availability !== 'supported') {
+  if (capability?.availability !== 'supported' && !preSessionChat) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-muted-foreground">
@@ -472,7 +637,14 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-3" data-slot="conversation-chat">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{store.provider ?? pane.agent ?? 'Agent'} Chat</span>
+        <span>
+          {pane.display_agent ||
+            PROVIDER_NAME_BY_AGENT[pane.agent?.toLowerCase() || ''] ||
+            store.provider ||
+            pane.agent ||
+            'Agent'}{' '}
+          Chat
+        </span>
         <span>{items.length} items</span>
       </div>
       {store.resetRequired ? (
@@ -550,10 +722,8 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
               ) : null}
             </div>
           ))}
-          {!loading && items.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              No structured conversation items yet.
-            </div>
+          {!loading && items.length === 0 && store.pending.length === 0 ? (
+            <ProviderWelcome pane={pane} items={store.items} />
           ) : null}
         </div>
       </ScrollArea>
@@ -709,7 +879,7 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
           </Button>
         </div>
       </form>
-      <span className="sr-only">Current turn: {itemText(store)}</span>
+      <span className="sr-only">Current turn: {itemText(items)}</span>
     </div>
   );
 }

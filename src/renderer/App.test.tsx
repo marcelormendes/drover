@@ -398,20 +398,47 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Chat view' })).toBeDisabled();
   });
 
-  it.each([
-    [
-      { availability: 'unavailable' as const, reason: 'no_session' as const },
-      'Start or resume this agent to use Chat.',
-    ],
-    [
-      { availability: 'unsupported' as const, reason: 'adapter_missing' as const },
-      'Chat is not currently supported for this provider. Use Terminal instead.',
-    ],
-  ])('explains disabled Chat capabilities accessibly', async (capability, explanation) => {
+  it.each(['no_session', 'transcript_missing'] as const)(
+    'opens Chat immediately while a supported agent reports %s',
+    async (reason) => {
+      const startingSnapshot: SessionSnapshot = {
+        ...snapshot,
+        panes: snapshot.panes.map((pane) =>
+          pane.pane_id === 'w1:p1'
+            ? {
+                ...pane,
+                conversation_session: undefined,
+                conversation_capability: { availability: 'unavailable', reason },
+              }
+            : pane,
+        ),
+      };
+      vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+        ...connected,
+        snapshot: startingSnapshot,
+      });
+      render(<App />);
+
+      expect(await screen.findByTestId('chat-w1:p1')).toBeInTheDocument();
+      expect(screen.queryByTestId('terminal-w1:p1')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Chat view' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Terminal view' })).toBeEnabled();
+    },
+  );
+
+  it('explains an unsupported Chat provider accessibly', async () => {
     const disabledSnapshot: SessionSnapshot = {
       ...snapshot,
       panes: snapshot.panes.map((pane) =>
-        pane.pane_id === 'w1:p1' ? { ...pane, conversation_capability: capability } : pane,
+        pane.pane_id === 'w1:p1'
+          ? {
+              ...pane,
+              conversation_capability: {
+                availability: 'unsupported',
+                reason: 'adapter_missing',
+              },
+            }
+          : pane,
       ),
     };
     vi.mocked(window.herdr.bootstrap).mockResolvedValue({
@@ -422,7 +449,9 @@ describe('App', () => {
 
     const chat = await screen.findByRole('button', { name: 'Chat view' });
     fireEvent.focus(chat.parentElement as HTMLElement);
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(explanation);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Chat is not currently supported for this provider. Use Terminal instead.',
+    );
   });
 
   it('rejects the structured chat prompt promise when delivery fails', async () => {
@@ -869,11 +898,49 @@ describe('App', () => {
     });
   });
 
-  it('starts a supported agent in the focused Herdr pane', async () => {
+  it('opens Chat by default after launching a supported agent in the focused pane', async () => {
     const user = userEvent.setup();
+    const terminalSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1'
+          ? {
+              ...pane,
+              display_agent: undefined,
+              agent: undefined,
+              conversation_capability: undefined,
+            }
+          : pane,
+      ),
+      agents: [],
+    };
+    const launchedSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1'
+          ? {
+              ...pane,
+              agent: 'codex',
+              display_agent: 'Codex',
+              conversation_session: undefined,
+              conversation_capability: {
+                availability: 'unavailable',
+                reason: 'transcript_missing',
+              },
+            }
+          : pane,
+      ),
+    };
+    const beforeLaunch: EngineBootstrap = { ...connected, snapshot: terminalSnapshot };
+    const afterLaunch: EngineBootstrap = { ...connected, snapshot: launchedSnapshot };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue(beforeLaunch);
+    window.herdr.command = vi.fn(async (command) =>
+      command.type === 'start-agent' ? afterLaunch : beforeLaunch,
+    );
     render(<App />);
 
-    await user.click(await screen.findByRole('button', { name: 'Launch agent' }));
+    expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Launch agent' }));
     await user.type(screen.getByLabelText('Agent name'), 'reviewer');
     await user.type(screen.getByLabelText('Agent arguments'), '--full-auto --model gpt-5');
     await user.clear(screen.getByLabelText('Startup timeout in seconds'));
@@ -888,6 +955,8 @@ describe('App', () => {
       args: ['--full-auto', '--model', 'gpt-5'],
       timeoutMs: 45_000,
     });
+    expect(await screen.findByTestId('chat-w1:p1')).toBeInTheDocument();
+    expect(screen.queryByTestId('terminal-w1:p1')).not.toBeInTheDocument();
   });
 
   it('opens complete pane controls and routes graphical actions to Herdr', async () => {

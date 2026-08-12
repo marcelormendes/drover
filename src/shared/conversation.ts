@@ -14,6 +14,19 @@ export interface ConversationCapability {
   message?: string;
 }
 
+const PRE_SESSION_REASONS: Partial<Record<ConversationReasonCode, true>> = {
+  no_session: true,
+  transcript_missing: true,
+};
+
+export function isPreSessionConversationCapability(
+  capability: ConversationCapability | undefined,
+): boolean {
+  return (
+    capability?.availability === 'unavailable' && PRE_SESSION_REASONS[capability.reason] === true
+  );
+}
+
 export interface ConversationSessionIdentity {
   id: string;
 }
