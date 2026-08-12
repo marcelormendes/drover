@@ -1,7 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConversationChatPanel } from '@/renderer/chat/ConversationChatPanel';
+import {
+  ConversationChatPanel,
+  pruneConversationChatState,
+} from '@/renderer/chat/ConversationChatPanel';
 import type { ConversationItem, ConversationReadResult } from '@/shared/conversation';
 import type { PaneInfo } from '@/shared/herdr';
 
@@ -106,6 +109,14 @@ function setup(
   const view = render(<ConversationChatPanel pane={pane} />);
   return { read, prompt, respond, onEvent: () => onEvent, view };
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+beforeEach(() => {
+  pruneConversationChatState([]);
+});
 
 describe('ConversationChatPanel turn projection', () => {
   beforeEach(() => {
@@ -453,6 +464,49 @@ describe('ConversationChatPanel approval and delivery states', () => {
 });
 
 describe('ConversationChatPanel scroll following', () => {
+  it('finishes scrolling to the bottom when Chat mounts after navigation', async () => {
+    let scrollHeight = 400;
+    const animationFrames: FrameRequestCallback[] = [];
+    let resize: ResizeObserverCallback | undefined;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resize = callback;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+
+    setup(page([assistant(1, 'final', 'latest response')]));
+    const viewport = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    await screen.findByText('latest response');
+    expect(viewport.scrollTop).toBe(400);
+
+    scrollHeight = 1_000;
+    act(() => {
+      for (const callback of animationFrames.splice(0)) {
+        callback(performance.now());
+      }
+    });
+
+    expect(viewport.scrollTop).toBe(1_000);
+    scrollHeight = 1_600;
+    act(() => resize?.([], {} as ResizeObserver));
+    expect(viewport.scrollTop).toBe(1_600);
+  });
+
   it('does not follow new output after the user scrolls away from the bottom', async () => {
     const setupResult = setup(page([assistant(1, 'final', 'old')], { nextCursor: 'cursor-1' }));
     const viewport = await waitFor(() => {
