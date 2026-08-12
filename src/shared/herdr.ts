@@ -71,6 +71,7 @@ export interface PaneInfo {
   foreground_cwd?: string;
   label?: string;
   agent?: string;
+  agent_has_arguments?: boolean;
   title?: string;
   terminal_title?: string;
   terminal_title_stripped?: string;

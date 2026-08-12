@@ -21,6 +21,7 @@ const searchAddon = vi.hoisted(() => ({
 const terminalControl = vi.hoisted(() => ({
   cols: 80,
   customKeyHandler: undefined as ((event: KeyboardEvent) => boolean) | undefined,
+  dataListener: undefined as ((value: string) => void) | undefined,
   options: undefined as
     | {
         theme?: Record<string, string>;
@@ -86,7 +87,8 @@ vi.mock('@xterm/xterm', () => ({
       return { dispose() {} };
     }
     scrollToBottom = terminalControl.scrollToBottom;
-    onData() {
+    onData(listener: (value: string) => void) {
+      terminalControl.dataListener = listener;
       return { dispose() {} };
     }
     onResize() {
@@ -126,6 +128,7 @@ describe('TerminalPanel', () => {
     vi.clearAllMocks();
     terminalControl.customKeyHandler = undefined;
     terminalControl.cols = 80;
+    terminalControl.dataListener = undefined;
     terminalControl.options = undefined;
     terminalControl.selection = '';
     terminalControl.selectionListener = undefined;
@@ -163,6 +166,17 @@ describe('TerminalPanel', () => {
       cursor: '#4d9eff',
       cursorAccent: '#0f0f10',
       selectionBackground: '#4d9eff66',
+    });
+  });
+
+  it('forwards terminal input without interpreting shell commands', () => {
+    render(<TerminalPanel pane={pane} />);
+
+    act(() => terminalControl.dataListener?.('claude --model opus\r'));
+
+    expect(window.herdr.terminal.input).toHaveBeenCalledWith({
+      paneId: pane.pane_id,
+      text: 'claude --model opus\r',
     });
   });
 

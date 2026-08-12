@@ -257,7 +257,7 @@ describe('ConversationChatPanel', () => {
       onSessionEvent: vi.fn(() => () => undefined),
     } as unknown as Window['herdr'];
 
-    render(<ConversationChatPanel pane={pane('w1:p1')} />);
+    render(<ConversationChatPanel pane={pane('w1:p-broken')} />);
     await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
 
     const image = new File(['image-bytes'], 'broken.png', { type: 'image/png' });
@@ -274,6 +274,52 @@ describe('ConversationChatPanel', () => {
     await waitFor(() => expect(abort).toHaveBeenCalledWith({ upload: 'upload-1' }));
     expect(prompt).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Chat prompt' })).toBeInTheDocument();
+  });
+
+  it('preserves draft text and pasted images while navigating between panes', async () => {
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValue(page([], 'cursor-1'));
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+        attachment: {
+          begin: vi.fn(),
+          chunk: vi.fn(),
+          finish: vi.fn(),
+          abort: vi.fn(),
+        },
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+
+    const firstPane = pane('w-draft:p1');
+    const secondPane = pane('w-draft:p2');
+    const view = render(<ConversationChatPanel pane={firstPane} />);
+    const input = await screen.findByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'Keep this draft' } });
+    const image = new File(['image-bytes'], 'keep-me.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }],
+        files: [image],
+      },
+    });
+    expect(await screen.findByText('keep-me.png')).toBeInTheDocument();
+
+    view.rerender(<ConversationChatPanel pane={secondPane} />);
+    expect(await screen.findByRole('textbox', { name: 'Chat prompt' })).toHaveValue('');
+    expect(screen.queryByText('keep-me.png')).not.toBeInTheDocument();
+
+    view.rerender(<ConversationChatPanel pane={firstPane} />);
+    expect(await screen.findByRole('textbox', { name: 'Chat prompt' })).toHaveValue(
+      'Keep this draft',
+    );
+    expect(screen.getByText('keep-me.png')).toBeInTheDocument();
   });
 });
 

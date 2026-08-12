@@ -84,7 +84,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { AgentSidebar } from '@/renderer/agents/AgentSidebar';
-import { ConversationChatPanel } from '@/renderer/chat/ConversationChatPanel';
+import {
+  ConversationChatPanel,
+  pruneConversationChatState,
+} from '@/renderer/chat/ConversationChatPanel';
 import { ShortcutHelpDialog } from '@/renderer/help/ShortcutHelpDialog';
 import { WhatsNewDialog } from '@/renderer/help/WhatsNewDialog';
 import { Navigator, planTabMove, planWorkspaceMove, ReorderControls } from '@/renderer/navigation';
@@ -145,6 +148,8 @@ const STRUCTURED_CHAT_AGENTS: Record<string, true> = {
   omp: true,
   'oh my pi': true,
 };
+
+type PaneView = 'chat' | 'terminal';
 
 function AppMark() {
   return (
@@ -750,6 +755,8 @@ function PaneStage({
   onSetSplitRatio,
   structuredChatSupported,
   showPaneLabels,
+  viewByPane,
+  onViewChange,
 }: {
   pane?: PaneInfo;
   panes: PaneInfo[];
@@ -764,8 +771,9 @@ function PaneStage({
   onSetSplitRatio: (tabId: string, path: boolean[], ratio: number) => void;
   structuredChatSupported: boolean;
   showPaneLabels: boolean;
+  viewByPane: Record<string, PaneView>;
+  onViewChange: (paneId: string, view: PaneView) => void;
 }) {
-  const [viewByPane, setViewByPane] = useState<Record<string, 'chat' | 'terminal'>>({});
   if (!pane) {
     return (
       <div className="grid min-h-0 flex-1 place-items-center p-8">
@@ -814,7 +822,9 @@ function PaneStage({
               (chatCapability.availability === 'unsupported'
                 ? 'Chat is not currently supported for this provider. Use Terminal instead.'
                 : 'Start or resume this agent to use Chat.'));
-        const view = hasAgent && chatEnabled ? viewByPane[item.pane_id] || 'chat' : 'terminal';
+        const automaticView = item.agent_has_arguments === false ? 'chat' : 'terminal';
+        const view =
+          hasAgent && chatEnabled ? viewByPane[item.pane_id] || automaticView : 'terminal';
         return (
           <div
             aria-hidden={hiddenByZoom || undefined}
@@ -864,12 +874,7 @@ function PaneStage({
                                     'h-7 rounded-none border-0 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
                                     view === 'chat' && 'bg-main text-main-foreground',
                                   )}
-                                  onClick={() =>
-                                    setViewByPane((current) => ({
-                                      ...current,
-                                      [item.pane_id]: 'chat',
-                                    }))
-                                  }
+                                  onClick={() => onViewChange(item.pane_id, 'chat')}
                                   size="sm"
                                   variant="neutral"
                                 >
@@ -890,12 +895,7 @@ function PaneStage({
                             'h-7 rounded-none border-0 border-l-2 px-2 shadow-none hover:translate-x-0 hover:translate-y-0',
                             view === 'terminal' && 'bg-main text-main-foreground',
                           )}
-                          onClick={() =>
-                            setViewByPane((current) => ({
-                              ...current,
-                              [item.pane_id]: 'terminal',
-                            }))
-                          }
+                          onClick={() => onViewChange(item.pane_id, 'terminal')}
                           size="sm"
                           variant="neutral"
                         >
@@ -969,12 +969,7 @@ function PaneStage({
               </div>
               {view === 'chat' ? (
                 <ConversationChatPanel
-                  onOpenTerminal={() =>
-                    setViewByPane((current) => ({
-                      ...current,
-                      [item.pane_id]: 'terminal',
-                    }))
-                  }
+                  onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
                   pane={item}
                 />
               ) : (
@@ -1198,6 +1193,7 @@ function ConnectedShell({
   const [removeWorktreeTarget, setRemoveWorktreeTarget] = useState<WorkspaceInfo | null>(null);
   const [paneControlsTarget, setPaneControlsTarget] = useState<PaneInfo | null>(null);
   const [mobileSwitcherOpen, setMobileSwitcherOpen] = useState(false);
+  const [viewByPane, setViewByPane] = useState<Record<string, PaneView>>({});
   const [mobileSection, setMobileSection] = useState<MobileSwitcherSection>('agents');
   const controlsPane = paneControlsTarget
     ? snapshot.panes.find((item) => item.pane_id === paneControlsTarget.pane_id) ||
@@ -1215,6 +1211,10 @@ function ConnectedShell({
       }));
     }
   }, [snapshot.focused_tab_id, snapshot.focused_workspace_id]);
+
+  useEffect(() => {
+    pruneConversationChatState(snapshot.panes.map((pane) => pane.pane_id));
+  }, [snapshot.panes]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -1427,9 +1427,9 @@ function ConnectedShell({
                 <div className="shrink-0 p-3 pt-2">
                   <StartAgentDialog
                     busy={busy}
-                    onStart={(paneId, name, kind, args, timeoutMs) =>
-                      onCommand({ type: 'start-agent', paneId, name, kind, args, timeoutMs })
-                    }
+                    onStart={(paneId, name, kind, args, timeoutMs) => {
+                      void onCommand({ type: 'start-agent', paneId, name, kind, args, timeoutMs });
+                    }}
                     pane={pane}
                   />
                 </div>
@@ -1631,6 +1631,9 @@ function ConnectedShell({
             <PaneStage
               busy={busy}
               layout={layout}
+              onViewChange={(paneId, view) =>
+                setViewByPane((current) => ({ ...current, [paneId]: view }))
+              }
               onClose={(item) =>
                 setCloseTarget({
                   kind: 'pane',
@@ -1656,6 +1659,7 @@ function ConnectedShell({
               panes={panes}
               showPaneLabels={preferences.paneLabels}
               structuredChatSupported={status.server.capabilities?.agent_conversations === true}
+              viewByPane={viewByPane}
             />
           </Tabs>
         </main>

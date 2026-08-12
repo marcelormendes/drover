@@ -145,6 +145,36 @@ describe('ConversationChatPanel turn projection', () => {
     expect(status).toHaveTextContent('Write regression tests');
   });
 
+  it('preserves the pane working duration across chat view remounts', async () => {
+    let now = 1_800_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const workingPane = {
+      ...pane,
+      pane_id: 'w-timer:p1',
+      agent_status: 'working',
+    } as PaneInfo;
+    const activeTurn = page([
+      {
+        id: 'started-without-timestamp',
+        sequence: 1,
+        provider: 'pi',
+        session_id: 'session-1',
+        turn_id: 'turn-timer',
+        type: 'turn_state',
+        state: 'started',
+      },
+    ]);
+    const { view } = setup(activeTurn);
+    view.rerender(<ConversationChatPanel pane={workingPane} />);
+    expect(await screen.findByRole('status')).toHaveTextContent('Working');
+
+    now += 7_000;
+    view.unmount();
+    render(<ConversationChatPanel pane={workingPane} />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Working for 7s');
+  });
+
   it('folds settled work while keeping the rendered final answer prominent and visible', async () => {
     setup(
       page([

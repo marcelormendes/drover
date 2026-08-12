@@ -47,6 +47,31 @@ import {
 import type { HerdrEventEnvelope } from '@/shared/events';
 import type { PaneInfo } from '@/shared/herdr';
 
+interface ComposerState {
+  draft: string;
+  attachments: readonly ChatAttachment[];
+  attachmentNotice?: string;
+}
+
+// Pane stages unmount during view, tab, and workspace navigation. Retain
+// unsent local-only composer state and fallback timing while the pane exists.
+const composerStateByPane = new Map<string, ComposerState>();
+const workingStartedMsByPane = new Map<string, number>();
+
+export function pruneConversationChatState(activePaneIds: readonly string[]): void {
+  const active = new Set(activePaneIds);
+  for (const [paneId, state] of composerStateByPane) {
+    if (active.has(paneId)) {
+      continue;
+    }
+    for (const attachment of state.attachments) {
+      URL.revokeObjectURL(attachment.url);
+    }
+    composerStateByPane.delete(paneId);
+    workingStartedMsByPane.delete(paneId);
+  }
+}
+
 interface ConversationChatPanelProps {
   pane: PaneInfo;
   onOpenTerminal?: () => void;
@@ -178,11 +203,20 @@ function ProviderWelcome({ pane, items }: { pane: PaneInfo; items: readonly Conv
   );
 }
 
-export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChatPanelProps) {
+export function ConversationChatPanel(props: ConversationChatPanelProps) {
+  return <ConversationChatPanelForPane key={props.pane.pane_id} {...props} />;
+}
+
+function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChatPanelProps) {
+  const savedComposer = composerStateByPane.get(pane.pane_id);
   const [store, setStore] = useState(() => createConversationStore(pane.pane_id));
-  const [draft, setDraft] = useState('');
-  const [attachments, setAttachments] = useState<readonly ChatAttachment[]>([]);
-  const [attachmentNotice, setAttachmentNotice] = useState<string>();
+  const [draft, setDraft] = useState(savedComposer?.draft ?? '');
+  const [attachments, setAttachments] = useState<readonly ChatAttachment[]>(
+    savedComposer?.attachments ?? [],
+  );
+  const [attachmentNotice, setAttachmentNotice] = useState<string | undefined>(
+    savedComposer?.attachmentNotice,
+  );
   const [slashMenuSelectedIndex, setSlashMenuSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -192,7 +226,9 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
   const preSessionChat = isPreSessionConversationCapability(capability);
   const conversationReadable = capability?.availability === 'supported';
   const paneWorking = pane.agent_status === 'working';
-  const [statusStartedMs, setStatusStartedMs] = useState<number>();
+  const [statusStartedMs, setStatusStartedMs] = useState<number | undefined>(() =>
+    workingStartedMsByPane.get(pane.pane_id),
+  );
   const paneRef = useRef(pane);
   paneRef.current = pane;
   const storeRef = useRef(store);
@@ -203,15 +239,30 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
   const olderAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(undefined);
   const slashMenuId = useId();
   storeRef.current = store;
+  const composerStateRef = useRef<ComposerState>({
+    draft,
+    attachments,
+    attachmentNotice,
+  });
+  composerStateRef.current = { draft, attachments, attachmentNotice };
+
+  useEffect(
+    () => () => {
+      composerStateByPane.set(pane.pane_id, composerStateRef.current);
+    },
+    [pane.pane_id],
+  );
 
   useEffect(() => {
-    setStatusStartedMs((current) => {
-      if (!paneWorking) {
-        return undefined;
-      }
-      return current ?? Date.now();
-    });
-  }, [paneWorking]);
+    if (!paneWorking) {
+      workingStartedMsByPane.delete(pane.pane_id);
+      setStatusStartedMs(undefined);
+      return;
+    }
+    const startedMs = workingStartedMsByPane.get(pane.pane_id) ?? Date.now();
+    workingStartedMsByPane.set(pane.pane_id, startedMs);
+    setStatusStartedMs(startedMs);
+  }, [pane.pane_id, paneWorking]);
 
   const addAttachments = useCallback((files: File[]) => {
     if (files.length === 0) {
@@ -461,6 +512,11 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
       for (const attachment of submitted) {
         URL.revokeObjectURL(attachment.url);
       }
+      composerStateByPane.set(pane.pane_id, {
+        draft: '',
+        attachments: [],
+        attachmentNotice: undefined,
+      });
       setAttachments([]);
       if (paneRef.current.conversation_capability?.availability === 'supported') {
         await read('newer', store.newerCursor);
@@ -502,7 +558,7 @@ export function ConversationChatPanel({ pane, onOpenTerminal }: ConversationChat
     if (latestState?.state === 'started') {
       const turnItems = store.items.filter((item) => item.turn_id === latestState.turn_id);
       return {
-        startedMs: latestState.started_ms,
+        startedMs: latestState.started_ms ?? statusStartedMs,
         activeStep: latestActivePlanStep(turnItems),
       };
     }
