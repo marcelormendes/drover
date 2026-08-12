@@ -175,7 +175,7 @@ export function SettingsDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="in-app">Inside Herdr Desktop</SelectItem>
+                  <SelectItem value="in-app">Inside Drover</SelectItem>
                   <SelectItem value="system">System notifications</SelectItem>
                 </SelectContent>
               </Select>

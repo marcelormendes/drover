@@ -5,7 +5,7 @@ import { resolveHerdrBinary } from '@/main/herdr/binary-locator';
 const canExecute = (executable: Set<string>) => (file: string) => executable.has(file);
 
 describe('resolveHerdrBinary', () => {
-  it('prefers HERDR_DESKTOP_BIN when it is executable', () => {
+  it('prefers DROVER_BIN when it is executable', () => {
     const canRun = canExecute(new Set(['/opt/herdr/bin/herdr']));
     expect(
       resolveHerdrBinary({
@@ -17,7 +17,7 @@ describe('resolveHerdrBinary', () => {
     ).toBe('/opt/herdr/bin/herdr');
   });
 
-  it('returns herdr from the PATH when HERDR_DESKTOP_BIN is unset', () => {
+  it('returns herdr from the PATH when DROVER_BIN is unset', () => {
     const canRun = canExecute(new Set(['/usr/local/bin/herdr']));
     expect(
       resolveHerdrBinary({
@@ -28,7 +28,7 @@ describe('resolveHerdrBinary', () => {
     ).toBe('herdr');
   });
 
-  it('ignores HERDR_DESKTOP_BIN when it is not executable and falls back to the PATH', () => {
+  it('ignores DROVER_BIN when it is not executable and falls back to the PATH', () => {
     const canRun = canExecute(new Set(['/usr/bin/herdr']));
     expect(
       resolveHerdrBinary({
@@ -95,7 +95,7 @@ describe('resolveHerdrBinary', () => {
     ).toBe('/Users/me/.local/bin/herdr');
   });
 
-  it('accepts HERDR_DESKTOP_BIN as a host path in Flatpak mode without probing the sandbox', () => {
+  it('accepts DROVER_BIN as a host path in Flatpak mode without probing the sandbox', () => {
     const canRun = vi.fn(() => false);
     expect(
       resolveHerdrBinary({

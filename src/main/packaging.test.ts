@@ -13,7 +13,7 @@ describe('desktop package metadata', () => {
     expect(packageInfo.productName).toBe(APP_NAME);
     expect(packageInfo.description).toBe(APP_DESCRIPTION);
     expect(forgeConfig.packagerConfig).toMatchObject({
-      appCopyright: 'Copyright © 2026 Herdr Desktop contributors',
+      appCopyright: 'Copyright © 2026 Drover contributors',
       executableName: APP_NAME,
       extendInfo: {
         CFBundleDisplayName: APP_NAME,

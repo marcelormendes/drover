@@ -12,7 +12,7 @@ const FALLBACK_CANDIDATES = (home: string): readonly string[] => [
 ];
 
 export interface ResolveHerdrBinaryOptions {
-  /** HERDR_DESKTOP_BIN override. */
+  /** DROVER_BIN override. */
   envBinary?: string;
   /** os.homedir(); used for the ~/.local/bin candidate. */
   home?: string;
@@ -21,7 +21,7 @@ export interface ResolveHerdrBinaryOptions {
   /** Executability probe (e.g. fs.accessSync with X_OK). */
   canExecute: (file: string) => boolean;
   /**
-   * Inside the Herdr Desktop Flatpak: the sandbox cannot probe host paths,
+   * Inside the Drover Flatpak: the sandbox cannot probe host paths,
    * and the process bridge resolves commands on the host with a deterministic
    * PATH. Skip sandbox executability checks; `envBinary` is accepted as a host
    * path as-is, and a bare `herdr` resolves on the host PATH.

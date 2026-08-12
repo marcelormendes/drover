@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.marcelormendes.herdr-desktop</id>
-  <launchable type="desktop-id">io.github.marcelormendes.herdr-desktop.desktop</launchable>
+  <id>io.github.marcelormendes.drover</id>
+  <launchable type="desktop-id">io.github.marcelormendes.drover.desktop</launchable>
   <metadata_license>CC0-1.0</metadata_license>
-  <name>Herdr Desktop</name>
+  <name>Drover</name>
   <summary>A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions</summary>
   <description>
     <p>
-      Herdr Desktop is a standalone graphical client for Herdr, providing the
+      Drover is an independent graphical client for Herdr, providing the
       Herdr workspace, tab, pane, terminal, and agent experience as a native
       desktop interface while keeping Herdr as the only engine and runtime
-      authority.
+      authority. It is not affiliated with or endorsed by the Herdr project.
     </p>
     <p>
-      Host access: Herdr Desktop runs the host Herdr CLI, connects to Herdr's
+      Host access: Drover runs the host Herdr CLI, connects to Herdr's
       Unix sockets, controls host terminals, and uses host SSH tools. This
       Flatpak bundle therefore requests host command execution
       (flatpak-spawn --host) and is not a security boundary between the
@@ -21,10 +21,10 @@
     </p>
   </description>
   <developer id="io.github.marcelormendes">
-    <name>Herdr Desktop contributors</name>
+    <name>Drover contributors</name>
   </developer>
-  <url type="homepage">https://marcelormendes.github.io/herdr-desktop/</url>
-  <url type="bugtracker">https://github.com/marcelormendes/herdr-desktop/issues</url>
+  <url type="homepage">https://marcelormendes.github.io/drover/</url>
+  <url type="bugtracker">https://github.com/marcelormendes/drover/issues</url>
   <project_license>MIT</project_license>
   <categories>
     <category>Development</category>

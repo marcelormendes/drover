@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-const productName = 'Herdr Desktop';
-const executableName = 'Herdr Desktop';
+const productName = 'Drover';
+const executableName = 'Drover';
 const targetDirectory =
-  process.env.HERDR_DESKTOP_PACKAGE_DIR ??
+  process.env.DROVER_PACKAGE_DIR ??
   path.resolve('out', `${productName}-${process.platform}-${process.arch}`);
 const binaryPath =
   process.platform === 'darwin'
@@ -12,7 +12,7 @@ const binaryPath =
     : path.join(targetDirectory, `${executableName}${process.platform === 'win32' ? '.exe' : ''}`);
 
 const child = spawn(binaryPath, [], {
-  env: { ...process.env, HERDR_DESKTOP_SMOKE_TEST: '1' },
+  env: { ...process.env, DROVER_SMOKE_TEST: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let output = '';

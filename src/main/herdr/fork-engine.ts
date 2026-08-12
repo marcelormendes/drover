@@ -95,7 +95,7 @@ export async function installPinnedEngineBinary(options: {
 
   if (asset.sha256.length === 0) {
     throw new Error(
-      `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Herdr Desktop to install it.`,
+      `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Drover to install it.`,
     );
   }
 

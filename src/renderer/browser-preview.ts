@@ -6,24 +6,19 @@ import type {
   ConversationRespondResult,
 } from '@/shared/conversation';
 import { DEMO_BOOTSTRAP, demoQueryResult } from '@/shared/demo';
-import type {
-  HerdrCommand,
-  HerdrDesktopApi,
-  HerdrQuery,
-  HerdrQueryResult,
-} from '@/shared/desktop-api';
+import type { DroverApi, HerdrCommand, HerdrQuery, HerdrQueryResult } from '@/shared/desktop-api';
 import type { HerdrEventEnvelope } from '@/shared/events';
 import type { EngineBootstrap } from '@/shared/herdr';
 import { DEFAULT_DESKTOP_PREFERENCES, type DesktopPreferences } from '@/shared/preferences';
 
 type ConnectedBootstrap = Extract<EngineBootstrap, { state: 'connected' }>;
 
-export function createBrowserPreviewApi(): HerdrDesktopApi {
+export function createBrowserPreviewApi(): DroverApi {
   let connected = structuredClone(DEMO_BOOTSTRAP) as ConnectedBootstrap;
   let preferences = { ...DEFAULT_DESKTOP_PREFERENCES };
   const outputByPane = new Map<string, Extract<HerdrQueryResult, { type: 'pane-output' }>>();
   const sessionListeners = new Set<(event: HerdrEventEnvelope) => void>();
-  const desktopListeners = new Set<Parameters<HerdrDesktopApi['onDesktopAction']>[0]>();
+  const desktopListeners = new Set<Parameters<DroverApi['onDesktopAction']>[0]>();
 
   const notify = (event: string, data: Record<string, unknown>) => {
     for (const listener of sessionListeners) {
@@ -116,10 +111,10 @@ export function createBrowserPreviewApi(): HerdrDesktopApi {
         return {
           type: 'worktree-list',
           source: {
-            repo_key: 'github.com/herdrdev/herdr-desktop',
-            repo_name: 'herdr-desktop',
-            repo_root: '/preview/herdr-desktop',
-            source_checkout_path: '/preview/herdr-desktop',
+            repo_key: 'github.com/herdrdev/drover',
+            repo_name: 'drover',
+            repo_root: '/preview/drover',
+            source_checkout_path: '/preview/drover',
             source_workspace_id: 'w1',
           },
           worktrees: [],
@@ -149,7 +144,7 @@ export function createBrowserPreviewApi(): HerdrDesktopApi {
       currentVersion: '0.0.0-preview',
       latestVersion: null,
       updateAvailable: false,
-      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+      releaseUrl: 'https://github.com/marcelormendes/drover/releases/latest',
     }),
     applyRemoteEngine: async (target) => ({ state: 'off', host: target.host, port: target.port }),
     remoteEngineStatus: async () => ({ state: 'off', host: '', port: 22025 }),

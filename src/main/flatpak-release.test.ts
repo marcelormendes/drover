@@ -27,10 +27,10 @@ const flatpakBuilderAvailable =
 
 describe('Flatpak packaging contract', () => {
   it('pins the application ID, branch, runtime, and bundle name', () => {
-    expect(FLATPAK_APP_ID).toBe('io.github.marcelormendes.herdr-desktop');
+    expect(FLATPAK_APP_ID).toBe('io.github.marcelormendes.drover');
     expect(FLATPAK_BRANCH).toBe('stable');
     expect(FLATPAK_RUNTIME_VERSION).toBe('25.08');
-    expect(FLATPAK_BUNDLE_NAME).toBe('herdr-desktop-linux-x86_64.flatpak');
+    expect(FLATPAK_BUNDLE_NAME).toBe('drover-linux-x86_64.flatpak');
   });
 
   it('resolves staged manifest sources against the staged directory layout', () => {
@@ -41,7 +41,7 @@ describe('Flatpak packaging contract', () => {
     expect(appSource?.resolved).toBe(path.join(ROOT, 'out', 'flatpak', 'flatpak-app'));
 
     for (const file of [
-      'herdr-desktop-wrapper.sh',
+      'drover-wrapper.sh',
       `${FLATPAK_APP_ID}.desktop`,
       `${FLATPAK_APP_ID}.metainfo.xml`,
       'icon-512.png',
@@ -58,7 +58,7 @@ describe('Flatpak packaging contract', () => {
     const sources = flatpakManifestSources(MANIFEST);
     expect(sources.map((source) => source.path)).toEqual([
       '../flatpak-app',
-      'herdr-desktop-wrapper.sh',
+      'drover-wrapper.sh',
       `${FLATPAK_APP_ID}.desktop`,
       `${FLATPAK_APP_ID}.metainfo.xml`,
       'icon-512.png',
@@ -70,7 +70,7 @@ describe('Flatpak packaging contract', () => {
     // The icons and metadata files live next to the committed manifest; the
     // staged app directory is produced by the build script.
     for (const file of [
-      'herdr-desktop-wrapper.sh',
+      'drover-wrapper.sh',
       `${FLATPAK_APP_ID}.desktop`,
       `${FLATPAK_APP_ID}.metainfo.xml`,
       'icon-512.png',
@@ -89,10 +89,10 @@ describe('Flatpak packaging contract', () => {
     expect(manifest).toContain('xdg-config/herdr:create');
     // One narrow app-owned parent: Flatpak 1.14 ignores overlapping nested
     // xdg-data grants, so the children must never be granted separately.
-    expect(manifest).toContain('xdg-data/herdr-desktop:create');
-    expect(manifest).not.toContain('xdg-data/herdr-desktop/chat-images:create');
-    expect(manifest).not.toContain('xdg-data/herdr-desktop/remote:create');
-    expect(manifest).toContain('hicolor/512x512/apps/io.github.marcelormendes.herdr-desktop.png');
+    expect(manifest).toContain('xdg-data/drover:create');
+    expect(manifest).not.toContain('xdg-data/drover/chat-images:create');
+    expect(manifest).not.toContain('xdg-data/drover/remote:create');
+    expect(manifest).toContain('hicolor/512x512/apps/io.github.marcelormendes.drover.png');
     expect(script).toContain("'--default-branch=stable'");
     expect(script).toContain("'--arch=x86_64'");
     expect(script).toContain('FLATPAK_APP_ID,\n    FLATPAK_BRANCH,');
@@ -125,7 +125,7 @@ describe('Flatpak packaging contract', () => {
     expect(ci).toContain('Assert the test installation is empty');
     expect(ci).toContain('flatpak install --user --noninteractive');
     expect(ci).toContain(
-      'dbus-run-session -- xvfb-run -a flatpak run --user --env=HERDR_DESKTOP_SMOKE_TEST=1',
+      'dbus-run-session -- xvfb-run -a flatpak run --user --env=DROVER_SMOKE_TEST=1',
     );
     expect(ci).toContain('dbus-run-session -- bash -euo pipefail');
     expect(ci).toContain('Exercise flatpak-spawn --host argument and stdio crossing');
@@ -138,7 +138,7 @@ describe('Flatpak packaging contract', () => {
     expect(ci).toContain('flatpak uninstall --user --noninteractive');
     expect(release).toContain('appstream-compose');
     expect(release).toContain('npm run build:flatpak');
-    expect(release).toContain('herdr-desktop-linux-x86_64.flatpak');
+    expect(release).toContain('drover-linux-x86_64.flatpak');
   });
 
   it('probes tool presence without rejecting tools that lack --version support', () => {

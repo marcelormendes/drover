@@ -1,16 +1,16 @@
-# Maintainer: Herdr Desktop contributors <herdr-desktop@users.noreply.github.com>
+# Maintainer: Drover contributors <drover@users.noreply.github.com>
 # Contributor: Marcelo Ribeiro Mendes
 
-pkgname=herdr-desktop-bin
+pkgname=drover-bin
 pkgver=0.1.13
 pkgrel=1
 pkgdesc="A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions"
 arch=('x86_64')
-url="https://github.com/marcelormendes/herdr-desktop"
+url="https://github.com/marcelormendes/drover"
 license=('MIT')
 depends=('fuse2')
-provides=('herdr-desktop')
-conflicts=('herdr-desktop')
+provides=('drover')
+conflicts=('drover')
 # The AppImage is a self-contained ELF with an embedded filesystem; default
 # stripping would destroy it, so it must be disabled explicitly.
 options=('!strip' '!debug')
@@ -18,9 +18,9 @@ optdepends=(
   'herdr: the Herdr engine this desktop controls (install from the Herdr project)'
 )
 source=(
-  "herdr-desktop-linux-x86_64.AppImage::https://github.com/marcelormendes/herdr-desktop/releases/download/v${pkgver}/herdr-desktop-linux-x86_64.AppImage"
-  "icon-1024.png::https://raw.githubusercontent.com/marcelormendes/herdr-desktop/v${pkgver}/resources/icon-1024.png"
-  "LICENSE::https://raw.githubusercontent.com/marcelormendes/herdr-desktop/v${pkgver}/LICENSE"
+  "drover-linux-x86_64.AppImage::https://github.com/marcelormendes/drover/releases/download/v${pkgver}/drover-linux-x86_64.AppImage"
+  "icon-1024.png::https://raw.githubusercontent.com/marcelormendes/drover/v${pkgver}/resources/icon-1024.png"
+  "LICENSE::https://raw.githubusercontent.com/marcelormendes/drover/v${pkgver}/LICENSE"
 )
 sha256sums=(
   '4deea5322e9675a4fa2df5eb0bbd418bf372881bcde2684994a0f4534898fd30'
@@ -31,21 +31,21 @@ sha256sums=(
 # checksums.sha256 for the AppImage, tagged raw files for icon and license).
 
 package() {
-  install -Dm755 "${srcdir}/herdr-desktop-linux-x86_64.AppImage" \
-    "${pkgdir}/usr/bin/herdr-desktop"
+  install -Dm755 "${srcdir}/drover-linux-x86_64.AppImage" \
+    "${pkgdir}/usr/bin/drover"
   install -Dm644 "${srcdir}/icon-1024.png" \
-    "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/herdr-desktop.png"
+    "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/drover.png"
   install -Dm644 "${srcdir}/LICENSE" \
     "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 
-  install -Dm644 /dev/stdin "${pkgdir}/usr/share/applications/herdr-desktop.desktop" <<EOF
+  install -Dm644 /dev/stdin "${pkgdir}/usr/share/applications/drover.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name=Herdr Desktop
+Name=Drover
 Comment=A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.
-Exec=/usr/bin/herdr-desktop
-Icon=herdr-desktop
+Exec=/usr/bin/drover
+Icon=drover
 Terminal=false
 Categories=Development;Utility;
 EOF

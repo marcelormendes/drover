@@ -465,7 +465,7 @@ describe('ConversationChatPanel onboarding', () => {
       />,
     );
 
-    expect(await screen.findByLabelText('Herdr Desktop')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Drover')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: label })).toBeInTheDocument();
     expect(screen.getByText(`/code/${agent}`)).toBeInTheDocument();
   });

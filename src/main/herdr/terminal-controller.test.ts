@@ -32,7 +32,7 @@ describe('TerminalController', () => {
     vi.restoreAllMocks();
   });
 
-  it('routes terminal control through flatpak-spawn --host inside the Herdr Desktop Flatpak', () => {
+  it('routes terminal control through flatpak-spawn --host inside the Drover Flatpak', () => {
     vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
     vi.stubEnv('HERDR_SOCKET_PATH', '');
     vi.stubEnv('HERDR_CLIENT_SOCKET_PATH', '');

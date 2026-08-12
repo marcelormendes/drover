@@ -38,7 +38,7 @@ export interface EngineUpdateResult {
   error?: string;
 }
 
-/** Result of checking the GitHub releases feed for a newer Herdr Desktop. */
+/** Result of checking the GitHub releases feed for a newer Drover. */
 export interface DesktopUpdateInfo {
   /** Version of the running desktop build. */
   currentVersion: string;
@@ -446,7 +446,7 @@ export type DesktopAction =
   | 'split-pane-down'
   | 'toggle-pane-zoom';
 
-export interface HerdrDesktopApi {
+export interface DroverApi {
   bootstrap(): Promise<EngineBootstrap>;
   startServer(): Promise<EngineBootstrap>;
   command(command: HerdrCommand): Promise<EngineBootstrap>;

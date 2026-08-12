@@ -4,7 +4,7 @@ import { isAllowedExternalUrl, isTrustedRendererUrl } from '@/main/security';
 
 describe('renderer trust boundary', () => {
   it('accepts the packaged file and configured Vite development origin', () => {
-    const packagedUrl = 'file:///Applications/Herdr%20Desktop.app/index.html';
+    const packagedUrl = 'file:///Applications/Drover.app/index.html';
     expect(isTrustedRendererUrl(packagedUrl, packagedUrl)).toBe(true);
     expect(isTrustedRendererUrl('http://localhost:5173/index.html', 'http://localhost:5173')).toBe(
       true,
@@ -28,14 +28,14 @@ describe('external navigation allowlist', () => {
     expect(isAllowedExternalUrl('https://github.com/another-org/repository')).toBe(false);
   });
 
-  it('allows only the Herdr Desktop latest-release page for desktop updates', () => {
+  it('allows only the Drover latest-release page for desktop updates', () => {
+    expect(isAllowedExternalUrl('https://github.com/marcelormendes/drover/releases/latest')).toBe(
+      true,
+    );
     expect(
-      isAllowedExternalUrl('https://github.com/marcelormendes/herdr-desktop/releases/latest'),
-    ).toBe(true);
-    expect(
-      isAllowedExternalUrl('https://github.com/marcelormendes/herdr-desktop/releases/tag/v0.1.7'),
+      isAllowedExternalUrl('https://github.com/marcelormendes/drover/releases/tag/v0.1.7'),
     ).toBe(false);
-    expect(isAllowedExternalUrl('https://github.com/marcelormendes/herdr-desktop')).toBe(false);
+    expect(isAllowedExternalUrl('https://github.com/marcelormendes/drover')).toBe(false);
     expect(
       isAllowedExternalUrl('https://github.com/marcelormendes/other-repo/releases/latest'),
     ).toBe(false);

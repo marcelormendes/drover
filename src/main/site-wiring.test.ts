@@ -4,17 +4,15 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string) => readFile(path, 'utf8');
 
 describe('GitHub Pages site', () => {
-  it('presents Herdr Desktop with accessible download and source links', async () => {
+  it('presents Drover with accessible download and source links', async () => {
     const html = await read('site/index.html');
 
-    expect(html).toContain('<title>Herdr Desktop');
+    expect(html).toContain('<title>Drover');
     expect(html).toContain('name="description"');
     expect(html).toContain('Run the herd without living in the terminal.');
-    expect(html).toContain(
-      'href="https://github.com/marcelormendes/herdr-desktop/releases/latest"',
-    );
-    expect(html).toContain('href="https://github.com/marcelormendes/herdr-desktop"');
-    expect(html).toContain('alt="Herdr Desktop"');
+    expect(html).toContain('href="https://github.com/marcelormendes/drover/releases/latest"');
+    expect(html).toContain('href="https://github.com/marcelormendes/drover"');
+    expect(html).toContain('alt="Drover"');
   });
 
   it('uses the desktop app neobrutalist palette and responsive layout', async () => {

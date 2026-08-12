@@ -89,7 +89,7 @@ export class TerminalController {
 
   constructor(
     private readonly spawner: TerminalProcessSpawner = defaultSpawner,
-    private readonly binary = process.env.HERDR_DESKTOP_BIN || 'herdr',
+    private readonly binary = process.env.DROVER_BIN || 'herdr',
   ) {}
 
   open(request: TerminalOpenRequest, onEvent: (event: TerminalEvent) => void): void {

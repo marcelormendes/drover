@@ -182,14 +182,14 @@ function ProviderWelcome({ pane, items }: { pane: PaneInfo; items: readonly Conv
       <div className="w-full max-w-lg rounded-base border-2 border-border bg-secondary-background p-6 shadow-shadow">
         <div
           role="img"
-          aria-label="Herdr Desktop"
+          aria-label="Drover"
           className="mx-auto mb-4 grid size-16 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-shadow"
         >
           <Command aria-hidden="true" className="size-8 stroke-[3]" />
         </div>
         <div className="text-center">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
-            Herdr Desktop
+            Drover
           </p>
           <h2 className="mt-1 text-xl font-heading">{provider || 'Agent'}</h2>
           <p className="mt-2 text-sm text-muted-foreground">

@@ -165,16 +165,16 @@ export function defaultTunnelSocketPath(): string {
   if (isFlatpakHost()) {
     // Sandbox-private tmp is unreachable by the host Herdr server; keep the
     // bridge sockets under the host-visible remote grant instead.
-    return path.join(flatpakRemoteSocketDir(), 'herdr-desktop-remote.sock');
+    return path.join(flatpakRemoteSocketDir(), 'drover-remote.sock');
   }
-  return path.join(os.tmpdir(), 'herdr-desktop-remote.sock');
+  return path.join(os.tmpdir(), 'drover-remote.sock');
 }
 
 export function defaultTunnelClientSocketPath(): string {
   if (isFlatpakHost()) {
-    return path.join(flatpakRemoteSocketDir(), 'herdr-desktop-remote-client.sock');
+    return path.join(flatpakRemoteSocketDir(), 'drover-remote-client.sock');
   }
-  return path.join(os.tmpdir(), 'herdr-desktop-remote-client.sock');
+  return path.join(os.tmpdir(), 'drover-remote-client.sock');
 }
 
 export function clearRemoteSocketOverrides(): void {

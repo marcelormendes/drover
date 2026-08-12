@@ -2,11 +2,11 @@
 
 Date: 2026-08-10
 Status: Proposed
-Author: Herdr Desktop contributors (session with maintainer)
+Author: Drover contributors (session with maintainer)
 
 ## Context
 
-Herdr Desktop is an Electron client for the Herdr engine. Linux is already
+Drover is an Electron client for the Herdr engine. Linux is already
 supported at build time — `forge.config.ts` wires `MakerDeb` and `MakerRpm`,
 and the app itself is cross-platform Electron 43 — but no Linux artifacts are
 published: the only release workflow (`release-macos.yml`) builds and signs
@@ -18,7 +18,7 @@ command, no sudo, no manual steps.
 ### Community landscape (grounded)
 
 - Flatpak is the community's general desktop favorite (auto-updates, sandbox,
-  Flathub review), but it is a poor fit here: Herdr Desktop execs the `herdr`
+  Flathub review), but it is a poor fit here: Drover execs the `herdr`
   CLI, connects to sockets under `~/.config/herdr`, and drives live PTYs. A
   Flatpak sandbox would require broad `filesystem: home` grants (making the
   sandbox cosmetic) or break core features. Same reasoning rejects Snap.
@@ -33,10 +33,10 @@ command, no sudo, no manual steps.
 A Linux user runs:
 
 ```sh
-curl -fsSL https://marcelormendes.github.io/herdr-desktop/install.sh | sh
+curl -fsSL https://marcelormendes.github.io/drover/install.sh | sh
 ```
 
-and ends up with Herdr Desktop installed per-user (no root), discoverable in
+and ends up with Drover installed per-user (no root), discoverable in
 the application menu, with a checked prerequisite (Herdr CLI) and a printed
 next step.
 
@@ -56,15 +56,15 @@ Artifacts published to every GitHub Release, with stable names:
 
 | Asset | Name |
 | --- | --- |
-| AppImage | `herdr-desktop-linux-x86_64.AppImage` |
-| Debian package | `herdr-desktop-linux-amd64.deb` |
-| RPM package | `herdr-desktop-linux-x86_64.rpm` |
+| AppImage | `drover-linux-x86_64.AppImage` |
+| Debian package | `drover-linux-amd64.deb` |
+| RPM package | `drover-linux-x86_64.rpm` |
 | Checksums | `checksums.sha256` (all platform artifacts) |
 
 URLs (installer depends on these):
 
-- Latest: `https://github.com/marcelormendes/herdr-desktop/releases/latest/download/<asset>`
-- Pinned: `https://github.com/marcelormendes/herdr-desktop/releases/download/<tag>/<asset>`
+- Latest: `https://github.com/marcelormendes/drover/releases/latest/download/<asset>`
+- Pinned: `https://github.com/marcelormendes/drover/releases/download/<tag>/<asset>`
 - `checksums.sha256` resolves at the same base as the asset.
 
 ## Design
@@ -94,15 +94,15 @@ URLs (installer depends on these):
 ```ts
 new MakerAppImage({
   options: {
-    bin: 'Herdr Desktop',
+    bin: 'Drover',
     icon: 'resources/icon.svg',
     categories: ['Development', 'Utility'],
   },
 })
 ```
 
-- `bin` must equal `packagerConfig.executableName` (`'Herdr Desktop'`): the
-  maker's default is the sanitized package name (`herdr-desktop`), which does
+- `bin` must equal `packagerConfig.executableName` (`'Drover'`): the
+  maker's default is the sanitized package name (`drover`), which does
   not exist in the packaged app, and its source throws "Could not find
   executable" in that case (verified in maker source v5.2.0).
 - `icon: 'resources/icon.svg'` exists in the repo; the maker embeds it into the
@@ -128,14 +128,14 @@ breaks CI, the workflow's own `prepare` job, and the new `linux` job. Add:
   pattern change alone would race the release job); download `macos-*` and
   `linux-*` artifacts (`actions/download-artifact` pattern
   `macos-*` + `linux-*`, `merge-multiple: true`); checksum glob becomes
-  `sha256sum herdr-desktop-* > checksums.sha256`; the existing
+  `sha256sum drover-* > checksums.sha256`; the existing
   `gh release upload dist/release/*` then publishes everything in one release.
 
 ### 2. Installer script — `scripts/install.sh` (new)
 
 Single source of truth lives in `scripts/`; the site build copies it to the
 site output so it is served at
-`https://marcelormendes.github.io/herdr-desktop/install.sh`.
+`https://marcelormendes.github.io/drover/install.sh`.
 
 **`scripts/build-site.mjs`**: add one `copyFile` of `scripts/install.sh` →
 `dist/site/install.sh`.
@@ -148,7 +148,7 @@ trigger paths (so installer changes redeploy the site).
 0. Prerequisites: require `$HOME` set (`${HOME:?}`) and
    `command -v curl sha256sum` present; fail with a clear message otherwise.
 1. Require Linux; map `uname -m` → asset name
-   (`x86_64` → `herdr-desktop-linux-x86_64.AppImage`; `aarch64` → clear
+   (`x86_64` → `drover-linux-x86_64.AppImage`; `aarch64` → clear
    "not published yet" error; anything else → unsupported arch error).
 2. Resolve download URL: default latest; `--version <tag>` pins to
    `releases/download/<tag>`.
@@ -159,16 +159,16 @@ trigger paths (so installer changes redeploy the site).
    entries for every platform artifact (macOS included), and
    `sha256sum -c` over the whole file would fail on the absent entries and
    abort under `set -eu`:
-   `grep -F 'herdr-desktop-linux-x86_64.AppImage' checksums.sha256 | sha256sum -c -`
+   `grep -F 'drover-linux-x86_64.AppImage' checksums.sha256 | sha256sum -c -`
    Mismatch aborts with a clear message.
 5. Install per-user:
-   - AppImage → `~/.local/bin/herdr-desktop` (0755, atomic via temp+rename).
-   - Icon → `~/.local/share/icons/hicolor/1024x1024/apps/herdr-desktop.png`
+   - AppImage → `~/.local/bin/drover` (0755, atomic via temp+rename).
+   - Icon → `~/.local/share/icons/hicolor/1024x1024/apps/drover.png`
      (downloaded from the site's `icon.png`, which is 1024×1024 — install at
      the matching hicolor size; **best-effort**: an icon failure must not
      abort the install).
-   - Entry → `~/.local/share/applications/herdr-desktop.desktop`
-     (`Exec=<absolute path>`; `Icon=herdr-desktop`; `Type=Application`;
+   - Entry → `~/.local/share/applications/drover.desktop`
+     (`Exec=<absolute path>`; `Icon=drover`; `Type=Application`;
      `Categories=Development;Utility;`).
 6. Best-effort `update-desktop-database` (ignore failure — helper may not
    exist).
@@ -178,7 +178,7 @@ trigger paths (so installer changes redeploy the site).
    *:$HOME/.local/bin:*)`) and print the absolute path or a PATH hint when
    absent (Debian/Ubuntu do not include it by default).
 8. Print the installed version (parsed from curl's `%{url_effective}` after
-   the latest redirect) and next steps: run `herdr-desktop`; uninstall via
+   the latest redirect) and next steps: run `drover`; uninstall via
    `--uninstall`.
 
 **Flags**: `--version <tag>` (pin), `--uninstall` (removes exactly the three
@@ -209,7 +209,7 @@ entry/icon.
      `npx electron-forge make --targets=AppImage` — the target must be
      `AppImage` (the maker's `name`); a string target that matches no
      configured maker fails CLI target resolution before any maker runs.
-     Assert `out/make/AppImage/x64/Herdr Desktop-<version>-x64.AppImage`
+     Assert `out/make/AppImage/x64/Drover-<version>-x64.AppImage`
      exists.
   3. Exercise `scripts/install.sh` against a `file://` fixture (AppImage +
      checksums.sha256 + icon.png in a temp dir, `--base-url file://…`, temp

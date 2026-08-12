@@ -195,9 +195,9 @@ function WindowChrome({
     <header className="app-drag flex h-12 shrink-0 items-center border-b-2 border-border bg-secondary-background pl-24 pr-3">
       <div className="flex min-w-0 items-center gap-3">
         <AppMark />
-        <span className="truncate text-sm font-heading tracking-[0.12em]">HERDR</span>
+        <span className="truncate text-sm font-heading tracking-[0.12em]">DROVER</span>
         <span className="hidden truncate font-mono text-[10px] uppercase tracking-[0.18em] opacity-50 lg:inline">
-          The herd, from a client that isn't there
+          An independent desktop client for Herdr
         </span>
       </div>
       <div className="app-no-drag ml-auto flex items-center gap-2">
@@ -1044,7 +1044,7 @@ function DesktopUpdateButton({ busy, onUpdate }: { busy: boolean; onUpdate: () =
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          aria-label="Update Herdr Desktop"
+          aria-label="Update Drover"
           className="size-6"
           disabled={busy}
           onClick={onUpdate}
@@ -1058,7 +1058,7 @@ function DesktopUpdateButton({ busy, onUpdate }: { busy: boolean; onUpdate: () =
           )}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="top">Update Herdr Desktop</TooltipContent>
+      <TooltipContent side="top">Update Drover</TooltipContent>
     </Tooltip>
   );
 }
@@ -1112,10 +1112,10 @@ function DesktopUpdateDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Herdr Desktop update available</AlertDialogTitle>
+          <AlertDialogTitle>Drover update available</AlertDialogTitle>
           <AlertDialogDescription>
-            A newer version of Herdr Desktop is ready: v{info?.currentVersion} → v
-            {info?.latestVersion}. Open the release page to download it and replace this app.
+            A newer version of Drover is ready: v{info?.currentVersion} → v{info?.latestVersion}.
+            Open the release page to download it and replace this app.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -2045,16 +2045,16 @@ function AppContent() {
     try {
       const info = await window.herdr.checkDesktopUpdate();
       if (info.latestVersion === null) {
-        toast.error('Could not check for Herdr Desktop updates.');
+        toast.error('Could not check for Drover updates.');
         return;
       }
       if (info.updateAvailable) {
         setDesktopUpdate(info);
       } else {
-        toast(`Herdr Desktop is up to date (v${info.currentVersion}).`);
+        toast(`Drover is up to date (v${info.currentVersion}).`);
       }
     } catch (error) {
-      toast.error('Could not check for Herdr Desktop updates.', {
+      toast.error('Could not check for Drover updates.', {
         description: error instanceof Error ? error.message : undefined,
       });
     }

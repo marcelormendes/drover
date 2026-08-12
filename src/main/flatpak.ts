@@ -4,7 +4,7 @@ import path from 'node:path';
 /**
  * Flatpak host-command boundary.
  *
- * Herdr Desktop is host-dependent by design: it runs the host `herdr` CLI,
+ * Drover is host-dependent by design: it runs the host `herdr` CLI,
  * connects to Herdr's Unix sockets, controls host PTYs, and uses host SSH
  * tools. The Flatpak bundle therefore grants `--talk-name=org.freedesktop.Flatpak`
  * and routes every host-bound process through `flatpak-spawn --host`, which is
@@ -12,7 +12,7 @@ import path from 'node:path';
  * process must go through {@link hostInvocation}; never branch on Flatpak in
  * callers.
  */
-export const FLATPAK_APP_ID = 'io.github.marcelormendes.herdr-desktop';
+export const FLATPAK_APP_ID = 'io.github.marcelormendes.drover';
 
 export interface HostInvocation {
   program: string;
@@ -30,7 +30,7 @@ export interface HostInvocationOptions {
 }
 
 /**
- * True inside the Herdr Desktop Flatpak sandbox. Flatpak sets `FLATPAK_ID` to
+ * True inside the Drover Flatpak sandbox. Flatpak sets `FLATPAK_ID` to
  * the application ID of the running sandbox; zypak preserves it for Electron.
  */
 export function isFlatpakHost(): boolean {
@@ -123,13 +123,13 @@ export function sandboxPathFromHostPath(filePath: string): string {
 
 /**
  * Returns the program and argument array to execute for a host-bound command.
- * Outside Flatpak this is the command unchanged. Inside the Herdr Desktop
+ * Outside Flatpak this is the command unchanged. Inside the Drover
  * Flatpak it becomes
  * `flatpak-spawn --host [--watch-bus] --env=PATH=… [--env=HERDR_*_PATH=…] <program> <args...>`,
  * with the argument array preserved verbatim — never string-concatenated. The
  * explicit host PATH makes the official `~/.local/bin/herdr` and host
  * `/usr/bin/ssh` resolvable without a shell; absolute host paths (for example
- * `HERDR_DESKTOP_BIN`) pass through untouched. The Herdr socket environment
+ * `DROVER_BIN`) pass through untouched. The Herdr socket environment
  * variables are forwarded when present so a host Herdr server can reach the
  * bridge sockets.
  */
@@ -159,11 +159,11 @@ export function hostInvocation(
 
 /**
  * Sandbox-visible directory for the remote-engine bridge sockets in Flatpak
- * mode. The `--filesystem=xdg-data/herdr-desktop:create` parent grant mounts
+ * mode. The `--filesystem=xdg-data/drover:create` parent grant mounts
  * it on both sides (this child is created 0700 by `createTcpBridge`); the
  * socket environment forwarded to host processes uses the host-equivalent
  * paths.
  */
 export function flatpakRemoteSocketDir(): string {
-  return path.join(flatpakSandboxDataDir(), 'herdr-desktop', 'remote');
+  return path.join(flatpakSandboxDataDir(), 'drover', 'remote');
 }

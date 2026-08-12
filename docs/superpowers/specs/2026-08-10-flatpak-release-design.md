@@ -2,13 +2,13 @@
 
 Date: 2026-08-10
 Status: Approved (maintainer delegated the choice to the recommended approach)
-Author: Herdr Desktop contributors
+Author: Drover contributors
 
 ## Context
 
-Herdr Desktop v0.1.9 publishes AppImage, DEB, and RPM artifacts. Community
+Drover v0.1.9 publishes AppImage, DEB, and RPM artifacts. Community
 feedback favors Flatpak for managed installation and desktop integration, but
-Herdr Desktop is unusually host-dependent: it runs the host `herdr` CLI,
+Drover is unusually host-dependent: it runs the host `herdr` CLI,
 connects to Herdr's Unix sockets, controls host PTYs, and uses host SSH tools.
 
 A normal Flatpak sandbox would break those features. Flatpak's supported
@@ -16,7 +16,7 @@ mechanism for trusted applications to run host commands is
 `flatpak-spawn --host`, which requires access to `org.freedesktop.Flatpak` and
 is explicitly a sandbox escape. The package must therefore be honest: Flatpak
 manages installation and desktop integration, but does not create a security
-boundary between Herdr Desktop and the host.
+boundary between Drover and the host.
 
 Flathub is not a target. Its current policy may reject host-dependent
 development tools and prohibits AI-generated submission material and
@@ -27,9 +27,9 @@ deferred until the bundle has real users.
 
 Publish an additional x86_64 artifact on every GitHub Release:
 
-`herdr-desktop-linux-x86_64.flatpak`
+`drover-linux-x86_64.flatpak`
 
-Users can install it per-user with Flatpak, launch the full Herdr Desktop
+Users can install it per-user with Flatpak, launch the full Drover
 experience against the host Herdr engine, and uninstall it through Flatpak.
 AppImage remains the recommended one-command installation and DEB/RPM remain
 native-package alternatives.
@@ -44,7 +44,7 @@ native-package alternatives.
 
 ## Package contract
 
-- Application ID: `io.github.marcelormendes.herdr-desktop`.
+- Application ID: `io.github.marcelormendes.drover`.
 - Architecture: x86_64 only, matching the current Linux release job.
 - Runtime, SDK, and Electron BaseApp: branch `25.08`, the current supported
   Freedesktop/Electron branch at design time.
@@ -68,7 +68,7 @@ Add one small, tested process-invocation boundary in the Electron main process:
   Flatpak conditionals across callers.
 - Preserve argument arrays and `shell: false`; never concatenate commands.
 - Preserve full-duplex standard I/O for terminal control.
-- User-selected `HERDR_DESKTOP_BIN` and persisted binary paths refer to host
+- User-selected `DROVER_BIN` and persisted binary paths refer to host
   paths and must remain usable through the same bridge.
 
 The manifest grants `--talk-name=org.freedesktop.Flatpak`. Documentation and
@@ -82,7 +82,7 @@ grants:
 - `--filesystem=xdg-config/herdr:create` for the Herdr API/client sockets and
   engine configuration (`:create` so a fresh user without a config directory
   yet still gets the core socket mount).
-- `--filesystem=xdg-data/herdr-desktop:create` — the single narrow app-owned
+- `--filesystem=xdg-data/drover:create` — the single narrow app-owned
   parent grant covering chat-image staging and the remote-engine bridge
   sockets. Overlapping nested `xdg-data` grants are ignored by Flatpak 1.14
   (verified in the disposable bundle: the nested `chat-images`/`remote` grants
@@ -96,10 +96,10 @@ under its private `$XDG_CONFIG_HOME`/`$XDG_DATA_HOME` (e.g.
 The main process therefore performs explicit, boundary-safe prefix translation
 between the two forms:
 
-- Chat images are staged at the sandbox `$XDG_DATA_HOME/herdr-desktop/chat-images`
+- Chat images are staged at the sandbox `$XDG_DATA_HOME/drover/chat-images`
   and the paths returned to the renderer/agent are translated to the
   host-visible `$HOST_XDG_DATA_HOME/…` form.
-- Remote bridge sockets listen at the sandbox `$XDG_DATA_HOME/herdr-desktop/remote`;
+- Remote bridge sockets listen at the sandbox `$XDG_DATA_HOME/drover/remote`;
   when the tunnel's socket environment is applied for host processes, the
   paths are converted to the host form.
 - Socket paths reported by the host `herdr` CLI (host form) are translated to
@@ -140,7 +140,7 @@ from the intentionally escaped Flatpak boundary.
   unexpected application ID/runtime.
 - Extend the Linux release job to install Flatpak build tooling and the pinned
   runtime/BaseApp, build the bundle, and copy it to
-  `dist/release/herdr-desktop-linux-x86_64.flatpak`.
+  `dist/release/drover-linux-x86_64.flatpak`.
 - Upload it in the existing `linux-x64` artifact so the release job's existing
   brace pattern still downloads the complete Linux set.
 - Include it in `checksums.sha256` through the existing release glob.
@@ -156,13 +156,13 @@ README and the website should describe the Flatpak as a manual GitHub Release
 download:
 
 ```sh
-flatpak install --user ./herdr-desktop-linux-x86_64.flatpak
-flatpak run io.github.marcelormendes.herdr-desktop
+flatpak install --user ./drover-linux-x86_64.flatpak
+flatpak run io.github.marcelormendes.drover
 ```
 
 State that this bundle is updated by installing a newer release; it is not a
 Flathub or repository-backed package. Keep the AppImage installer first.
-Disclose that Herdr Desktop requests host command access because its purpose is
+Disclose that Drover requests host command access because its purpose is
 to control the host Herdr engine and terminals.
 
 ## Verification

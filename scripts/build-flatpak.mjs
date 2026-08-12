@@ -6,17 +6,17 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import forgeCore from '@electron-forge/core';
 
-export const FLATPAK_APP_ID = 'io.github.marcelormendes.herdr-desktop';
+export const FLATPAK_APP_ID = 'io.github.marcelormendes.drover';
 export const FLATPAK_BRANCH = 'stable';
 export const FLATPAK_RUNTIME_VERSION = '25.08';
 export const FLATPAK_ARCH = 'x86_64';
-export const FLATPAK_BUNDLE_NAME = 'herdr-desktop-linux-x86_64.flatpak';
+export const FLATPAK_BUNDLE_NAME = 'drover-linux-x86_64.flatpak';
 const FLATHUB_REPO_URL = 'https://dl.flathub.org/repo/flathub.flatpakrepo';
 const FLATHUB_RUNTIME_REPO = 'https://dl.flathub.org/repo/flathub.flatpakrepo';
 
 const root = path.resolve(import.meta.dirname, '..');
 const outDir = path.join(root, 'out', 'flatpak');
-const packagedDir = path.join(outDir, 'Herdr Desktop-linux-x64');
+const packagedDir = path.join(outDir, 'Drover-linux-x64');
 const stagedAppDir = path.join(outDir, 'flatpak-app');
 const stagedSourceDir = path.join(outDir, 'flatpak-src');
 const repoDir = path.join(outDir, 'repo');

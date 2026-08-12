@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 async function preference(): Promise<{ store: HerdrBinaryPreference; file: string }> {
-  const directory = await mkdtemp(path.join(tmpdir(), 'herdr-desktop-settings-'));
+  const directory = await mkdtemp(path.join(tmpdir(), 'drover-settings-'));
   cleanup.push(directory);
   const file = path.join(directory, 'settings.json');
   return { store: new HerdrBinaryPreference(file), file };

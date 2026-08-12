@@ -1022,8 +1022,8 @@ describe('HerdrEngine.update', () => {
     expect(installPinnedEngineBinary).toHaveBeenCalled();
     expect(result).toMatchObject({
       updated: false,
-      message: `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Herdr Desktop to install it.`,
-      error: `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Herdr Desktop to install it.`,
+      message: `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Drover to install it.`,
+      error: `The pinned engine release v${PINNED_ENGINE.version} is not published yet; update Drover to install it.`,
     });
   });
 

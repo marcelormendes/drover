@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name=Herdr Desktop
+Name=Drover
 Comment=A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.
-Exec=herdr-desktop-wrapper.sh
-Icon=io.github.marcelormendes.herdr-desktop
+Exec=drover-wrapper.sh
+Icon=io.github.marcelormendes.drover
 Terminal=false
 Categories=Development;Utility;
-StartupWMClass=Herdr Desktop
+StartupWMClass=Drover

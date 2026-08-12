@@ -9,7 +9,7 @@ const FLATHUB_MANIFEST = path.join(
   ROOT,
   'packaging',
   'flathub',
-  'io.github.marcelormendes.herdr-desktop.yml',
+  'io.github.marcelormendes.drover.yml',
 );
 const FLATHUB_JSON = path.join(ROOT, 'packaging', 'flathub', 'flathub.json');
 
@@ -22,9 +22,9 @@ describe('AUR packaging contract', () => {
 
     // Prebuilt upstream artifact while source is available -> -bin suffix,
     // providing/conflicting with the source package name.
-    expect(pkgbuild).toMatch(/^pkgname=herdr-desktop-bin$/m);
-    expect(pkgbuild).toContain("provides=('herdr-desktop')");
-    expect(pkgbuild).toContain("conflicts=('herdr-desktop')");
+    expect(pkgbuild).toMatch(/^pkgname=drover-bin$/m);
+    expect(pkgbuild).toContain("provides=('drover')");
+    expect(pkgbuild).toContain("conflicts=('drover')");
     expect(aurVersion).toBeDefined();
     expect(
       aurVersion?.localeCompare(packageVersion, undefined, { numeric: true, sensitivity: 'base' }),
@@ -34,7 +34,7 @@ describe('AUR packaging contract', () => {
     // The AppImage is a self-contained ELF; stripping destroys it.
     expect(pkgbuild).toContain("options=('!strip' '!debug')");
     expect(pkgbuild).toContain(
-      'herdr-desktop-linux-x86_64.AppImage::https://github.com/marcelormendes/herdr-desktop/releases/download/',
+      'drover-linux-x86_64.AppImage::https://github.com/marcelormendes/drover/releases/download/',
     );
 
     // Every source (AppImage, icon, LICENSE) must be pinned, none skipped.
@@ -51,9 +51,9 @@ describe('AUR packaging contract', () => {
     const aurVersion = pkgbuild.match(/^pkgver=(\d+\.\d+\.\d+)$/m)?.[1];
 
     expect(aurVersion).toBeDefined();
-    expect(lines).toContain('pkgbase = herdr-desktop-bin');
+    expect(lines).toContain('pkgbase = drover-bin');
     expect(lines).toContain(`pkgver = ${aurVersion}`);
-    expect(lines).toContain('pkgname = herdr-desktop-bin');
+    expect(lines).toContain('pkgname = drover-bin');
   });
 });
 
@@ -61,12 +61,12 @@ describe('Flathub submission contract', () => {
   it('pins the application identity, runtime, and trust boundary', () => {
     const manifest = readFileSync(FLATHUB_MANIFEST, 'utf8');
 
-    expect(manifest).toContain('app-id: io.github.marcelormendes.herdr-desktop');
+    expect(manifest).toContain('app-id: io.github.marcelormendes.drover');
     expect(manifest).toContain("runtime-version: '25.08'");
     expect(manifest).toContain('base: org.electronjs.Electron2.BaseApp');
     expect(manifest).toContain('--talk-name=org.freedesktop.Flatpak');
     expect(manifest).toContain('--filesystem=xdg-config/herdr:create');
-    expect(manifest).toContain('--filesystem=xdg-data/herdr-desktop:create');
+    expect(manifest).toContain('--filesystem=xdg-data/drover:create');
     expect(manifest).toContain('patch-electron-desktop-filename');
     expect(manifest).toContain('__VERSION__');
   });
@@ -75,7 +75,7 @@ describe('Flathub submission contract', () => {
     const manifest = readFileSync(FLATHUB_MANIFEST, 'utf8');
 
     const archiveUrl = manifest.match(
-      /url: (https:\/\/github\.com\/marcelormendes\/herdr-desktop\/releases\/download\/(v\d+\.\d+\.\d+)\/herdr-desktop-linux-x64\.zip)/,
+      /url: (https:\/\/github\.com\/marcelormendes\/drover\/releases\/download\/(v\d+\.\d+\.\d+)\/drover-linux-x64\.zip)/,
     );
     const gitTag = manifest.match(/tag: (v\d+\.\d+\.\d+)/);
 

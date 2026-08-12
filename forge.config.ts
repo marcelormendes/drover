@@ -36,9 +36,9 @@ function notarizationCredentials() {
 
 const config: ForgeConfig = {
   packagerConfig: {
-    appBundleId: 'dev.herdr.desktop',
+    appBundleId: 'io.github.marcelormendes.drover',
     appCategoryType: 'public.app-category.developer-tools',
-    appCopyright: 'Copyright © 2026 Herdr Desktop contributors',
+    appCopyright: 'Copyright © 2026 Drover contributors',
     asar: true,
     extendInfo: {
       CFBundleDisplayName: APP_NAME,

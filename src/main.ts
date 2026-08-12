@@ -52,7 +52,7 @@ import type { RemoteEngineStatus, RemoteEngineTarget } from '@/shared/remote-eng
 function defaultHerdrBinary(): string {
   return (
     resolveHerdrBinary({
-      envBinary: process.env.HERDR_DESKTOP_BIN,
+      envBinary: process.env.DROVER_BIN,
       home: homedir(),
       pathEntries: (process.env.PATH ?? '').split(':'),
       canExecute: (file) => {
@@ -157,8 +157,8 @@ const eventSubscription = new HerdrEventSubscription(
 // only re-open the event stream when the session actually changed, or the
 // pill flickers through connecting/disconnected on every refresh.
 const sessionTracker = new ConnectedSessionTracker(eventSubscription);
-const demoMode = !app.isPackaged && process.env.HERDR_DESKTOP_DEMO === '1';
-const smokeTestMode = process.env.HERDR_DESKTOP_SMOKE_TEST === '1';
+const demoMode = !app.isPackaged && process.env.DROVER_DEMO === '1';
+const smokeTestMode = process.env.DROVER_SMOKE_TEST === '1';
 const packagedRendererPath = path.join(
   __dirname,
   `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`,
@@ -587,7 +587,7 @@ if (!started) {
     desktopPreferences = new DesktopPreferencesStore(
       path.join(app.getPath('userData'), 'desktop-preferences.json'),
     );
-    if (!process.env.HERDR_DESKTOP_BIN) {
+    if (!process.env.DROVER_BIN) {
       const selectedBinary = await binaryPreference.read();
       if (selectedBinary) {
         configureHerdrBinary(selectedBinary);

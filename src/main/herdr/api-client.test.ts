@@ -26,7 +26,7 @@ afterEach(async () => {
 async function socketServer(
   onRequest: (request: Record<string, unknown>) => Record<string, unknown>,
 ): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), 'herdr-desktop-api-'));
+  const directory = await mkdtemp(path.join(tmpdir(), 'drover-api-'));
   const socketPath = path.join(directory, 'api.sock');
   cleanupDirectories.push(directory);
 

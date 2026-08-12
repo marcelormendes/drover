@@ -25,7 +25,7 @@ export function isAllowedExternalUrl(candidate: string): boolean {
         url.pathname === '/herdrdev/herdr' ||
         url.pathname.startsWith('/herdrdev/herdr/') ||
         // Only the exact latest-release page is needed for desktop updates.
-        url.pathname === '/marcelormendes/herdr-desktop/releases/latest'
+        url.pathname === '/marcelormendes/drover/releases/latest'
       );
     }
 

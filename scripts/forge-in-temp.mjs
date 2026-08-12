@@ -12,11 +12,11 @@ if (command !== 'make' && command !== 'test-package') {
 }
 
 const projectDirectory = process.cwd();
-const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'herdr-desktop-forge-'));
+const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'drover-forge-'));
 const temporaryOut = path.join(temporaryRoot, 'out');
-const requestedArch = process.env.HERDR_DESKTOP_ARCH;
+const requestedArch = process.env.DROVER_ARCH;
 if (requestedArch && requestedArch !== 'arm64' && requestedArch !== 'x64') {
-  throw new Error('HERDR_DESKTOP_ARCH must be arm64 or x64.');
+  throw new Error('DROVER_ARCH must be arm64 or x64.');
 }
 const targetArch = requestedArch || process.arch;
 function run(program, args, options = {}) {
@@ -53,12 +53,9 @@ try {
   }
 
   if (command === 'test-package') {
-    const packageDirectory = path.join(
-      temporaryOut,
-      `Herdr Desktop-${process.platform}-${targetArch}`,
-    );
+    const packageDirectory = path.join(temporaryOut, `Drover-${process.platform}-${targetArch}`);
     await run(process.execPath, [path.join(projectDirectory, 'scripts', 'smoke-packaged.mjs')], {
-      env: { ...process.env, HERDR_DESKTOP_PACKAGE_DIR: packageDirectory },
+      env: { ...process.env, DROVER_PACKAGE_DIR: packageDirectory },
     });
   } else {
     const source = path.join(temporaryOut, 'make');

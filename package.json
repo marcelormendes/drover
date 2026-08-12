@@ -1,7 +1,7 @@
 {
-  "name": "herdr-desktop",
-  "productName": "Herdr Desktop",
-  "version": "0.1.16",
+  "name": "drover",
+  "productName": "Drover",
+  "version": "0.1.17",
   "description": "A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.",
   "main": ".vite/build/main.js",
   "private": true,
@@ -27,7 +27,7 @@
     "desktop",
     "electron"
   ],
-  "author": "Herdr Desktop contributors",
+  "author": "Drover contributors",
   "license": "MIT",
   "engines": {
     "node": ">=22.12.0"
