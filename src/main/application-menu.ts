@@ -23,7 +23,7 @@ export function applicationMenuTemplate(
   const firstMenu: MenuItemConstructorOptions =
     platform === 'darwin'
       ? {
-          label: 'Herdr Desktop',
+          label: 'Drover',
           submenu: [
             { role: 'about' },
             { type: 'separator' },

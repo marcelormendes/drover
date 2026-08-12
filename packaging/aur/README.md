@@ -1,12 +1,12 @@
-# AUR package — herdr-desktop-bin
+# AUR package — drover-bin
 
-Arch/omarchy package for Herdr Desktop. Based on the official GitHub Release
+Arch/omarchy package for Drover. Based on the official GitHub Release
 AppImage (the exact artifact CI builds and validates), installed to
-`/usr/bin/herdr-desktop` with a system desktop entry and icon.
+`/usr/bin/drover` with a system desktop entry and icon.
 
-Named `herdr-desktop-bin` per AUR rules (prebuilt upstream artifact while
-source is available), with `provides=('herdr-desktop')` and
-`conflicts=('herdr-desktop')`.
+Named `drover-bin` per AUR rules (prebuilt upstream artifact while
+source is available), with `provides=('drover')` and
+`conflicts=('drover')`.
 
 ## Files
 
@@ -25,7 +25,7 @@ source is available), with `provides=('herdr-desktop')` and
 cd packaging/aur
 makepkg -f             # build without installing (no root)
 makepkg -si            # build and install (root)
-herdr-desktop          # launch (fuse2 provides FUSE mounting)
+drover          # launch (fuse2 provides FUSE mounting)
 ```
 
 ## Release flow (per version)
@@ -34,7 +34,7 @@ herdr-desktop          # launch (fuse2 provides FUSE mounting)
    `checksums.sha256`; icon + LICENSE from the tagged raw files); bump
    `pkgrel` if the packaging changed without a new upstream version.
 2. `makepkg --printsrcinfo > .SRCINFO`
-3. Commit and push to the AUR repository `aur.archlinux.org/herdr-desktop-bin.git`
+3. Commit and push to the AUR repository `aur.archlinux.org/drover-bin.git`
    (maintainer step; requires AUR SSH access).
 
 ## Notes

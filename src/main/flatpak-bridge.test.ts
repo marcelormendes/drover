@@ -54,7 +54,7 @@ describe('Herdr command runner host boundary', () => {
     );
   });
 
-  it('prefixes commands with flatpak-spawn --host inside the Herdr Desktop Flatpak', async () => {
+  it('prefixes commands with flatpak-spawn --host inside the Drover Flatpak', async () => {
     vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
     vi.stubEnv('HERDR_SOCKET_PATH', '');
     vi.stubEnv('HERDR_CLIENT_SOCKET_PATH', '');
@@ -107,7 +107,7 @@ describe('Herdr server launcher host boundary', () => {
     );
   });
 
-  it('spawns the server through flatpak-spawn --host inside the Herdr Desktop Flatpak', async () => {
+  it('spawns the server through flatpak-spawn --host inside the Drover Flatpak', async () => {
     vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
     vi.stubEnv('HERDR_SOCKET_PATH', '');
     vi.stubEnv('HERDR_CLIENT_SOCKET_PATH', '');

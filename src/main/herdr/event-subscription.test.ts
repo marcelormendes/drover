@@ -14,7 +14,7 @@ afterEach(async () => {
 
 describe('HerdrEventSubscription', () => {
   it('subscribes to lifecycle and pane-specific events, then forwards pushed envelopes', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'herdr-desktop-events-'));
+    const directory = await mkdtemp(path.join(tmpdir(), 'drover-events-'));
     const socketPath = path.join(directory, 'api.sock');
     const server = createServer((socket) => {
       let buffer = '';
@@ -65,7 +65,7 @@ describe('HerdrEventSubscription', () => {
   });
 
   it('resolves a fresh target before reconnecting after the event stream ends', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'herdr-desktop-events-reconnect-'));
+    const directory = await mkdtemp(path.join(tmpdir(), 'drover-events-reconnect-'));
     const socketPath = path.join(directory, 'api.sock');
     const subscriptions: Array<Array<Record<string, unknown>>> = [];
     let connectionCount = 0;
@@ -150,7 +150,7 @@ describe('HerdrEventSubscription', () => {
 
 describe('HerdrEventSubscription conversation panes', () => {
   it('does not reopen the subscription when the conversation pane set is unchanged', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'herdr-desktop-events-'));
+    const directory = await mkdtemp(path.join(tmpdir(), 'drover-events-'));
     const socketPath = path.join(directory, 'api.sock');
     let subscribeCount = 0;
     const server = createServer((socket) => {

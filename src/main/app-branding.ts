@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-export const APP_NAME = 'Herdr Desktop';
+export const APP_NAME = 'Drover';
 export const APP_DESCRIPTION =
   'A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.';
 
@@ -30,7 +30,7 @@ export function configureApplicationBranding(
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
     applicationVersion: app.getVersion(),
-    copyright: 'Copyright © 2026 Herdr Desktop contributors',
+    copyright: 'Copyright © 2026 Drover contributors',
     credits: APP_DESCRIPTION,
   });
   if (platform === 'darwin' && !isPackaged) {

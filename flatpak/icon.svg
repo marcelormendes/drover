@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
-  <title id="title">Herdr Desktop</title>
+  <title id="title">Drover</title>
   <!-- Hard offset shadow: sits 40px down-right of the blue square. -->
   <rect x="152" y="152" width="800" height="800" rx="184" fill="#000000"/>
   <!-- Blue square centered on the 1024 canvas (112..912 = center 512). -->

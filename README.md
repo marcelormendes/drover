@@ -1,8 +1,8 @@
-# Herdr Desktop
+# Drover
 
-Herdr Desktop is a standalone graphical client for [Herdr](https://github.com/herdrdev/herdr). It provides the Herdr workspace, tab, pane, terminal, and agent experience as a native desktop interface while keeping Herdr as the only engine and runtime authority.
+Drover is an independent graphical client for [Herdr](https://github.com/herdrdev/herdr). It provides the Herdr workspace, tab, pane, terminal, and agent experience as a native desktop interface while keeping Herdr as the only engine and runtime authority. Drover is not affiliated with or endorsed by the Herdr project.
 
-[Website](https://marcelormendes.github.io/herdr-desktop/) · [Downloads](https://github.com/marcelormendes/herdr-desktop/releases/latest)
+[Website](https://marcelormendes.github.io/drover/) · [Downloads](https://github.com/marcelormendes/drover/releases/latest)
 
 The project is intentionally not a Herdr fork and not a Herdr plugin. It can track upstream Herdr without maintaining a parallel copy of its engine.
 
@@ -46,32 +46,32 @@ The renderer is sandboxed and has no Node.js access. IPC senders and payloads ar
 - Node.js 22.12 or newer and npm 11.7 for development.
 - A current stable Herdr installation. The app checks the running server protocol instead of bundling or replacing Herdr.
 
-If `herdr` is not on `PATH`, open Settings and choose the executable. For development and automation, `HERDR_DESKTOP_BIN=/absolute/path/to/herdr` takes priority over the saved selection.
+If `herdr` is not on `PATH`, open Settings and choose the executable. For development and automation, `DROVER_BIN=/absolute/path/to/herdr` takes priority over the saved selection.
 
 ## Linux
 
 Install the latest release per-user (no root) with one command:
 
 ```sh
-curl -fsSL https://marcelormendes.github.io/herdr-desktop/install.sh | sh
+curl -fsSL https://marcelormendes.github.io/drover/install.sh | sh
 ```
 
-The installer downloads the AppImage, verifies its SHA-256 against the checksums published with the release, and adds a menu entry under `~/.local/share/applications`. Pin a version with `--version v0.1.8`, remove everything it wrote with `--uninstall`, or grab the AppImage, `.deb`, or `.rpm` manually from the [releases page](https://github.com/marcelormendes/herdr-desktop/releases/latest).
+The installer downloads the AppImage, verifies its SHA-256 against the checksums published with the release, and adds a menu entry under `~/.local/share/applications`. Pin a version with `--version v0.1.8`, remove everything it wrote with `--uninstall`, or grab the AppImage, `.deb`, or `.rpm` manually from the [releases page](https://github.com/marcelormendes/drover/releases/latest).
 
-The AppImage's runtime carries its own FUSE support (statically linked), so the system libfuse libraries are not needed. If launch fails with a FUSE mount error (containers, restricted `/dev/fuse`, or no mount helper), force self-extraction with `APPIMAGE_EXTRACT_AND_RUN=1 herdr-desktop` (or pass `--appimage-extract-and-run`).
+The AppImage's runtime carries its own FUSE support (statically linked), so the system libfuse libraries are not needed. If launch fails with a FUSE mount error (containers, restricted `/dev/fuse`, or no mount helper), force self-extraction with `APPIMAGE_EXTRACT_AND_RUN=1 drover` (or pass `--appimage-extract-and-run`).
 
 ### Flatpak
 
 Every release also publishes a Flatpak bundle as a manual GitHub Release download:
 
 ```sh
-flatpak install --user ./herdr-desktop-linux-x86_64.flatpak
-flatpak run io.github.marcelormendes.herdr-desktop
+flatpak install --user ./drover-linux-x86_64.flatpak
+flatpak run io.github.marcelormendes.drover
 ```
 
-Remove it with `flatpak uninstall --user io.github.marcelormendes.herdr-desktop`.
+Remove it with `flatpak uninstall --user io.github.marcelormendes.drover`.
 
-This bundle is updated by installing a newer release; it is not a Flathub or repository-backed package. Herdr Desktop requests host command access (`flatpak-spawn --host`) because it controls the host Herdr engine, its sockets, terminals, and SSH tunnels — Flatpak manages installation and desktop integration, not a security boundary between the application and the host.
+This bundle is updated by installing a newer release; it is not a Flathub or repository-backed package. Drover requests host command access (`flatpak-spawn --host`) because it controls the host Herdr engine, its sockets, terminals, and SSH tunnels — Flatpak manages installation and desktop integration, not a security boundary between the application and the host.
 
 ## Development
 
@@ -117,7 +117,7 @@ The complete interface uses the current [Neobrutalism Components](https://www.ne
 
 ## Distribution
 
-`npm run make` produces platform-appropriate Electron Forge artifacts. On macOS this includes a ZIP archive and DMG with the Herdr Desktop icon. Build intermediates live in the operating system's temporary directory so macOS File Provider metadata cannot contaminate the app signature when the repository is inside Documents or iCloud Drive.
+`npm run make` produces platform-appropriate Electron Forge artifacts. On macOS this includes a ZIP archive and DMG with the Drover icon. Build intermediates live in the operating system's temporary directory so macOS File Provider metadata cannot contaminate the app signature when the repository is inside Documents or iCloud Drive.
 
 Pushing a version tag such as `v0.1.5`, or manually running the **Release** workflow for the same package version, builds separate Apple Silicon and Intel artifacts. The workflow signs the app with Developer ID, notarizes the app and DMG with Apple, staples the notarization ticket, validates Gatekeeper acceptance, generates SHA-256 checksums, and publishes the files in a GitHub Release. The same release publishes Linux AppImage, DEB, and RPM artifacts built on `ubuntu-latest`. Credentials are held only as encrypted repository secrets.
 
@@ -125,4 +125,4 @@ Windows release automation will be added separately. Local builds without releas
 
 ## Relationship to Herdr
 
-Herdr Desktop is an independent client project. Herdr and its name belong to the upstream Herdr project and contributors. This repository does not modify Herdr and does not persist a second source of runtime truth.
+Drover is an independent client project and is not affiliated with or endorsed by the upstream Herdr project. Herdr and its name belong to the Herdr project and contributors. This repository uses Herdr only to identify the compatible engine; it does not modify Herdr or persist a second source of runtime truth.

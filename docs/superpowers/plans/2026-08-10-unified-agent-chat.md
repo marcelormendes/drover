@@ -1,7 +1,7 @@
 # Unified Agent Chat Implementation Plan
 
 **Design:** `docs/superpowers/specs/2026-08-10-unified-agent-chat-design.md`
-**Repositories:** Herdr engine and Herdr Desktop
+**Repositories:** Herdr engine and Drover
 **Execution:** TDD, no commits, no pushes, no PR, no merge, no release
 
 ## Working boundaries

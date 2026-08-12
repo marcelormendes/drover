@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe('isFlatpakHost', () => {
-  it('is false outside the Herdr Desktop Flatpak', () => {
+  it('is false outside the Drover Flatpak', () => {
     vi.stubEnv('FLATPAK_ID', '');
     expect(isFlatpakHost()).toBe(false);
 
@@ -30,7 +30,7 @@ describe('isFlatpakHost', () => {
     expect(isFlatpakHost()).toBe(false);
   });
 
-  it('is true only for the Herdr Desktop application ID', () => {
+  it('is true only for the Drover application ID', () => {
     vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
     expect(isFlatpakHost()).toBe(true);
 
@@ -91,14 +91,14 @@ describe('host and sandbox path translation', () => {
     vi.stubEnv('HOST_XDG_DATA_HOME', '/host-data');
     vi.stubEnv('HOST_XDG_CONFIG_HOME', '/host-config');
 
-    expect(hostPathFromSandboxPath('/sandbox-data/herdr-desktop/chat-images/a.png')).toBe(
-      '/host-data/herdr-desktop/chat-images/a.png',
+    expect(hostPathFromSandboxPath('/sandbox-data/drover/chat-images/a.png')).toBe(
+      '/host-data/drover/chat-images/a.png',
     );
     expect(hostPathFromSandboxPath('/sandbox-config/herdr/herdr.sock')).toBe(
       '/host-config/herdr/herdr.sock',
     );
-    expect(sandboxPathFromHostPath('/host-data/herdr-desktop/remote/r.sock')).toBe(
-      '/sandbox-data/herdr-desktop/remote/r.sock',
+    expect(sandboxPathFromHostPath('/host-data/drover/remote/r.sock')).toBe(
+      '/sandbox-data/drover/remote/r.sock',
     );
     expect(sandboxPathFromHostPath('/host-config/herdr/herdr.sock')).toBe(
       '/sandbox-config/herdr/herdr.sock',
@@ -117,9 +117,7 @@ describe('host and sandbox path translation', () => {
     expect(sandboxPathFromHostPath('/host-config-extra/y')).toBe('/host-config-extra/y');
     expect(hostPathFromSandboxPath('/sandbox-data-other/x')).toBe('/sandbox-data-other/x');
     expect(hostPathFromSandboxPath('/unrelated/path')).toBe('/unrelated/path');
-    expect(hostPathFromSandboxPath('/tmp/herdr-desktop-remote.sock')).toBe(
-      '/tmp/herdr-desktop-remote.sock',
-    );
+    expect(hostPathFromSandboxPath('/tmp/drover-remote.sock')).toBe('/tmp/drover-remote.sock');
   });
 });
 
@@ -204,6 +202,6 @@ describe('flatpakRemoteSocketDir', () => {
   it('places remote bridge sockets under the sandbox remote grant directory', () => {
     vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
     vi.stubEnv('XDG_DATA_HOME', '/sandbox-data');
-    expect(flatpakRemoteSocketDir()).toBe(path.join('/sandbox-data', 'herdr-desktop', 'remote'));
+    expect(flatpakRemoteSocketDir()).toBe(path.join('/sandbox-data', 'drover', 'remote'));
   });
 });

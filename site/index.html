@@ -5,16 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Herdr Desktop is the native workspace for Herdr-powered agents, terminals, worktrees, and live sessions."
+      content="Drover is the native workspace for Herdr-powered agents, terminals, worktrees, and live sessions."
     />
     <meta name="theme-color" content="#6e91ff" />
-    <meta property="og:title" content="Herdr Desktop" />
+    <meta property="og:title" content="Drover" />
     <meta
       property="og:description"
       content="Run the herd without living in the terminal."
     />
     <meta property="og:type" content="website" />
-    <title>Herdr Desktop — The herd, in a native workspace</title>
+    <title>Drover — The herd, in a native workspace</title>
     <link rel="icon" href="./icon.png" />
     <link rel="apple-touch-icon" href="./icon.png" />
     <link rel="stylesheet" href="./styles.css" />
@@ -22,15 +22,15 @@
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
-      <a class="brand" href="./" aria-label="Herdr Desktop home">
-        <img src="./icon.png" width="44" height="44" alt="Herdr Desktop" />
-        <span>HERDR <b>DESKTOP</b></span>
+      <a class="brand" href="./" aria-label="Drover home">
+        <img src="./icon.png" width="44" height="44" alt="Drover" />
+        <span>DROVER</span>
       </a>
       <nav aria-label="Primary navigation">
         <a href="#features">Features</a>
         <a href="#install">Install</a>
         <a
-          href="https://github.com/marcelormendes/herdr-desktop"
+          href="https://github.com/marcelormendes/drover"
           target="_blank"
           rel="noreferrer"
         >GitHub</a>
@@ -43,17 +43,17 @@
           <p class="eyebrow">NATIVE MACOS CLIENT · POWERED BY HERDR</p>
           <h1>Run the herd without living in the terminal.</h1>
           <p class="lede">
-            Herdr Desktop turns the Herdr workspace, agents, panes, and worktrees into one focused
+            Drover turns the Herdr workspace, agents, panes, and worktrees into one focused
             graphical command center—while Herdr remains the engine and source of truth.
           </p>
           <div class="actions">
             <a
               class="button primary"
-              href="https://github.com/marcelormendes/herdr-desktop/releases/latest"
+              href="https://github.com/marcelormendes/drover/releases/latest"
             >Download for macOS</a>
             <a
               class="button"
-              href="https://github.com/marcelormendes/herdr-desktop"
+              href="https://github.com/marcelormendes/drover"
               target="_blank"
               rel="noreferrer"
             >View source</a>
@@ -64,19 +64,19 @@
         <div
           class="app-window"
           role="img"
-          aria-label="Stylized preview of the Herdr Desktop application"
+          aria-label="Stylized preview of the Drover application"
         >
           <div class="window-bar">
             <span class="traffic red"></span>
             <span class="traffic yellow"></span>
             <span class="traffic green"></span>
-            <strong>HERDR</strong>
+            <strong>DROVER</strong>
             <span class="window-path">~/workspace</span>
           </div>
           <div class="window-body">
             <aside class="mock-sidebar">
               <span class="mock-label">WORKSPACES</span>
-              <div class="mock-item active">herdr-desktop</div>
+              <div class="mock-item active">drover</div>
               <div class="mock-item">bug-reviewer</div>
               <span class="mock-label agents-label">AGENTS</span>
               <div class="agent-row"><i class="dot working"></i> Codex <b>working</b></div>
@@ -143,39 +143,39 @@
         <ol class="steps">
           <li><b>Install Herdr</b><span>Use the current stable Herdr CLI and start its local server.</span></li>
           <li><b>Download the app</b><span>Choose the notarized DMG for Apple Silicon or Intel.</span></li>
-          <li><b>Start the herd</b><span>Herdr Desktop discovers the engine and opens your live workspace.</span></li>
+          <li><b>Start the herd</b><span>Drover discovers the engine and opens your live workspace.</span></li>
         </ol>
         <a
           class="button primary install-button"
-          href="https://github.com/marcelormendes/herdr-desktop/releases/latest"
-        >Get Herdr Desktop</a>
+          href="https://github.com/marcelormendes/drover/releases/latest"
+        >Get Drover</a>
 
         <div class="linux-install">
           <h3>Linux</h3>
           <p>Install per-user with one command — no root, no package manager.</p>
-          <pre><code>curl -fsSL https://marcelormendes.github.io/herdr-desktop/install.sh | sh</code></pre>
+          <pre><code>curl -fsSL https://marcelormendes.github.io/drover/install.sh | sh</code></pre>
           <p class="linux-alt">
-            Prefer Flatpak? Download <code>herdr-desktop-linux-x86_64.flatpak</code> from the
-            <a href="https://github.com/marcelormendes/herdr-desktop/releases/latest">releases page</a>
+            Prefer Flatpak? Download <code>drover-linux-x86_64.flatpak</code> from the
+            <a href="https://github.com/marcelormendes/drover/releases/latest">releases page</a>
             and install it per-user:
           </p>
-          <pre><code>flatpak install --user ./herdr-desktop-linux-x86_64.flatpak
-flatpak run io.github.marcelormendes.herdr-desktop</code></pre>
+          <pre><code>flatpak install --user ./drover-linux-x86_64.flatpak
+flatpak run io.github.marcelormendes.drover</code></pre>
           <p class="linux-alt">
             Remove it with
-            <code>flatpak uninstall --user io.github.marcelormendes.herdr-desktop</code>.
+            <code>flatpak uninstall --user io.github.marcelormendes.drover</code>.
             This bundle is updated by installing a newer release; it is not a
             Flathub or repository-backed package. It requests host command access
-            because Herdr Desktop controls the host Herdr engine and terminals.
+            because Drover controls the host Herdr engine and terminals.
           </p>
         </div>
       </section>
     </main>
 
     <footer>
-      <span>Herdr Desktop is an independent client for Herdr.</span>
+      <span>Drover is an independent desktop client for Herdr and is not affiliated with or endorsed by the Herdr project.</span>
       <a href="https://github.com/herdrdev/herdr">Herdr engine</a>
-      <a href="https://github.com/marcelormendes/herdr-desktop">Source</a>
+      <a href="https://github.com/marcelormendes/drover">Source</a>
     </footer>
   </body>
 </html>

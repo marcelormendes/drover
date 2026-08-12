@@ -6,7 +6,7 @@ describe('applicationMenuTemplate', () => {
   it('routes native desktop accelerators to renderer-owned Herdr actions', () => {
     const onAction = vi.fn();
     const template = applicationMenuTemplate('darwin', onAction);
-    const appMenu = template.find((item) => item.label === 'Herdr Desktop');
+    const appMenu = template.find((item) => item.label === 'Drover');
     const sessionMenu = template.find((item) => item.label === 'Session');
     const workspaceMenu = template.find((item) => item.label === 'Workspace');
     const paneMenu = template.find((item) => item.label === 'Pane');

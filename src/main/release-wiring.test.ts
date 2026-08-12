@@ -11,7 +11,7 @@ describe('macOS release wiring', () => {
     expect(workflow).toContain('workflow_dispatch:');
     expect(workflow).toContain('matrix:');
     expect(workflow).toContain('arch: [arm64, x64]');
-    expect(workflow).toMatch(/HERDR_DESKTOP_ARCH: [$][{][{] matrix[.]arch [}][}]/u);
+    expect(workflow).toMatch(/DROVER_ARCH: [$][{][{] matrix[.]arch [}][}]/u);
     expect(workflow).toContain('npm run verify');
   });
 
@@ -31,8 +31,8 @@ describe('macOS release wiring', () => {
   it('publishes stable DMG, ZIP, and checksum names to a GitHub Release', async () => {
     const workflow = await read('.github/workflows/release.yml');
 
-    expect(workflow).toMatch(/herdr-desktop-macos-[$][{]RELEASE_ARCH[}][.]dmg/u);
-    expect(workflow).toMatch(/herdr-desktop-macos-[$][{]RELEASE_ARCH[}][.]zip/u);
+    expect(workflow).toMatch(/drover-macos-[$][{]RELEASE_ARCH[}][.]dmg/u);
+    expect(workflow).toMatch(/drover-macos-[$][{]RELEASE_ARCH[}][.]zip/u);
     expect(workflow).toContain('checksums.sha256');
     expect(workflow).toContain('gh release create');
     expect(workflow).toContain('gh release upload');
@@ -54,13 +54,13 @@ describe('macOS release wiring', () => {
     expect(workflow).toContain('name: linux-x64');
     expect(workflow).toContain('pattern: "{macos-*,linux-*}"');
     expect(workflow).toContain('needs: [prepare, macos, linux]');
-    expect(workflow).toContain('herdr-desktop-linux-x86_64.AppImage');
-    expect(workflow).toContain('herdr-desktop-linux-amd64.deb');
-    expect(workflow).toContain('herdr-desktop-linux-x86_64.rpm');
-    expect(workflow).toContain('herdr-desktop-linux-x64.zip');
-    expect(workflow).toContain('herdr-desktop-linux-x86_64.flatpak');
+    expect(workflow).toContain('drover-linux-x86_64.AppImage');
+    expect(workflow).toContain('drover-linux-amd64.deb');
+    expect(workflow).toContain('drover-linux-x86_64.rpm');
+    expect(workflow).toContain('drover-linux-x64.zip');
+    expect(workflow).toContain('drover-linux-x86_64.flatpak');
     expect(workflow).toContain('npm run build:flatpak');
-    expect(workflow).toContain('sha256sum herdr-desktop-* > checksums.sha256');
+    expect(workflow).toContain('sha256sum drover-* > checksums.sha256');
   });
 
   it('points the Linux DEB and RPM makers at the packaged executable', async () => {
@@ -75,7 +75,7 @@ describe('macOS release wiring', () => {
     const runner = await read('scripts/forge-in-temp.mjs');
     const forge = await read('forge.config.ts');
 
-    expect(runner).toContain('HERDR_DESKTOP_ARCH');
+    expect(runner).toContain('DROVER_ARCH');
     expect(forge).toContain('osxSign');
     expect(forge).toContain('osxNotarize');
     expect(forge).toContain('if (forgeConfig.packagerConfig.osxSign)');

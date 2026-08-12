@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 async function store(): Promise<{ preferences: DesktopPreferencesStore; file: string }> {
-  const directory = await mkdtemp(path.join(tmpdir(), 'herdr-desktop-preferences-'));
+  const directory = await mkdtemp(path.join(tmpdir(), 'drover-preferences-'));
   cleanup.push(directory);
   const file = path.join(directory, 'desktop-preferences.json');
   return { preferences: new DesktopPreferencesStore(file), file };

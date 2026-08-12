@@ -1,6 +1,6 @@
-# Contributing to Herdr Desktop
+# Contributing to Drover
 
-Thanks for helping improve Herdr Desktop. Contributions should keep Herdr as the runtime authority and preserve the security boundary described in the README.
+Thanks for helping improve Drover. Contributions should keep Herdr as the runtime authority and preserve the security boundary described in the README.
 
 ## Before opening a pull request
 

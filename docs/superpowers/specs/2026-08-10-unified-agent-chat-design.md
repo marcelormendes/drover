@@ -5,7 +5,7 @@
 
 ## Summary
 
-Herdr Desktop will provide one provider-neutral Chat experience for Pi, OMP, Codex, and Claude. The interaction and information hierarchy follow the useful parts of T3 Code's chat timeline, while all presentation remains native to Herdr Desktop's existing neobrutalist component library and design tokens.
+Drover will provide one provider-neutral Chat experience for Pi, OMP, Codex, and Claude. The interaction and information hierarchy follow the useful parts of T3 Code's chat timeline, while all presentation remains native to Drover's existing neobrutalist component library and design tokens.
 
 The Herdr engine, not the Desktop renderer, will own provider transcript discovery and normalization. Desktop will request a canonical conversation page and subscribe to conversation changes through the existing Herdr JSON API. Terminal mode remains the exact PTY view. Providers without a structured adapter keep Terminal access, while their Chat option is visibly disabled with a tooltip explaining that Chat is not currently supported.
 

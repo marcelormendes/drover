@@ -1,7 +1,7 @@
-import type { HerdrDesktopApi } from '@/shared/desktop-api';
+import type { DroverApi } from '@/shared/desktop-api';
 
 declare global {
   interface Window {
-    herdr: HerdrDesktopApi;
+    herdr: DroverApi;
   }
 }

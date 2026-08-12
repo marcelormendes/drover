@@ -89,7 +89,7 @@ describe('RemoteEngineTunnel', () => {
     expect(sshSpawn).not.toHaveBeenCalled();
   });
 
-  it('routes SSH through flatpak-spawn --host inside the Herdr Desktop Flatpak', async () => {
+  it('routes SSH through flatpak-spawn --host inside the Drover Flatpak', async () => {
     vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
     vi.stubEnv('HERDR_SOCKET_PATH', '');
     vi.stubEnv('HERDR_CLIENT_SOCKET_PATH', '');
@@ -111,10 +111,10 @@ describe('RemoteEngineTunnel', () => {
     vi.stubEnv('FLATPAK_ID', FLATPAK_APP_ID);
     vi.stubEnv('XDG_DATA_HOME', '/sandbox-data');
     expect(defaultTunnelSocketPath()).toBe(
-      path.join('/sandbox-data', 'herdr-desktop', 'remote', 'herdr-desktop-remote.sock'),
+      path.join('/sandbox-data', 'drover', 'remote', 'drover-remote.sock'),
     );
     expect(defaultTunnelClientSocketPath()).toBe(
-      path.join('/sandbox-data', 'herdr-desktop', 'remote', 'herdr-desktop-remote-client.sock'),
+      path.join('/sandbox-data', 'drover', 'remote', 'drover-remote-client.sock'),
     );
   });
 

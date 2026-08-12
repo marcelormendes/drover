@@ -1,11 +1,10 @@
 import type { DesktopUpdateInfo } from '@/shared/desktop-api';
 
 /** Release page users are sent to when a newer desktop build exists. */
-export const DESKTOP_RELEASE_PAGE_URL =
-  'https://github.com/marcelormendes/herdr-desktop/releases/latest';
+export const DESKTOP_RELEASE_PAGE_URL = 'https://github.com/marcelormendes/drover/releases/latest';
 
 const DESKTOP_RELEASES_API_URL =
-  'https://api.github.com/repos/marcelormendes/herdr-desktop/releases/latest';
+  'https://api.github.com/repos/marcelormendes/drover/releases/latest';
 
 const UPDATE_CHECK_TIMEOUT_MS = 10_000;
 
@@ -38,7 +37,7 @@ export function isNewerVersion(candidate: string, current: string): boolean {
 }
 
 /**
- * Checks the GitHub releases feed for the newest published Herdr Desktop.
+ * Checks the GitHub releases feed for the newest published Drover.
  * Never throws: a failed check reports `latestVersion: null` so the renderer
  * can surface "could not check" without breaking the rest of the UI.
  */

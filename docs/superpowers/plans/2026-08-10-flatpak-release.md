@@ -4,7 +4,7 @@ Design: `docs/superpowers/specs/2026-08-10-flatpak-release-design.md`
 
 ## Guardrails
 
-- Work only in `/home/marcelorm/workspace/herdr-desktop` on `main`, whose only
+- Work only in `/home/marcelorm/workspace/drover` on `main`, whose only
   starting changes are this approved plan and its design document.
 - Do not commit, push, open a PR, merge, tag, bump the version, publish an
   artifact, or dispatch a workflow.
@@ -38,13 +38,13 @@ Design: `docs/superpowers/specs/2026-08-10-flatpak-release-design.md`
    the explicit host<->sandbox XDG prefix translation (boundary-safe, identity
    outside Flatpak).
 2. Use the single narrow app-owned parent grant
-   (`xdg-data/herdr-desktop:create`) in Flatpak mode: stage at the sandbox
-   `$XDG_DATA_HOME` alias under `herdr-desktop/chat-images` (0700), return
+   (`xdg-data/drover:create`) in Flatpak mode: stage at the sandbox
+   `$XDG_DATA_HOME` alias under `drover/chat-images` (0700), return
    `$HOST_XDG_DATA_HOME`-form paths to the renderer/agent, with collision-safe
    filenames. Overlapping nested `xdg-data` grants are ignored by Flatpak
    1.14, so children are never granted separately.
 3. Place remote bridge sockets under the same parent grant
-   (`herdr-desktop/remote`, created 0700 by `createTcpBridge`); convert the
+   (`drover/remote`, created 0700 by `createTcpBridge`); convert the
    tunnel socket environment to host form before host processes see it, and
    translate host-form sockets reported by `herdr status` to the sandbox form
    centrally at status parsing.
@@ -60,7 +60,7 @@ Design: `docs/superpowers/specs/2026-08-10-flatpak-release-design.md`
 2. Use `org.freedesktop.Platform`, `org.freedesktop.Sdk`, and
    `org.electronjs.Electron2.BaseApp` branch `25.08`.
 3. Package the Forge Linux directory once, stage it under ignored `out/`, and
-   create `herdr-desktop-linux-x86_64.flatpak` with the Flathub runtime URL.
+   create `drover-linux-x86_64.flatpak` with the Flathub runtime URL.
 4. Make Electron use the Flatpak desktop filename without changing desktop
    identity on macOS, AppImage, DEB, or RPM.
 5. Validate metadata and fail clearly when tooling or inputs are missing.
@@ -81,7 +81,7 @@ Design: `docs/superpowers/specs/2026-08-10-flatpak-release-design.md`
 2. Keep the AppImage installer as the recommended Linux path.
 3. State that this GitHub bundle has no repository-backed automatic updates.
 4. State that host command access is intentional and means Flatpak is not a
-   sandbox boundary for Herdr Desktop.
+   sandbox boundary for Drover.
 
 ## Task 7: Verify and hand back
 

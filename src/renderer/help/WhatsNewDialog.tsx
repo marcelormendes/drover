@@ -50,7 +50,7 @@ export function WhatsNewDialog({
         <DialogHeader>
           <DialogTitle>What's new in {version}</DialogTitle>
           <DialogDescription>
-            Herdr Desktop translates the current TUI experience into a native graphical workflow.
+            Drover translates the current TUI experience into a native graphical workflow.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">

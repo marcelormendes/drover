@@ -127,7 +127,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          HERDR_DESKTOP_ARCH: ${{ matrix.arch }}
+          DROVER_ARCH: ${{ matrix.arch }}
           HERDR_MACOS_NOTARIZE: "1"
           HERDR_MACOS_SIGN_IDENTITY: ${{ secrets.HERDR_MACOS_SIGN_IDENTITY }}
         run: npm run make
@@ -143,8 +143,8 @@ jobs:
             exit 1
           fi
           mkdir -p dist/release
-          cp "${dmg_path}" "dist/release/herdr-desktop-macos-${RELEASE_ARCH}.dmg"
-          cp "${zip_path}" "dist/release/herdr-desktop-macos-${RELEASE_ARCH}.zip"
+          cp "${dmg_path}" "dist/release/drover-macos-${RELEASE_ARCH}.dmg"
+          cp "${zip_path}" "dist/release/drover-macos-${RELEASE_ARCH}.zip"
 
       - name: Notarize and staple the DMG
         env:
@@ -153,7 +153,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           RELEASE_ARCH: ${{ matrix.arch }}
         run: |
-          dmg_path="dist/release/herdr-desktop-macos-${RELEASE_ARCH}.dmg"
+          dmg_path="dist/release/drover-macos-${RELEASE_ARCH}.dmg"
           xcrun notarytool submit "${dmg_path}" \
             --apple-id "${APPLE_ID}" \
             --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
@@ -167,8 +167,8 @@ jobs:
           RELEASE_ARCH: ${{ matrix.arch }}
         run: |
           validation_dir="$(mktemp -d)"
-          ditto -x -k "dist/release/herdr-desktop-macos-${RELEASE_ARCH}.zip" "${validation_dir}"
-          app_path="${validation_dir}/Herdr Desktop.app"
+          ditto -x -k "dist/release/drover-macos-${RELEASE_ARCH}.zip" "${validation_dir}"
+          app_path="${validation_dir}/Drover.app"
           codesign --verify --deep --strict --verbose=2 "${app_path}"
           spctl --assess --type execute --verbose=2 "${app_path}"
 
@@ -231,11 +231,11 @@ jobs:
             exit 1
           fi
           mkdir -p dist/release
-          cp "${appimage_path}" "dist/release/herdr-desktop-linux-x86_64.AppImage"
-          cp "${deb_path}" "dist/release/herdr-desktop-linux-amd64.deb"
-          cp "${rpm_path}" "dist/release/herdr-desktop-linux-x86_64.rpm"
-          cp "${zip_path}" "dist/release/herdr-desktop-linux-x64.zip"
-          cp "${flatpak_path}" "dist/release/herdr-desktop-linux-x86_64.flatpak"
+          cp "${appimage_path}" "dist/release/drover-linux-x86_64.AppImage"
+          cp "${deb_path}" "dist/release/drover-linux-amd64.deb"
+          cp "${rpm_path}" "dist/release/drover-linux-x86_64.rpm"
+          cp "${zip_path}" "dist/release/drover-linux-x64.zip"
+          cp "${flatpak_path}" "dist/release/drover-linux-x86_64.flatpak"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -262,7 +262,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist/release
-          sha256sum herdr-desktop-* > checksums.sha256
+          sha256sum drover-* > checksums.sha256
 
       - name: Create or update GitHub Release
         env:
@@ -279,6 +279,6 @@ jobs:
             gh release create "${RELEASE_TAG}" dist/release/* \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${release_target}" \
-              --title "Herdr Desktop ${RELEASE_TAG}" \
+              --title "Drover ${RELEASE_TAG}" \
               --generate-notes
           fi

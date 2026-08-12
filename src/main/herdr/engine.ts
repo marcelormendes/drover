@@ -69,7 +69,7 @@ export interface HerdrRequestClient {
 }
 
 export class NodeHerdrCommandRunner implements HerdrCommandRunner {
-  constructor(readonly binary = process.env.HERDR_DESKTOP_BIN || 'herdr') {}
+  constructor(readonly binary = process.env.DROVER_BIN || 'herdr') {}
 
   async run(args: string[], options?: { timeoutMs?: number }): Promise<HerdrCommandResult> {
     const { program, args: bridgedArgs } = hostInvocation(this.binary, args);
@@ -85,7 +85,7 @@ export class NodeHerdrCommandRunner implements HerdrCommandRunner {
 }
 
 export class NodeHerdrServerLauncher implements HerdrServerLauncher {
-  constructor(private readonly binary = process.env.HERDR_DESKTOP_BIN || 'herdr') {}
+  constructor(private readonly binary = process.env.DROVER_BIN || 'herdr') {}
 
   launch(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -815,7 +815,7 @@ export class HerdrEngine {
     if (!asset) {
       const supported = hasPinnedEngineRelease(process.platform, process.arch);
       const message = supported
-        ? 'The pinned engine release is not published yet; update Herdr Desktop to install it.'
+        ? 'The pinned engine release is not published yet; update Drover to install it.'
         : `No pinned Herdr engine release for ${process.platform}-${process.arch}; install the official Herdr engine instead.`;
       return { bootstrap, updated: false, version: before, message, error: message };
     }

@@ -100,6 +100,6 @@ packaging/aur/pkg/
 packaging/aur/*.pkg.tar.*
 packaging/aur/*.pkg.tar.*.sig
 # makepkg downloads the sources into the package directory
-packaging/aur/herdr-desktop-linux-x86_64.AppImage
+packaging/aur/drover-linux-x86_64.AppImage
 packaging/aur/icon-1024.png
 packaging/aur/LICENSE

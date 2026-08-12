@@ -15,9 +15,9 @@ import type {
 import type {
   DesktopAction,
   DesktopUpdateInfo,
+  DroverApi,
   EngineUpdateResult,
   HerdrCommand,
-  HerdrDesktopApi,
   HerdrQuery,
   HerdrQueryResult,
 } from '@/shared/desktop-api';
@@ -40,7 +40,7 @@ function subscribe<T>(channel: string, listener: (value: T) => void): () => void
   return () => ipcRenderer.removeListener(channel, wrapped);
 }
 
-const api: HerdrDesktopApi = {
+const api: DroverApi = {
   bootstrap: () => ipcRenderer.invoke(IPC_CHANNELS.bootstrap) as Promise<EngineBootstrap>,
   startServer: () => ipcRenderer.invoke(IPC_CHANNELS.startServer) as Promise<EngineBootstrap>,
   command: (command: HerdrCommand) =>

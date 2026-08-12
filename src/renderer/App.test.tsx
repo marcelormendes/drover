@@ -107,7 +107,7 @@ const snapshot: SessionSnapshot = {
     {
       workspace_id: 'w1',
       number: 1,
-      label: 'herdr-desktop',
+      label: 'drover',
       focused: true,
       pane_count: 1,
       tab_count: 1,
@@ -154,7 +154,7 @@ const snapshot: SessionSnapshot = {
       workspace_id: 'w1',
       tab_id: 'w1:t1',
       focused: true,
-      cwd: '/code/herdr-desktop',
+      cwd: '/code/drover',
       label: 'Desktop UI',
       display_agent: 'Codex',
       agent_has_arguments: false,
@@ -199,7 +199,7 @@ const snapshot: SessionSnapshot = {
       launch_pending: false,
       interactive_ready: true,
       state_change_seq: 1,
-      cwd: '/code/herdr-desktop',
+      cwd: '/code/drover',
       revision: 1,
     },
   ],
@@ -278,7 +278,7 @@ describe('App', () => {
         currentVersion: packageMetadata.version,
         latestVersion: packageMetadata.version,
         updateAvailable: false,
-        releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+        releaseUrl: 'https://github.com/marcelormendes/drover/releases/latest',
       })),
       applyRemoteEngine: vi.fn(async (target) => ({
         state: 'off' as const,
@@ -308,7 +308,7 @@ describe('App', () => {
     const { container } = render(<App />);
 
     expect(screen.getByText('Connecting to Herdr')).toBeInTheDocument();
-    expect(await screen.findByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'drover' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /implementation/i })).toBeInTheDocument();
     expect(screen.getAllByText('Desktop UI')).not.toHaveLength(0);
     expect(screen.getByText('Engine connected')).toBeInTheDocument();
@@ -496,7 +496,7 @@ describe('App', () => {
     expect(screen.getByText('Preserved turn')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /release-notes/i }));
     expect(screen.queryByTestId('chat-w1:p1')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /herdr-desktop/i }));
+    await user.click(screen.getByRole('button', { name: 'Focus workspace drover' }));
 
     expect(await screen.findByText('Preserved turn')).toBeInTheDocument();
   });
@@ -623,7 +623,7 @@ describe('App', () => {
     try {
       render(<App />);
       await act(async () => {});
-      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
       expect(screen.getAllByText('Reviewer')).not.toHaveLength(0);
 
       act(() => sessionEvent?.({ event: 'layout.updated', data: {} }));
@@ -663,9 +663,9 @@ describe('App', () => {
             focused: false,
             worktree: {
               repo_key: 'repo-1',
-              repo_name: 'herdr-desktop',
-              repo_root: '/code/herdr-desktop',
-              checkout_path: '/code/herdr-desktop',
+              repo_name: 'drover',
+              repo_root: '/code/drover',
+              checkout_path: '/code/drover',
               is_linked_worktree: false,
             },
           },
@@ -674,8 +674,8 @@ describe('App', () => {
             focused: true,
             worktree: {
               repo_key: 'repo-1',
-              repo_name: 'herdr-desktop',
-              repo_root: '/code/herdr-desktop',
+              repo_name: 'drover',
+              repo_root: '/code/drover',
               checkout_path: '/worktrees/release-notes',
               is_linked_worktree: true,
             },
@@ -1125,9 +1125,7 @@ describe('App', () => {
     await user.click(screen.getByRole('menuitem', { name: 'More pane controls' }));
 
     expect(screen.getByRole('heading', { name: 'Pane controls and details' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Pane details' })).toHaveTextContent(
-      '/code/herdr-desktop',
-    );
+    expect(screen.getByRole('region', { name: 'Pane details' })).toHaveTextContent('/code/drover');
     await user.click(screen.getByRole('button', { name: 'Focus pane left' }));
 
     expect(window.herdr.command).toHaveBeenCalledWith({
@@ -1191,7 +1189,7 @@ describe('App', () => {
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     act(() => desktopAction?.('open-plugins'));
     expect(await screen.findByRole('heading', { name: 'Installed plugins' })).toBeInTheDocument();
@@ -1300,7 +1298,7 @@ describe('App', () => {
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     act(() => desktopAction?.('open-plugins'));
     expect(await screen.findByRole('heading', { name: 'Review tools' })).toBeInTheDocument();
@@ -1361,7 +1359,7 @@ describe('App', () => {
           workspace_id: 'w1',
           tab_id: 'w1:t2',
           focused: true,
-          cwd: '/code/herdr-desktop',
+          cwd: '/code/drover',
           label: 'plugin install',
           agent_status: 'idle',
           state_labels: {},
@@ -1374,7 +1372,7 @@ describe('App', () => {
     window.herdr.command = vi.fn(async () => installed);
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     act(() => desktopAction?.('open-plugins'));
     await user.type(
@@ -1418,7 +1416,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
     await user.click(screen.getByRole('button', { name: 'Settings' }));
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
@@ -1429,7 +1427,7 @@ describe('App', () => {
 
   it('opens settings and refreshes the Herdr snapshot with desktop shortcuts', async () => {
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     fireEvent.keyDown(window, { key: ',', metaKey: true });
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
@@ -1447,7 +1445,7 @@ describe('App', () => {
       return () => undefined;
     });
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     act(() => desktopAction?.('open-settings'));
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
@@ -1461,7 +1459,7 @@ describe('App', () => {
   it('focuses workspaces and active agent panes with desktop navigation controls', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     fireEvent.keyDown(window, { key: '2', metaKey: true });
     expect(window.herdr.command).toHaveBeenCalledWith({
@@ -1490,13 +1488,13 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Split pane right' }));
 
     expect(await screen.findByText('pane is not available')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
   });
 
   it('shows the desktop version below the engine version in the sidebar footer', async () => {
     render(<App />);
 
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
     const footer = screen.getByText(/Desktop v/).parentElement;
 
     expect(footer).toHaveTextContent('v0.8.0 · protocol 7');
@@ -1524,21 +1522,21 @@ describe('App', () => {
       currentVersion: '0.1.7',
       latestVersion: '0.1.8',
       updateAvailable: true,
-      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+      releaseUrl: 'https://github.com/marcelormendes/drover/releases/latest',
     }));
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole('button', { name: 'Update Herdr Desktop' }));
+    await user.click(await screen.findByRole('button', { name: 'Update Drover' }));
     expect(window.herdr.checkDesktopUpdate).toHaveBeenCalledOnce();
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent('Herdr Desktop update available');
+    expect(dialog).toHaveTextContent('Drover update available');
     expect(dialog).toHaveTextContent('v0.1.7 → v0.1.8');
 
     await user.click(screen.getByRole('button', { name: 'Download' }));
     expect(window.herdr.openExternal).toHaveBeenCalledWith(
-      'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+      'https://github.com/marcelormendes/drover/releases/latest',
     );
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
@@ -1548,15 +1546,15 @@ describe('App', () => {
       currentVersion: packageMetadata.version,
       latestVersion: packageMetadata.version,
       updateAvailable: false,
-      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+      releaseUrl: 'https://github.com/marcelormendes/drover/releases/latest',
     }));
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole('button', { name: 'Update Herdr Desktop' }));
+    await user.click(await screen.findByRole('button', { name: 'Update Drover' }));
 
     expect(
-      await screen.findByText(`Herdr Desktop is up to date (v${packageMetadata.version}).`),
+      await screen.findByText(`Drover is up to date (v${packageMetadata.version}).`),
     ).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
@@ -1610,21 +1608,21 @@ describe('App', () => {
       currentVersion: '0.1.7',
       latestVersion: '0.1.8',
       updateAvailable: true,
-      releaseUrl: 'https://github.com/marcelormendes/herdr-desktop/releases/latest',
+      releaseUrl: 'https://github.com/marcelormendes/drover/releases/latest',
     }));
     const user = userEvent.setup();
     render(<App />);
 
     await screen.findByRole('heading', { name: 'Herdr engine not found' });
     expect(screen.getByRole('button', { name: 'Update Herdr engine' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Update Herdr Desktop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Update Drover' })).toBeInTheDocument();
     expect(screen.getByText(`Desktop v${packageMetadata.version}`)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Update Herdr Desktop' }));
+    await user.click(screen.getByRole('button', { name: 'Update Drover' }));
     expect(window.herdr.checkDesktopUpdate).toHaveBeenCalledOnce();
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent('Herdr Desktop update available');
+    expect(dialog).toHaveTextContent('Drover update available');
   });
 
   it('can start a stopped Herdr server from the onboarding screen', async () => {
@@ -1640,7 +1638,7 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: 'Start Herdr' }));
 
     expect(window.herdr.startServer).toHaveBeenCalledOnce();
-    expect(await screen.findByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'drover' })).toBeInTheDocument();
   });
 
   it('renders canonical snapshot agents instead of reconstructing them from panes', async () => {
@@ -1660,7 +1658,7 @@ describe('App', () => {
       return () => undefined;
     });
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     act(() => desktopAction?.('open-navigator'));
     expect(screen.getByRole('heading', { name: 'Session navigator' })).toBeInTheDocument();
@@ -1690,7 +1688,7 @@ describe('App', () => {
   it('uses the complete desktop settings surface and persists presentation preferences', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
@@ -1709,7 +1707,7 @@ describe('App', () => {
       return () => undefined;
     });
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     act(() => desktopAction?.('focus-pane-left'));
     expect(window.herdr.command).toHaveBeenCalledWith({
@@ -1728,14 +1726,14 @@ describe('App', () => {
       return () => undefined;
     });
     render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
 
     act(() =>
       sessionEvent?.({ event: 'desktop.connection_state', data: { state: 'reconnecting' } }),
     );
 
     expect(screen.getByText('Engine reconnecting')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
   });
 
   it('coalesces background refreshes while session events stream', async () => {
@@ -1751,7 +1749,7 @@ describe('App', () => {
       render(<App />);
       await act(async () => {});
       await act(async () => {});
-      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
       const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
 
       // A burst of events must not re-bootstrap per event: nothing runs while
@@ -1823,7 +1821,7 @@ describe('App', () => {
       await act(async () => {
         resolvers.shift()?.();
       });
-      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
       const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
 
       // Start a background refresh and keep events flowing while it hangs.
@@ -1870,7 +1868,7 @@ describe('App', () => {
       return () => undefined;
     });
     const { unmount } = render(<App />);
-    await screen.findByRole('heading', { name: 'herdr-desktop' });
+    await screen.findByRole('heading', { name: 'drover' });
     const initialCalls = vi.mocked(window.herdr.bootstrap).mock.calls.length;
     let resolveRefresh: ((value: EngineBootstrap) => void) | undefined;
     vi.mocked(window.herdr.bootstrap)
@@ -1935,7 +1933,7 @@ describe('App', () => {
       await act(async () => {
         resolvers.shift()?.();
       });
-      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
 
       // A background refresh starts, then the stream reports reconnecting
       // while that refresh is still in flight.
@@ -1981,7 +1979,7 @@ describe('App', () => {
       await act(async () => {
         resolvers.shift()?.();
       });
-      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
       const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
 
       // A refresh starts, events keep coming, and the component unmounts
@@ -2020,7 +2018,7 @@ describe('App', () => {
       render(<App />);
       await act(async () => {});
       await act(async () => {});
-      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
       const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
 
       act(() => {
@@ -2049,7 +2047,7 @@ describe('App', () => {
       render(<App />);
       await act(async () => {});
       await act(async () => {});
-      expect(screen.getByRole('heading', { name: 'herdr-desktop' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
       const initial = vi.mocked(window.herdr.bootstrap).mock.calls.length;
 
       // Events never stop: the trailing settle timer keeps resetting, and the

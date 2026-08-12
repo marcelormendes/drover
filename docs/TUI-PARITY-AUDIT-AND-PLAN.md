@@ -7,7 +7,7 @@ Audit date: 2026-08-06
 
 ## Goal and scope
 
-Herdr Desktop must offer a graphical equivalent for every user-facing workflow in the current Herdr TUI while Herdr remains the only runtime and session authority. The desktop client must not fork Herdr state, reconstruct PTYs, or couple itself to Herdr's private client socket.
+Drover must offer a graphical equivalent for every user-facing workflow in the current Herdr TUI while Herdr remains the only runtime and session authority. The desktop client must not fork Herdr state, reconstruct PTYs, or couple itself to Herdr's private client socket.
 
 The comparison source is the current upstream TUI mode list, action/keybinding model, context menus, settings screens, public JSON API, event subscription, and `terminal session control` adapter. CLI-only automation and reporter methods are catalogued but do not become buttons unless the TUI exposes the same workflow.
 
@@ -118,7 +118,7 @@ The following public methods remain automation/reporter primitives rather than T
 
 ## Upstream public-interface boundaries
 
-Herdr's public `terminal session control` NDJSON accepts input, resize, scroll, and release. It currently emits ANSI terminal frames and close events but discards server Graphics, Clipboard, Notify, and WindowTitle messages. Herdr Desktop will not deserialize Herdr's private bincode client protocol to recover them.
+Herdr's public `terminal session control` NDJSON accepts input, resize, scroll, and release. It currently emits ANSI terminal frames and close events but discards server Graphics, Clipboard, Notify, and WindowTitle messages. Drover will not deserialize Herdr's private bincode client protocol to recover them.
 
 For 0.1.5:
 

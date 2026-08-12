@@ -14,7 +14,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const INSTALLER = path.resolve('scripts/install.sh');
-const ASSET_NAME = 'herdr-desktop-linux-x86_64.AppImage';
+const ASSET_NAME = 'drover-linux-x86_64.AppImage';
 
 interface Fixture {
   root: string;
@@ -65,20 +65,11 @@ function runInstaller(
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-const binary = (fixture: Fixture) => path.join(fixture.home, '.local', 'bin', 'herdr-desktop');
+const binary = (fixture: Fixture) => path.join(fixture.home, '.local', 'bin', 'drover');
 const icon = (fixture: Fixture) =>
-  path.join(
-    fixture.home,
-    '.local',
-    'share',
-    'icons',
-    'hicolor',
-    '1024x1024',
-    'apps',
-    'herdr-desktop.png',
-  );
+  path.join(fixture.home, '.local', 'share', 'icons', 'hicolor', '1024x1024', 'apps', 'drover.png');
 const desktopEntry = (fixture: Fixture) =>
-  path.join(fixture.home, '.local', 'share', 'applications', 'herdr-desktop.desktop');
+  path.join(fixture.home, '.local', 'share', 'applications', 'drover.desktop');
 
 const requiresUnixToolchain =
   process.platform === 'win32' ||
@@ -98,7 +89,7 @@ describe.skipIf(requiresUnixToolchain)('Linux installer script', () => {
 
       const entry = readFileSync(desktopEntry(fixture), 'utf8');
       expect(entry).toContain(`Exec=${binary(fixture)}`);
-      expect(entry).toContain('Icon=herdr-desktop');
+      expect(entry).toContain('Icon=drover');
       expect(entry).toContain('Categories=Development;Utility;');
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
@@ -170,7 +161,7 @@ describe.skipIf(requiresUnixToolchain)('Linux installer script', () => {
 
       const help = runInstaller(fixture, ['--help']);
       expect(help.status).toBe(0);
-      expect(help.stdout).toContain('Herdr Desktop Linux installer');
+      expect(help.stdout).toContain('Drover Linux installer');
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
