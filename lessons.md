@@ -9,3 +9,4 @@
 - During visual chat QA, treat an expandable tool row with no useful payload as a product defect: verify the actual command/detail content, not only the absence of stray artifacts or empty disclosure controls.
 - Never live-handoff, stop, replace, or start a server on the user's active Herdr config/socket while diagnosing or smoke-testing Chat, even if a previous handoff appeared successful. Use a separate `HERDR_CONFIG_PATH`, data directory, socket, and named test session; runtime mutation requires explicit user consent.
 - Treat the TODO as session-scoped state that survives resumed turns; pin the latest plan above Working even when its `plan_update` belongs to the immediately preceding interrupted turn.
+- Preserve the user's explicitly requested UI copy and casing while fixing behavior; do not silently reinterpret a concrete format request based on incidental typography.

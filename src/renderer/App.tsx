@@ -31,7 +31,6 @@ import {
   Wifi,
 } from 'lucide-react';
 import {
-  Activity,
   type CSSProperties,
   type FormEvent,
   useCallback,
@@ -1003,12 +1002,15 @@ function PaneStage({
                 ) : null}
               </div>
               {hasAgent && chatEnabled ? (
-                <Activity mode={view === 'chat' ? 'visible' : 'hidden'}>
+                <div
+                  aria-hidden={view !== 'chat' || undefined}
+                  style={{ display: view === 'chat' ? 'contents' : 'none' }}
+                >
                   <ConversationChatPanel
                     onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
                     pane={item}
                   />
-                </Activity>
+                </div>
               ) : null}
               <PersistentTerminalSurface pane={item} visible={view === 'terminal'} />
             </Card>
@@ -1489,7 +1491,8 @@ function ConnectedShell({
                 {workspace.worktree?.checkout_path || pane?.cwd || 'Herdr workspace'}
               </span>
             </div>
-            {status.update.restart_needed || status.server.restart_needed ? (
+            {(status.update.restart_needed || status.server.restart_needed) &&
+            status.server.capabilities?.live_handoff !== true ? (
               <Badge className="hidden sm:inline-flex">RESTART NEEDED</Badge>
             ) : null}
             <div className="ml-auto flex items-center gap-2">

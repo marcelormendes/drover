@@ -125,10 +125,10 @@ describe('ConversationChatPanel turn projection', () => {
   });
 
   it('formats live work in seconds, minutes, and hours', () => {
-    expect(formatDuration(59_999)).toBe('59s');
-    expect(formatDuration(60_000)).toBe('1m 0s');
-    expect(formatDuration(1_303_000)).toBe('21m 43s');
-    expect(formatDuration(4_830_000)).toBe('1h 20m 30s');
+    expect(formatDuration(59_999)).toBe('59S');
+    expect(formatDuration(60_000)).toBe('1M 0S');
+    expect(formatDuration(1_303_000)).toBe('21M 43S');
+    expect(formatDuration(4_830_000)).toBe('1H 20M 30S');
   });
 
   it('renders OMP terminal metadata below the Chat composer', async () => {
@@ -236,7 +236,7 @@ describe('ConversationChatPanel turn projection', () => {
       (activePlan as HTMLElement).compareDocumentPosition(status) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(status).toHaveTextContent(/Working for \d+s/);
+    expect(status).toHaveTextContent(/Working for \d+S/);
   });
 
   it('keeps the session TODO pinned when work resumes in a new turn', async () => {
@@ -300,6 +300,100 @@ describe('ConversationChatPanel turn projection', () => {
     ).toBeTruthy();
   });
 
+  it('renders a TODO update from the conversation event without waiting for polling', async () => {
+    const setupResult = setup(
+      page(
+        [
+          {
+            id: 'started',
+            sequence: 1,
+            provider: 'omp',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            type: 'turn_state',
+            state: 'started',
+            started_ms: Date.now(),
+          },
+        ],
+        { nextCursor: 'cursor-1' },
+      ),
+    );
+    await screen.findByRole('status');
+    setupResult.read.mockResolvedValueOnce(
+      page(
+        [
+          {
+            id: 'plan',
+            sequence: 2,
+            provider: 'omp',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            type: 'plan_update',
+            steps: [
+              { label: 'Mirror terminal TODO', status: 'active' },
+              { label: 'Verify Chat', status: 'pending' },
+            ],
+          },
+        ],
+        { nextCursor: 'cursor-2' },
+      ),
+    );
+
+    act(() => {
+      setupResult.onEvent()?.({
+        event: 'agent.conversation_changed',
+        data: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          session: { id: 'session-1' },
+          reader_generation: 'generation-1',
+          revision: 2,
+          reset_required: false,
+        },
+      });
+    });
+
+    expect(await screen.findByText('Mirror terminal TODO')).toBeVisible();
+    expect(setupResult.read).toHaveBeenLastCalledWith({
+      target: 'w1:p1',
+      direction: 'newer',
+      cursor: 'cursor-1',
+    });
+
+    setupResult.read.mockResolvedValueOnce(
+      page(
+        [
+          {
+            id: 'plan-clear',
+            sequence: 3,
+            provider: 'omp',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            type: 'plan_update',
+            steps: [],
+          },
+        ],
+        { nextCursor: 'cursor-3' },
+      ),
+    );
+    act(() => {
+      setupResult.onEvent()?.({
+        event: 'agent.conversation_changed',
+        data: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          session: { id: 'session-1' },
+          reader_generation: 'generation-1',
+          revision: 3,
+          reset_required: false,
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByText('Mirror terminal TODO')).not.toBeInTheDocument());
+    expect(document.querySelector('[data-slot="active-plan"]')).toBeNull();
+  });
+
   it('preserves the pane working duration across chat view remounts', async () => {
     let now = 1_800_000_000_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -327,7 +421,7 @@ describe('ConversationChatPanel turn projection', () => {
     view.unmount();
     render(<ConversationChatPanel pane={workingPane} />);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Working for 7s');
+    expect(await screen.findByRole('status')).toHaveTextContent('Working for 7S');
   });
 
   it('settles Working and the pinned TODO when a final answer arrives without a terminal turn event', async () => {
@@ -394,13 +488,17 @@ describe('ConversationChatPanel turn projection', () => {
 
     const work = await screen.findByTestId('turn-work-summary');
     expect(work).not.toHaveAttribute('open');
-    expect(within(work).getByText('Worked for 6s')).toBeInTheDocument();
+    expect(within(work).getByText('Worked for 6S')).toBeInTheDocument();
     const answer = screen.getByTestId('final-answer');
     expect(answer).not.toBe(work);
     expect(within(answer).getByRole('heading', { name: 'Result' })).toBeInTheDocument();
     expect(within(answer).getByText('Everything passes.').tagName).toBe('STRONG');
     expect(answer).not.toHaveTextContent('**');
     expect(screen.getByText('You')).toBeInTheDocument();
+    const userMessage = screen
+      .getByText('Please verify this.')
+      .closest('[data-slot="user-message"]');
+    expect(userMessage).toHaveClass('bg-main', 'text-main-foreground');
     expect(screen.queryByText('Commentary', { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText('Answer', { exact: true })).not.toBeInTheDocument();
   });
@@ -414,6 +512,56 @@ describe('ConversationChatPanel turn projection', () => {
     const answer = await screen.findByTestId('final-answer');
     expect(answer).toHaveTextContent(ending);
     expect(answer.textContent?.match(/Detailed evidence\./g)).toHaveLength(600);
+  });
+
+  it('renders GFM tables as readable semantic tables', async () => {
+    setup(
+      page([
+        assistant(
+          1,
+          'final',
+          '| # | Requested behavior | Coverage |\n| --- | --- | --- |\n| 1 | Render tables | Tested |',
+        ),
+      ]),
+    );
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByRole('columnheader', { name: '#' })).toBeInTheDocument();
+    expect(
+      within(table).getByRole('columnheader', { name: 'Requested behavior' }),
+    ).toBeInTheDocument();
+    expect(within(table).getByRole('cell', { name: 'Render tables' })).toBeInTheDocument();
+    expect(table.parentElement).toHaveClass('overflow-x-auto');
+  });
+
+  it('renders a local image preview inside its durable user message', async () => {
+    setup(
+      page([
+        {
+          id: 'user-with-image',
+          sequence: 1,
+          provider: 'omp',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'user_message',
+          text: 'Review this image.',
+          attachments: [
+            {
+              media_type: 'image/png',
+              name: 'screenshot.png',
+              byte_size: 128,
+              preview_url: 'blob:local-preview',
+            },
+          ],
+        },
+      ]),
+    );
+
+    const preview = await screen.findByRole('img', {
+      name: 'Attached image: screenshot.png',
+    });
+    expect(preview).toHaveAttribute('src', 'blob:local-preview');
+    expect(preview).toHaveClass('size-16', 'object-cover');
   });
 
   it('keeps commentary between chronological work rows in an active turn', async () => {
@@ -649,6 +797,31 @@ describe('ConversationChatPanel approval and delivery states', () => {
     expect(openTerminal).toHaveBeenCalledTimes(1);
   });
 
+  it('starts the Working timer when a prompt is submitted before pane status catches up', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_800_000_000_000);
+    const prompt = vi.fn<Window['herdr']['conversation']['prompt']>(
+      () => new Promise(() => undefined),
+    );
+    setup(page([]), { prompt });
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+
+    try {
+      fireEvent.change(input, { target: { value: 'start now' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect(screen.getByRole('status')).toHaveTextContent('Working');
+
+      vi.setSystemTime(1_800_000_006_000);
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+
+      expect(screen.getByRole('status')).toHaveTextContent('Working for 7S');
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
   it('keeps a failed optimistic message retryable without restoring the draft', async () => {
     const prompt = vi
       .fn<Window['herdr']['conversation']['prompt']>()
@@ -700,6 +873,7 @@ describe('ConversationChatPanel approval and delivery states', () => {
       ),
     );
     await waitFor(() => expect(screen.queryByText('Syncing')).not.toBeInTheDocument());
+    expect(screen.getByRole('status')).toHaveTextContent('Working');
   });
 });
 

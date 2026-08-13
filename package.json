@@ -1,7 +1,7 @@
 {
   "name": "drover",
   "productName": "Drover",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.",
   "main": ".vite/build/main.js",
   "private": true,
@@ -89,6 +89,7 @@
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
     "react-resizable-panels": "4.12.2",
+    "remark-gfm": "4.0.1",
     "sonner": "2.0.7",
     "tailwind-merge": "3.6.0",
     "tw-animate-css": "1.4.0"

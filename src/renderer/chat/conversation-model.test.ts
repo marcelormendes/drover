@@ -166,4 +166,47 @@ describe('conversation model', () => {
 
     expect(next.pending).toEqual([{ id: 'pending-2', text: 'same prompt', status: 'syncing' }]);
   });
+
+  it('moves optimistic image previews onto the matching durable user message', () => {
+    const store = {
+      ...createConversationStore('w1:p1'),
+      pending: [
+        {
+          id: 'pending-image',
+          text: 'review image',
+          status: 'syncing' as const,
+          attachments: [
+            {
+              media_type: 'image/png',
+              name: 'screenshot.png',
+              preview_url: 'blob:local-preview',
+            },
+          ],
+        },
+      ],
+    };
+    const durable: ConversationItem = {
+      id: 'user-image',
+      sequence: 1,
+      provider: 'omp',
+      session_id: 'session',
+      turn_id: 'turn',
+      type: 'user_message',
+      text: 'review image',
+      attachments: [{ media_type: 'image/png', name: 'image', byte_size: 128 }],
+    };
+
+    const reconciled = applyConversationRead(store, page([durable]));
+    const refreshed = applyConversationRead(reconciled, page([durable], 'reader-1', 2), 'newer');
+
+    expect(reconciled.pending).toHaveLength(0);
+    expect(reconciled.items[0]).toMatchObject({
+      type: 'user_message',
+      attachments: [{ preview_url: 'blob:local-preview' }],
+    });
+    expect(refreshed.items[0]).toMatchObject({
+      type: 'user_message',
+      attachments: [{ preview_url: 'blob:local-preview' }],
+    });
+  });
 });

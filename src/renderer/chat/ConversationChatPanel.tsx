@@ -61,6 +61,7 @@ interface ComposerState {
 const conversationStoreByPane = new Map<string, ConversationStore>();
 const composerStateByPane = new Map<string, ComposerState>();
 const workingStartedMsByPane = new Map<string, number>();
+const sentAttachmentPreviewUrlsByPane = new Map<string, Set<string>>();
 
 export function pruneConversationChatState(activePaneIds: readonly string[]): void {
   const active = new Set(activePaneIds);
@@ -70,6 +71,14 @@ export function pruneConversationChatState(activePaneIds: readonly string[]): vo
         URL.revokeObjectURL(attachment.url);
       }
       composerStateByPane.delete(paneId);
+    }
+  }
+  for (const [paneId, sentPreviewUrls] of sentAttachmentPreviewUrlsByPane) {
+    if (!active.has(paneId)) {
+      for (const url of sentPreviewUrls) {
+        URL.revokeObjectURL(url);
+      }
+      sentAttachmentPreviewUrlsByPane.delete(paneId);
     }
   }
   for (const paneId of conversationStoreByPane.keys()) {
@@ -268,6 +277,38 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
     },
     [pane.pane_id],
   );
+
+  useEffect(() => {
+    const ownedUrls = sentAttachmentPreviewUrlsByPane.get(pane.pane_id);
+    if (!ownedUrls) {
+      return;
+    }
+    const retainedUrls = new Set<string>();
+    for (const pending of store.pending) {
+      for (const attachment of pending.attachments ?? []) {
+        retainedUrls.add(attachment.preview_url);
+      }
+    }
+    for (const item of store.items) {
+      if (item.type !== 'user_message') {
+        continue;
+      }
+      for (const attachment of item.attachments ?? []) {
+        if (attachment.preview_url) {
+          retainedUrls.add(attachment.preview_url);
+        }
+      }
+    }
+    for (const url of ownedUrls) {
+      if (!retainedUrls.has(url)) {
+        URL.revokeObjectURL(url);
+        ownedUrls.delete(url);
+      }
+    }
+    if (ownedUrls.size === 0) {
+      sentAttachmentPreviewUrlsByPane.delete(pane.pane_id);
+    }
+  }, [pane.pane_id, store.items, store.pending]);
 
   useEffect(() => {
     if (!paneWorking) {
@@ -488,9 +529,17 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
     if ((!text && attachments.length === 0) || sending) {
       return;
     }
+    const submittedStartedMs = workingStartedMsByPane.get(pane.pane_id) ?? Date.now();
+    workingStartedMsByPane.set(pane.pane_id, submittedStartedMs);
+    setStatusStartedMs(submittedStartedMs);
     setSending(true);
     setError(undefined);
     const submitted = attachments;
+    const submittedPreviews = submitted.map((attachment) => ({
+      media_type: attachment.blob.type || `image/${attachment.extension}`,
+      name: attachment.name,
+      preview_url: attachment.url,
+    }));
     const pendingId = retry?.id ?? `pending:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     if (retry) {
       setStore((current) => ({
@@ -499,13 +548,20 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
           pending.id === pendingId ? { ...pending, status: 'queued' } : pending,
         ),
       }));
-    } else if (text) {
+    } else {
       // Optimistic echo: the engine queues the prompt before Pi persists it,
-      // so show the message immediately as queued instead of making the user
-      // wait for the durable transcript.
+      // so show the message and image previews immediately as queued.
       setStore((current) => ({
         ...current,
-        pending: [...current.pending, { id: pendingId, text, status: 'queued' }],
+        pending: [
+          ...current.pending,
+          {
+            id: pendingId,
+            text,
+            status: 'queued',
+            ...(submittedPreviews.length === 0 ? {} : { attachments: submittedPreviews }),
+          },
+        ],
       }));
       setDraft('');
     }
@@ -516,16 +572,18 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
         text,
         ...(staged.length === 0 ? {} : { attachments: staged.map((handle) => ({ handle })) }),
       });
-      if (text) {
-        setStore((current) => ({
-          ...current,
-          pending: current.pending.map((pending) =>
-            pending.id === pendingId ? { ...pending, status: 'syncing' } : pending,
-          ),
-        }));
-      }
-      for (const attachment of submitted) {
-        URL.revokeObjectURL(attachment.url);
+      setStore((current) => ({
+        ...current,
+        pending: current.pending.map((pending) =>
+          pending.id === pendingId ? { ...pending, status: 'syncing' } : pending,
+        ),
+      }));
+      if (submittedPreviews.length > 0) {
+        const ownedUrls = sentAttachmentPreviewUrlsByPane.get(pane.pane_id) ?? new Set<string>();
+        for (const attachment of submittedPreviews) {
+          ownedUrls.add(attachment.preview_url);
+        }
+        sentAttachmentPreviewUrlsByPane.set(pane.pane_id, ownedUrls);
       }
       composerStateByPane.set(pane.pane_id, {
         draft: '',
@@ -545,6 +603,10 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
             pending.id === pendingId ? { ...pending, status: 'failed' } : pending,
           ),
         }));
+      }
+      if (paneRef.current.agent_status !== 'working') {
+        workingStartedMsByPane.delete(pane.pane_id);
+        setStatusStartedMs(undefined);
       }
     } finally {
       setSending(false);
@@ -591,11 +653,13 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
         };
       }
     }
-    if (!paneWorking) {
-      return null;
-    }
-
     const pendingTurn = store.pending.some((pending) => pending.status !== 'failed');
+    if (pendingTurn || sending) {
+      return {
+        startedMs: statusStartedMs,
+        plan,
+      };
+    }
     let activeTurnId: string | undefined;
     for (let index = store.items.length - 1; index > latestStateIndex; index -= 1) {
       const item = store.items[index];
@@ -609,6 +673,9 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
         break;
       }
     }
+    if (!paneWorking && (activeTurnId === undefined || statusStartedMs === undefined)) {
+      return null;
+    }
     if (latestState && !pendingTurn && !activeTurnId) {
       return null;
     }
@@ -616,7 +683,7 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       startedMs: statusStartedMs,
       plan,
     };
-  }, [paneWorking, statusStartedMs, store.items, store.pending]);
+  }, [paneWorking, sending, statusStartedMs, store.items, store.pending]);
 
   const respond = useCallback(
     async (
@@ -803,6 +870,18 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
                 </span>
               </div>
               <p className="whitespace-pre-wrap break-words">{pending.text}</p>
+              {pending.attachments?.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {pending.attachments.map((attachment) => (
+                    <img
+                      alt={`Attached image: ${attachment.name}`}
+                      className="size-16 rounded-base border-2 border-border object-cover"
+                      key={attachment.preview_url}
+                      src={attachment.preview_url}
+                    />
+                  ))}
+                </div>
+              ) : null}
               {pending.status === 'failed' ? (
                 <Button
                   className="mt-2"

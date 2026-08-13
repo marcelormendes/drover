@@ -240,6 +240,10 @@ describe('ConversationChatPanel', () => {
     });
     expect(abort).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText('portrait.png')).not.toBeInTheDocument());
+    expect(screen.getByRole('img', { name: 'Attached image: portrait.png' })).toHaveClass(
+      'size-16',
+      'object-cover',
+    );
   });
 
   it('aborts an in-flight upload when a chunk fails', async () => {
@@ -569,7 +573,7 @@ describe('ConversationChatPanel live state', () => {
 
     render(<ConversationChatPanel pane={pane('w1:p1')} />);
     expect(await screen.findByRole('status')).toHaveTextContent('Working');
-    expect(screen.getByText(/for \d+s/)).toBeInTheDocument();
+    expect(screen.getByText(/for \d+S/)).toBeInTheDocument();
   });
 
   it.each([
