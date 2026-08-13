@@ -1009,6 +1009,7 @@ function PaneStage({
                   <ConversationChatPanel
                     onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
                     pane={item}
+                    visible={view === 'chat'}
                   />
                 </div>
               ) : null}

@@ -313,6 +313,13 @@ function registerIpcHandlers(): void {
     }
     return engine.conversationRead(parseConversationReadRequest(candidate));
   });
+  ipcMain.handle(IPC_CHANNELS.conversationMetadata, async (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (demoMode) {
+      throw new Error('Structured Chat is unavailable in demo mode.');
+    }
+    return engine.conversationMetadata(parseConversationReadRequest(candidate));
+  });
 
   ipcMain.handle(IPC_CHANNELS.conversationPrompt, async (event, candidate: unknown) => {
     assertTrustedSender(event.senderFrame?.url);

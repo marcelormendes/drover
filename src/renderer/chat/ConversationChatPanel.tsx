@@ -62,6 +62,12 @@ const conversationStoreByPane = new Map<string, ConversationStore>();
 const composerStateByPane = new Map<string, ComposerState>();
 const workingStartedMsByPane = new Map<string, number>();
 const sentAttachmentPreviewUrlsByPane = new Map<string, Set<string>>();
+const CONVERSATION_READ_LIMIT = 256;
+// Older pages issue two server cursors; refresh the live tail before either
+// cursor can evict the current live cursor from the bounded registry.
+const PLAN_HISTORY_REFRESH_INTERVAL = 32;
+const PLAN_HYDRATION_RETRY_DELAY_MS = 500;
+const PLAN_HYDRATION_MAX_RETRY_DELAY_MS = 5_000;
 
 export function pruneConversationChatState(activePaneIds: readonly string[]): void {
   const active = new Set(activePaneIds);
@@ -96,6 +102,7 @@ export function pruneConversationChatState(activePaneIds: readonly string[]): vo
 interface ConversationChatPanelProps {
   pane: PaneInfo;
   onOpenTerminal?: () => void;
+  visible?: boolean;
 }
 function itemText(items: readonly ConversationItem[]): string {
   for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -228,7 +235,11 @@ export function ConversationChatPanel(props: ConversationChatPanelProps) {
   return <ConversationChatPanelForPane key={props.pane.pane_id} {...props} />;
 }
 
-function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChatPanelProps) {
+function ConversationChatPanelForPane({
+  pane,
+  onOpenTerminal,
+  visible = true,
+}: ConversationChatPanelProps) {
   const cachedStore = conversationStoreByPane.get(pane.pane_id);
   const savedStore =
     cachedStore?.session?.id === pane.conversation_session?.id ? cachedStore : undefined;
@@ -246,18 +257,33 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
   const [loading, setLoading] = useState(savedStore === undefined);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
+  const [planHydrationRetry, setPlanHydrationRetry] = useState(false);
   const capability = pane.conversation_capability;
   const preSessionChat = isPreSessionConversationCapability(capability);
   const conversationReadable = capability?.availability === 'supported';
+  const planHistorySupported = pane.agent?.toLowerCase() !== 'claude';
   const paneWorking = pane.agent_status === 'working';
   const [statusStartedMs, setStatusStartedMs] = useState<number | undefined>(() =>
     workingStartedMsByPane.get(pane.pane_id),
   );
   const paneRef = useRef(pane);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   paneRef.current = pane;
   const storeRef = useRef(store);
   const readQueueRef = useRef(Promise.resolve());
   const requestEpochRef = useRef(0);
+  const planBoundaryKnownRef = useRef(
+    savedStore?.items.some((item) => item.type === 'plan_update') ?? false,
+  );
+  const planHydrationPromiseRef = useRef<Promise<boolean> | undefined>(undefined);
+  const pollInFlightRef = useRef(false);
+  const pendingRefreshRevisionRef = useRef<number | undefined>(undefined);
+  const pendingPayloadDrainRef = useRef(false);
+  const planHydrationRetryRef = useRef(0);
+  const planHydrationRetryTimerRef = useRef<number | undefined>(undefined);
+  const planHydrationAllowedRef = useRef(false);
+  const wasVisibleRef = useRef(visible);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
   const olderAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(undefined);
@@ -417,6 +443,23 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       throw reason;
     }
   }
+  const wakePlanHydration = useCallback(() => {
+    queueMicrotask(() => {
+      if (
+        planHydrationAllowedRef.current &&
+        planHydrationPromiseRef.current === undefined &&
+        !pendingPayloadDrainRef.current &&
+        !planBoundaryKnownRef.current &&
+        storeRef.current.olderCursor !== undefined
+      ) {
+        if (planHydrationRetryTimerRef.current !== undefined) {
+          window.clearTimeout(planHydrationRetryTimerRef.current);
+          planHydrationRetryTimerRef.current = undefined;
+        }
+        setPlanHydrationRetry(true);
+      }
+    });
+  }, []);
 
   const read = useCallback(
     (direction: 'newest' | 'older' | 'newer', cursor?: string, epoch = requestEpochRef.current) => {
@@ -438,14 +481,25 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
             nextCursor === undefined && requestedDirection !== 'newest'
               ? 'newest'
               : requestedDirection;
+          if (effectiveDirection !== 'older') {
+            pendingPayloadDrainRef.current = true;
+          }
           const result = await window.herdr.conversation.read({
             target: pane.pane_id,
             direction: effectiveDirection,
+            limit: CONVERSATION_READ_LIMIT,
             ...(nextCursor === undefined ? {} : { cursor: nextCursor }),
           });
           lastResult = result;
           if (epoch !== requestEpochRef.current) {
             return result;
+          }
+          if (result.type === 'reset_required') {
+            planBoundaryKnownRef.current = false;
+          } else if (result.page.items.some((item) => item.type === 'plan_update')) {
+            planBoundaryKnownRef.current = true;
+          } else if (effectiveDirection === 'newest') {
+            planBoundaryKnownRef.current = false;
           }
           setStore((current) => applyConversationRead(current, result, effectiveDirection));
           if (result.type === 'reset_required' && effectiveDirection !== 'newest') {
@@ -460,6 +514,15 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
             result.page.next_cursor === undefined ||
             result.page.next_cursor === nextCursor
           ) {
+            if (result.type === 'page' && effectiveDirection !== 'older') {
+              pendingPayloadDrainRef.current = false;
+              planHydrationRetryRef.current = 0;
+              const pendingRevision = pendingRefreshRevisionRef.current;
+              if (pendingRevision !== undefined && result.page.revision >= pendingRevision) {
+                pendingRefreshRevisionRef.current = undefined;
+              }
+              wakePlanHydration();
+            }
             return result;
           }
           nextCursor = result.page.next_cursor;
@@ -472,17 +535,91 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       );
       return queued;
     },
-    [pane.pane_id],
+    [pane.pane_id, wakePlanHydration],
   );
+  const hydratePlanHistory = useCallback(async (): Promise<boolean> => {
+    const epoch = requestEpochRef.current;
+    let cursor = storeRef.current.olderCursor;
+    const seenCursors = new Set<string>();
+    let pagesRead = 0;
+    while (
+      cursor !== undefined &&
+      !seenCursors.has(cursor) &&
+      !planBoundaryKnownRef.current &&
+      planHydrationAllowedRef.current &&
+      !pendingPayloadDrainRef.current
+    ) {
+      seenCursors.add(cursor);
+      pagesRead += 1;
+      const result = await read('older', cursor, epoch);
+      if (result?.type !== 'page') {
+        return false;
+      }
+      cursor = result.page.previous_cursor;
+      if (
+        cursor !== undefined &&
+        pagesRead % PLAN_HISTORY_REFRESH_INTERVAL === 0 &&
+        planHydrationAllowedRef.current &&
+        !pendingPayloadDrainRef.current &&
+        !planBoundaryKnownRef.current
+      ) {
+        const refreshed = await read('newest', undefined, epoch);
+        if (refreshed?.type !== 'page') {
+          return false;
+        }
+      }
+    }
+    return (
+      cursor !== undefined &&
+      !planBoundaryKnownRef.current &&
+      (!planHydrationAllowedRef.current || pendingPayloadDrainRef.current)
+    );
+  }, [read]);
+  const pollConversation = useCallback(async () => {
+    if (pollInFlightRef.current) {
+      return;
+    }
+    pollInFlightRef.current = true;
+    try {
+      const metadata = window.herdr.conversation.metadata;
+      if (typeof metadata !== 'function') {
+        await read('newer');
+        return;
+      }
+      let result: ConversationReadResult;
+      try {
+        result = await metadata({ target: pane.pane_id });
+      } catch {
+        await read('newer');
+        return;
+      }
+      const current = storeRef.current;
+      const needsRefresh =
+        result.type === 'reset_required' ||
+        pendingRefreshRevisionRef.current !== undefined ||
+        pendingPayloadDrainRef.current ||
+        current.resetRequired ||
+        current.readerGeneration !== result.page.reader_generation ||
+        current.session?.id !== result.page.session.id ||
+        result.page.revision !== current.revision;
+      if (needsRefresh) {
+        await read(result.type === 'reset_required' ? 'newest' : 'newer');
+      }
+    } finally {
+      pollInFlightRef.current = false;
+    }
+  }, [pane.pane_id, read]);
 
   useEffect(() => {
     const epoch = ++requestEpochRef.current;
     readQueueRef.current = Promise.resolve();
     let cancelled = false;
+    const initialCursor = storeRef.current.newerCursor;
+    const initialDirection = initialCursor === undefined ? 'newest' : 'newer';
     setLoading(conversationReadable && storeRef.current.items.length === 0);
     setError(undefined);
     if (conversationReadable) {
-      void read('newest', undefined, epoch)
+      void read(initialDirection, initialCursor, epoch)
         .catch((reason: unknown) => {
           if (!cancelled) {
             setError(reason instanceof Error ? reason.message : 'Could not load conversation.');
@@ -501,28 +638,41 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
         return;
       }
       setStore((current) => applyConversationChanged(current, changed));
+      pendingRefreshRevisionRef.current = changed.reset_required
+        ? 0
+        : Math.max(pendingRefreshRevisionRef.current ?? 0, changed.revision);
       void read(changed.reset_required ? 'newest' : 'newer').catch(() => undefined);
     });
-    // Fallback live poll: subscription notifications can be missed during
-    // engine restarts or subscription reconnects, and the engine's newer read
-    // is cheap (metadata-only when nothing changed). This guarantees the chat
-    // keeps streaming while the agent is working even if an event is dropped.
+    // Poll metadata only while Chat is visible. A changed revision triggers
+    // the cursor-based payload read; unchanged metadata must not churn cursors.
     const livePoll = window.setInterval(() => {
       if (
-        paneRef.current.conversation_capability?.availability === 'supported' &&
-        (paneRef.current.agent_status === 'working' || paneRef.current.agent_status === 'blocked')
+        visibleRef.current &&
+        paneRef.current.conversation_capability?.availability === 'supported'
       ) {
-        void read('newer').catch(() => undefined);
+        void pollConversation().catch(() => undefined);
       }
     }, 1_500);
     return () => {
       cancelled = true;
       requestEpochRef.current += 1;
+      planHydrationAllowedRef.current = false;
+      if (planHydrationRetryTimerRef.current !== undefined) {
+        window.clearTimeout(planHydrationRetryTimerRef.current);
+        planHydrationRetryTimerRef.current = undefined;
+      }
       window.clearInterval(livePoll);
       unsubscribe();
       void window.herdr.conversation.unsubscribe(pane.pane_id).catch(() => undefined);
     };
-  }, [conversationReadable, pane.pane_id, read]);
+  }, [conversationReadable, pane.pane_id, pollConversation, read]);
+  useEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = visible;
+    if (!wasVisible && visible && conversationReadable) {
+      void pollConversation().catch(() => undefined);
+    }
+  }, [conversationReadable, pollConversation, visible]);
 
   const send = async (retry?: { id: string; text: string }) => {
     const text = retry?.text ?? draft.trim();
@@ -633,6 +783,9 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
         break;
       }
     }
+    const runningTool = store.items.some(
+      (item) => item.type === 'tool_activity' && item.status === 'running',
+    );
     if (latestState?.state === 'started') {
       let finalAnswerReceived = false;
       for (let index = latestStateIndex + 1; index < store.items.length; index += 1) {
@@ -655,6 +808,12 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
     }
     const pendingTurn = store.pending.some((pending) => pending.status !== 'failed');
     if (pendingTurn || sending) {
+      return {
+        startedMs: statusStartedMs,
+        plan,
+      };
+    }
+    if (runningTool) {
       return {
         startedMs: statusStartedMs,
         plan,
@@ -684,6 +843,84 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       plan,
     };
   }, [paneWorking, sending, statusStartedMs, store.items, store.pending]);
+  useEffect(() => {
+    const canHydrate =
+      visible && planHistorySupported && conversationReadable && activeWork !== null;
+    const wasAllowed = planHydrationAllowedRef.current;
+    if (!canHydrate) {
+      planHydrationAllowedRef.current = false;
+      planHydrationRetryRef.current = 0;
+    } else {
+      if (!wasAllowed) {
+        planHydrationRetryRef.current = 0;
+      }
+      planHydrationAllowedRef.current = true;
+    }
+    if (planHydrationRetry) {
+      setPlanHydrationRetry(false);
+    }
+    const clearRetryTimer = () => {
+      if (planHydrationRetryTimerRef.current !== undefined) {
+        window.clearTimeout(planHydrationRetryTimerRef.current);
+        planHydrationRetryTimerRef.current = undefined;
+      }
+    };
+    if (
+      !canHydrate ||
+      planBoundaryKnownRef.current ||
+      planHydrationPromiseRef.current !== undefined ||
+      store.olderCursor === undefined
+    ) {
+      if (!canHydrate || planBoundaryKnownRef.current || store.olderCursor === undefined) {
+        clearRetryTimer();
+      }
+      return;
+    }
+    const scheduleRetry = () => {
+      if (!planHydrationAllowedRef.current || planHydrationRetryTimerRef.current !== undefined) {
+        return;
+      }
+      const attempt = Math.min(planHydrationRetryRef.current, 4);
+      planHydrationRetryRef.current = attempt + 1;
+      const delay = Math.min(
+        PLAN_HYDRATION_RETRY_DELAY_MS * 2 ** attempt,
+        PLAN_HYDRATION_MAX_RETRY_DELAY_MS,
+      );
+      planHydrationRetryTimerRef.current = window.setTimeout(() => {
+        planHydrationRetryTimerRef.current = undefined;
+        if (planHydrationAllowedRef.current) {
+          setPlanHydrationRetry(true);
+        }
+      }, delay);
+    };
+    let failed = false;
+    const hydration = hydratePlanHistory().catch(() => {
+      failed = true;
+      scheduleRetry();
+      return false;
+    });
+    planHydrationPromiseRef.current = hydration;
+    void hydration.then((paused) => {
+      if (planHydrationPromiseRef.current === hydration) {
+        planHydrationPromiseRef.current = undefined;
+        if (!failed) {
+          planHydrationRetryRef.current = 0;
+          if (paused) {
+            wakePlanHydration();
+          }
+        }
+      }
+    });
+  }, [
+    activeWork,
+    conversationReadable,
+    hydratePlanHistory,
+    planHistorySupported,
+    planHydrationRetry,
+    wakePlanHydration,
+    store.olderCursor,
+    visible,
+  ]);
 
   const respond = useCallback(
     async (

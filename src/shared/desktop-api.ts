@@ -453,6 +453,7 @@ export interface DroverApi {
   query(query: HerdrQuery): Promise<HerdrQueryResult>;
   conversation: {
     read(request: ConversationReadRequest): Promise<ConversationReadResult>;
+    metadata?(request: ConversationReadRequest): Promise<ConversationReadResult>;
     prompt(request: ConversationPromptRequest): Promise<EngineBootstrap>;
     respond(request: ConversationRespondRequest): Promise<ConversationRespondResult>;
     subscribe(paneId: string): Promise<void>;

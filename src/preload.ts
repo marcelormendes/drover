@@ -50,6 +50,11 @@ const api: DroverApi = {
   conversation: Object.freeze({
     read: (request: ConversationReadRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.conversationRead, request) as Promise<ConversationReadResult>,
+    metadata: (request: ConversationReadRequest) =>
+      ipcRenderer.invoke(
+        IPC_CHANNELS.conversationMetadata,
+        request,
+      ) as Promise<ConversationReadResult>,
     prompt: (request: ConversationPromptRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.conversationPrompt, request) as Promise<EngineBootstrap>,
     respond: (request: ConversationRespondRequest) =>

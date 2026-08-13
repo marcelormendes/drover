@@ -728,6 +728,47 @@ describe('HerdrEngine.execute', () => {
   });
 });
 
+describe('HerdrEngine.conversationMetadata', () => {
+  it('uses the metadata endpoint without allocating a conversation cursor', async () => {
+    const runner = createRunner(async () => ({
+      stdout: JSON.stringify(runningStatus),
+      stderr: '',
+    }));
+    const requestClient: HerdrRequestClient = {
+      request: vi.fn(async () => ({
+        type: 'agent_conversation_read',
+        read: {
+          type: 'page',
+          page: {
+            provider: 'codex',
+            session: { id: 'session-1' },
+            capability: { availability: 'supported', reason: 'ready' },
+            items: [],
+            has_older: false,
+            revision: 12,
+            reader_generation: 'generation-1',
+          },
+        },
+      })),
+    };
+    const engine = new HerdrEngine(
+      runner,
+      { launch: vi.fn() },
+      async () => undefined,
+      requestClient,
+    );
+
+    const result = await engine.conversationMetadata({ target: 'w1:p1' });
+
+    expect(requestClient.request).toHaveBeenCalledWith(
+      '/tmp/herdr.sock',
+      'agent.conversation.metadata',
+      { target: 'w1:p1' },
+    );
+    expect(result).toMatchObject({ type: 'page', page: { revision: 12 } });
+  });
+});
+
 describe('HerdrEngine.query', () => {
   it.each([
     {

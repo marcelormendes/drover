@@ -4,6 +4,7 @@ export const IPC_CHANNELS = {
   command: 'herdr:command',
   query: 'herdr:query',
   conversationRead: 'herdr:conversation-read',
+  conversationMetadata: 'herdr:conversation-metadata',
   conversationPrompt: 'herdr:conversation-prompt',
   conversationRespond: 'herdr:conversation-respond',
   conversationSubscribe: 'herdr:conversation-subscribe',

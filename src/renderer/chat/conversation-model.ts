@@ -90,6 +90,7 @@ function replacePage(
 ): ConversationStore {
   const sameReader =
     store.readerGeneration === undefined || store.readerGeneration === page.reader_generation;
+  const canMergeExisting = sameReader && !store.resetRequired;
   // Optimistic echoes resolve once the durable transcript contains the same
   // user text (the engine's prompt submission queues before persisting).
   const pending = [...store.pending];
@@ -106,8 +107,8 @@ function replacePage(
       }
     }
   }
-  let olderCursor = sameReader ? store.olderCursor : undefined;
-  let newerCursor = sameReader ? store.newerCursor : undefined;
+  let olderCursor = canMergeExisting ? store.olderCursor : undefined;
+  let newerCursor = canMergeExisting ? store.newerCursor : undefined;
   if (direction === 'newest') {
     olderCursor = page.previous_cursor;
     newerCursor = page.next_cursor;
@@ -117,8 +118,7 @@ function replacePage(
     newerCursor = page.next_cursor;
   }
   if (
-    sameReader &&
-    !store.resetRequired &&
+    canMergeExisting &&
     page.items.length === 0 &&
     store.provider === page.provider &&
     store.session?.id === page.session.id &&
@@ -131,7 +131,7 @@ function replacePage(
     return store;
   }
   const byId = new Map<string, ConversationItem>(
-    sameReader ? store.items.map((item) => [item.id, item]) : [],
+    canMergeExisting ? store.items.map((item) => [item.id, item]) : [],
   );
   for (const item of page.items) {
     const nextItem = withAttachmentPreviews(
@@ -148,8 +148,8 @@ function replacePage(
     readerGeneration: page.reader_generation,
     capability: page.capability,
     items: sortItems(byId.values()),
-    pending: sameReader ? pending : store.pending,
-    revision: sameReader ? Math.max(store.revision, page.revision) : page.revision,
+    pending: canMergeExisting ? pending : store.pending,
+    revision: canMergeExisting ? Math.max(store.revision, page.revision) : page.revision,
     olderCursor,
     newerCursor,
     resetRequired: false,

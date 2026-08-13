@@ -357,6 +357,7 @@ describe('ConversationChatPanel turn projection', () => {
     expect(setupResult.read).toHaveBeenLastCalledWith({
       target: 'w1:p1',
       direction: 'newer',
+      limit: 256,
       cursor: 'cursor-1',
     });
 
@@ -392,6 +393,181 @@ describe('ConversationChatPanel turn projection', () => {
 
     await waitFor(() => expect(screen.queryByText('Mirror terminal TODO')).not.toBeInTheDocument());
     expect(document.querySelector('[data-slot="active-plan"]')).toBeNull();
+  });
+  it('requests the full conversation tail so an active TODO outside the default page remains visible', async () => {
+    const started: ConversationItem = {
+      id: 'started-tail',
+      sequence: 1,
+      provider: 'omp',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'turn_state',
+      state: 'started',
+      started_ms: Date.now(),
+    };
+    const plan: ConversationItem = {
+      id: 'plan-tail',
+      sequence: 2,
+      provider: 'omp',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'plan_update',
+      steps: [
+        { label: 'Recover the active TODO', status: 'active' },
+        { label: 'Keep it synchronized', status: 'pending' },
+      ],
+    };
+    const read = vi.fn<Window['herdr']['conversation']['read']>();
+    read.mockImplementation(async (request) =>
+      page(request.limit === 256 ? [started, plan] : [started]),
+    );
+
+    setup(page([started]), { read });
+
+    expect(await screen.findByText('Recover the active TODO')).toBeVisible();
+    expect(read).toHaveBeenCalledWith({
+      target: 'w1:p1',
+      direction: 'newest',
+      limit: 256,
+    });
+  });
+
+  it('backfills older pages when the active TODO is outside the newest page', async () => {
+    const initialItems: ConversationItem[] = [
+      ...Array.from({ length: 255 }, (_, index) =>
+        assistant(index + 2, 'final', `tail item ${index}`),
+      ),
+      {
+        id: 'started-tail',
+        sequence: 257,
+        provider: 'pi',
+        session_id: 'session-1',
+        turn_id: 'turn-1',
+        type: 'turn_state',
+        state: 'started',
+      },
+    ];
+    const plan: ConversationItem = {
+      id: 'plan-outside-tail',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'plan_update',
+      steps: [
+        { label: 'Recover an old TODO', status: 'active' },
+        { label: 'Keep it visible', status: 'pending' },
+      ],
+    };
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockImplementation(async (request) =>
+        request.direction === 'older'
+          ? page([plan])
+          : page(initialItems, { previousCursor: 'older-plan', nextCursor: 'newer-tail' }),
+      );
+
+    setup(page(initialItems, { previousCursor: 'older-plan', nextCursor: 'newer-tail' }), { read });
+
+    expect((await screen.findAllByText('Recover an old TODO')).length).toBeGreaterThan(0);
+    expect(read).toHaveBeenNthCalledWith(2, {
+      target: 'w1:p1',
+      direction: 'older',
+      limit: 256,
+      cursor: 'older-plan',
+    });
+  });
+  it('refreshes the live cursor while backfilling an old TODO boundary', async () => {
+    const started: ConversationItem = {
+      id: 'started-long-history',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'turn_state',
+      state: 'started',
+    };
+    const plan: ConversationItem = {
+      id: 'plan-after-long-history',
+      sequence: 65,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'plan_update',
+      steps: [{ label: 'Recover TODO beyond sixty-four pages', status: 'active' }],
+    };
+    let olderCalls = 0;
+    let newestCalls = 0;
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockImplementation(async (request) => {
+        if (request.direction !== 'older') {
+          newestCalls += 1;
+          return page([started], {
+            previousCursor: newestCalls === 1 ? 'history-0' : 'history-refresh',
+            nextCursor: newestCalls === 1 ? 'live-0' : 'live-refresh',
+          });
+        }
+        olderCalls += 1;
+        return olderCalls === 65
+          ? page([plan])
+          : page([], { previousCursor: `history-${olderCalls}` });
+      });
+
+    setup(page([started], { previousCursor: 'history-0', nextCursor: 'live-0' }), { read });
+
+    expect(await screen.findByText('Recover TODO beyond sixty-four pages')).toBeVisible();
+    expect(olderCalls).toBe(65);
+    expect(newestCalls).toBeGreaterThan(1);
+  });
+  it('hydrates an active TODO when only a running tool is in the newest page', async () => {
+    const runningTool: ConversationItem = {
+      id: 'running-tool-tail',
+      sequence: 256,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'tool_activity',
+      action: 'long-running-command',
+      label: 'running',
+      status: 'running',
+    };
+    const initialItems = [
+      ...Array.from({ length: 255 }, (_, index) =>
+        assistant(index + 1, 'final', `history item ${index}`),
+      ),
+      runningTool,
+    ];
+    const plan: ConversationItem = {
+      id: 'plan-running-tool',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'plan_update',
+      steps: [{ label: 'Recover TODO from running tool', status: 'active' }],
+    };
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockImplementation(async (request) =>
+        request.direction === 'older'
+          ? page([plan])
+          : page(initialItems, { previousCursor: 'older-running', nextCursor: 'live-running' }),
+      );
+
+    setup(page(initialItems, { previousCursor: 'older-running', nextCursor: 'live-running' }), {
+      read,
+    });
+
+    expect((await screen.findAllByText('Recover TODO from running tool')).length).toBeGreaterThan(
+      0,
+    );
+    expect(read).toHaveBeenNthCalledWith(2, {
+      target: 'w1:p1',
+      direction: 'older',
+      limit: 256,
+      cursor: 'older-running',
+    });
   });
 
   it('preserves the pane working duration across chat view remounts', async () => {
