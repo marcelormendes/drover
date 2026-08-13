@@ -33,7 +33,11 @@ function item(sequence: number): ConversationItem {
   };
 }
 
-function page(items: ConversationItem[], nextCursor: string): ConversationReadResult {
+function page(
+  items: ConversationItem[],
+  nextCursor: string,
+  previousCursor?: string,
+): ConversationReadResult {
   return {
     type: 'page',
     page: {
@@ -42,10 +46,25 @@ function page(items: ConversationItem[], nextCursor: string): ConversationReadRe
       capability: { availability: 'supported', reason: 'ready' },
       items,
       next_cursor: nextCursor,
-      previous_cursor: 'older-1',
-      has_older: true,
+      previous_cursor: previousCursor,
+      has_older: previousCursor !== undefined,
       revision: items.at(-1)?.sequence ?? 0,
       reader_generation: 'generation-1',
+    },
+  };
+}
+function pageEnd(items: ConversationItem[]): ConversationReadResult {
+  const result = page(items, 'terminal');
+  if (result.type !== 'page') {
+    return result;
+  }
+  return {
+    type: 'page',
+    page: {
+      ...result.page,
+      next_cursor: undefined,
+      previous_cursor: undefined,
+      has_older: false,
     },
   };
 }
@@ -101,16 +120,206 @@ describe('ConversationChatPanel', () => {
     expect(read).toHaveBeenNthCalledWith(2, {
       target: 'w1:p1',
       direction: 'newer',
+      limit: 256,
       cursor: 'cursor-1',
     });
     expect(read).toHaveBeenNthCalledWith(3, {
       target: 'w1:p1',
       direction: 'newer',
+      limit: 256,
       cursor: 'cursor-2',
     });
     expect(screen.getByText('answer 1')).toBeInTheDocument();
     expect(screen.getByText('answer 2')).toBeInTheDocument();
     expect(screen.getByText('answer 3')).toBeInTheDocument();
+  });
+  it('retries a failed newer drain even when metadata revision is unchanged', async () => {
+    vi.useFakeTimers();
+    try {
+      const started: ConversationItem = {
+        id: 'started',
+        sequence: 1,
+        provider: 'codex',
+        session_id: 'session-1',
+        turn_id: 'turn-1',
+        type: 'turn_state',
+        state: 'started',
+      };
+      const plan: ConversationItem = {
+        id: 'plan',
+        sequence: 2,
+        provider: 'codex',
+        session_id: 'session-1',
+        turn_id: 'turn-1',
+        type: 'plan_update',
+        steps: [{ label: 'Retry the missing TODO', status: 'active' }],
+      };
+      const read = vi
+        .fn<Window['herdr']['conversation']['read']>()
+        .mockResolvedValueOnce(page([started], 'cursor-1'))
+        .mockResolvedValueOnce(page([plan], 'cursor-2'))
+        .mockRejectedValueOnce(new Error('temporary read failure'))
+        .mockResolvedValueOnce(pageEnd([plan]));
+      const metadata = vi
+        .fn<NonNullable<Window['herdr']['conversation']['metadata']>>()
+        .mockResolvedValue(page([plan], 'metadata'));
+      let onEvent: ((event: { event: string; data: Record<string, unknown> }) => void) | undefined;
+      window.herdr = {
+        conversation: {
+          read,
+          metadata,
+          prompt: vi.fn(),
+          respond: vi.fn(),
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+        },
+        onSessionEvent: vi.fn((callback) => {
+          onEvent = callback;
+          return () => undefined;
+        }),
+      } as unknown as Window['herdr'];
+
+      render(<ConversationChatPanel pane={pane('w1:p1')} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      act(() => {
+        onEvent?.({
+          event: 'agent.conversation_changed',
+          data: {
+            pane_id: 'w1:p1',
+            workspace_id: 'w1',
+            session: { id: 'session-1' },
+            reader_generation: 'generation-1',
+            revision: 2,
+            reset_required: false,
+          },
+        });
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(read).toHaveBeenCalledTimes(3);
+
+      await act(async () => {
+        vi.advanceTimersByTime(1_500);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(metadata).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenNthCalledWith(4, {
+        target: 'w1:p1',
+        direction: 'newer',
+        limit: 256,
+        cursor: 'cursor-2',
+      });
+      expect(screen.getByText('Retry the missing TODO')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('retains a newer retry marker when another event arrives mid-drain', async () => {
+    vi.useFakeTimers();
+    try {
+      let finishSecondDrain: ((result: ConversationReadResult) => void) | undefined;
+      const read = vi
+        .fn<Window['herdr']['conversation']['read']>()
+        .mockResolvedValueOnce(page([item(1)], 'cursor-1'))
+        .mockResolvedValueOnce(page([item(2)], 'cursor-2'))
+        .mockImplementationOnce(
+          () =>
+            new Promise<ConversationReadResult>((resolve) => {
+              finishSecondDrain = resolve;
+            }),
+        )
+        .mockRejectedValueOnce(new Error('second event read failed'))
+        .mockResolvedValueOnce(pageEnd([item(4)]));
+      const metadata = vi
+        .fn<NonNullable<Window['herdr']['conversation']['metadata']>>()
+        .mockResolvedValue(page([item(3)], 'metadata'));
+      let onEvent: ((event: { event: string; data: Record<string, unknown> }) => void) | undefined;
+      window.herdr = {
+        conversation: {
+          read,
+          metadata,
+          prompt: vi.fn(),
+          respond: vi.fn(),
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+        },
+        onSessionEvent: vi.fn((callback) => {
+          onEvent = callback;
+          return () => undefined;
+        }),
+      } as unknown as Window['herdr'];
+
+      render(<ConversationChatPanel pane={pane('w1:p1')} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      act(() => {
+        onEvent?.({
+          event: 'agent.conversation_changed',
+          data: {
+            pane_id: 'w1:p1',
+            workspace_id: 'w1',
+            session: { id: 'session-1' },
+            reader_generation: 'generation-1',
+            revision: 2,
+            reset_required: false,
+          },
+        });
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(read).toHaveBeenCalledTimes(3);
+
+      act(() => {
+        onEvent?.({
+          event: 'agent.conversation_changed',
+          data: {
+            pane_id: 'w1:p1',
+            workspace_id: 'w1',
+            session: { id: 'session-1' },
+            reader_generation: 'generation-1',
+            revision: 4,
+            reset_required: false,
+          },
+        });
+        finishSecondDrain?.(page([item(3)], 'cursor-2'));
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(read).toHaveBeenCalledTimes(4);
+
+      await act(async () => {
+        vi.advanceTimersByTime(1_500);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(metadata).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenNthCalledWith(5, {
+        target: 'w1:p1',
+        direction: 'newer',
+        limit: 256,
+        cursor: 'cursor-2',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('continues draining after the first 64 newer pages', async () => {
@@ -178,12 +387,20 @@ describe('ConversationChatPanel', () => {
 
     const view = render(<ConversationChatPanel pane={pane('w1:p1')} />);
     await waitFor(() =>
-      expect(read).toHaveBeenCalledWith({ target: 'w1:p1', direction: 'newest' }),
+      expect(read).toHaveBeenCalledWith({
+        target: 'w1:p1',
+        direction: 'newest',
+        limit: 256,
+      }),
     );
     view.rerender(<ConversationChatPanel pane={pane('w1:p2')} />);
     resolvers[0]?.(page([item(1)], 'cursor-old'));
     await waitFor(() =>
-      expect(read).toHaveBeenCalledWith({ target: 'w1:p2', direction: 'newest' }),
+      expect(read).toHaveBeenCalledWith({
+        target: 'w1:p2',
+        direction: 'newest',
+        limit: 256,
+      }),
     );
     resolvers[1]?.(page([item(2)], 'cursor-new'));
 
@@ -364,6 +581,12 @@ describe('ConversationChatPanel', () => {
     const second = render(<ConversationChatPanel pane={sessionPane} />);
     expect(screen.getByText('answer 1')).toBeInTheDocument();
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(read).toHaveBeenNthCalledWith(2, {
+      target: 'w-large:p1',
+      direction: 'newer',
+      limit: 256,
+      cursor: 'cursor-1',
+    });
 
     act(() => finishRefresh?.(page([item(2)], 'cursor-2')));
     expect(await screen.findByText('answer 2')).toBeInTheDocument();
@@ -377,6 +600,59 @@ describe('ConversationChatPanel', () => {
     expect(screen.queryByText('answer 1')).not.toBeInTheDocument();
     expect(screen.queryByText('answer 2')).not.toBeInTheDocument();
     replacement.unmount();
+  });
+  it('does not rescan history after remounting a cached TODO boundary', async () => {
+    const started: ConversationItem = {
+      id: 'cached-started',
+      sequence: 1,
+      provider: 'codex',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'turn_state',
+      state: 'started',
+    };
+    const plan: ConversationItem = {
+      id: 'cached-plan',
+      sequence: 2,
+      provider: 'codex',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'plan_update',
+      steps: [{ label: 'Keep cached TODO visible', status: 'active' }],
+    };
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([started, plan], 'live-1', 'old-1'))
+      .mockResolvedValueOnce(page([started], 'live-1', 'old-2'));
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+    const sessionPane = pane('w-cache:p1', {
+      conversation_session: { id: 'session-1' },
+    });
+
+    const first = render(<ConversationChatPanel pane={sessionPane} />);
+    expect(await screen.findByText('Keep cached TODO visible')).toBeInTheDocument();
+    first.unmount();
+
+    const second = render(<ConversationChatPanel pane={sessionPane} />);
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(read).toHaveBeenNthCalledWith(2, {
+      target: 'w-cache:p1',
+      direction: 'newer',
+      limit: 256,
+      cursor: 'live-1',
+    });
+    expect(read).not.toHaveBeenCalledWith(expect.objectContaining({ direction: 'older' }));
+    expect(screen.getByText('Keep cached TODO visible')).toBeInTheDocument();
+    second.unmount();
   });
 });
 
@@ -574,6 +850,157 @@ describe('ConversationChatPanel live state', () => {
     render(<ConversationChatPanel pane={pane('w1:p1')} />);
     expect(await screen.findByRole('status')).toHaveTextContent('Working');
     expect(screen.getByText(/for \d+S/)).toBeInTheDocument();
+  });
+  it('keeps polling a readable conversation when pane status is stale', async () => {
+    vi.useFakeTimers();
+    try {
+      const started: ConversationItem = {
+        id: 'turn-started',
+        sequence: 1,
+        provider: 'codex',
+        session_id: 'session-1',
+        turn_id: 'turn-1',
+        type: 'turn_state',
+        state: 'started',
+        started_ms: Date.now(),
+      };
+      const plan: ConversationItem = {
+        id: 'plan-after-poll',
+        sequence: 2,
+        provider: 'codex',
+        session_id: 'session-1',
+        turn_id: 'turn-1',
+        type: 'plan_update',
+        steps: [
+          { label: 'Plan arrives after event drop', status: 'active' },
+          { label: 'Keep polling while working', status: 'pending' },
+        ],
+      };
+      const read = vi
+        .fn<Window['herdr']['conversation']['read']>()
+        .mockResolvedValueOnce(page([started], 'cursor-1', undefined))
+        .mockResolvedValue(page([plan], 'cursor-1'));
+      window.herdr = {
+        conversation: {
+          read,
+          prompt: vi.fn(),
+          respond: vi.fn(),
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+          attachment: {
+            begin: vi.fn(),
+            chunk: vi.fn(),
+            finish: vi.fn(),
+            abort: vi.fn(),
+          },
+        },
+        onSessionEvent: vi.fn(() => () => undefined),
+      } as unknown as Window['herdr'];
+
+      render(<ConversationChatPanel pane={pane('w1:p1')} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1_500);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(read).toHaveBeenNthCalledWith(2, {
+        target: 'w1:p1',
+        direction: 'newer',
+        limit: 256,
+        cursor: 'cursor-1',
+      });
+      expect(screen.getByText('Plan arrives after event drop')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('uses visible metadata polling before fetching changed conversation items', async () => {
+    vi.useFakeTimers();
+    try {
+      const started: ConversationItem = {
+        id: 'turn-started',
+        sequence: 1,
+        provider: 'codex',
+        session_id: 'session-1',
+        turn_id: 'turn-1',
+        type: 'turn_state',
+        state: 'started',
+        started_ms: Date.now(),
+      };
+      const plan: ConversationItem = {
+        id: 'plan-after-metadata',
+        sequence: 2,
+        provider: 'codex',
+        session_id: 'session-1',
+        turn_id: 'turn-1',
+        type: 'plan_update',
+        steps: [{ label: 'Refresh from metadata', status: 'active' }],
+      };
+      const read = vi
+        .fn<Window['herdr']['conversation']['read']>()
+        .mockResolvedValueOnce(page([started], 'cursor-1', undefined))
+        .mockResolvedValue(page([plan], 'cursor-2', undefined));
+      const metadata = vi
+        .fn<NonNullable<Window['herdr']['conversation']['metadata']>>()
+        .mockResolvedValueOnce(page([started], 'metadata-1', undefined))
+        .mockResolvedValue(page([plan], 'metadata-2', undefined));
+      window.herdr = {
+        conversation: {
+          read,
+          metadata,
+          prompt: vi.fn(),
+          respond: vi.fn(),
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+          attachment: {
+            begin: vi.fn(),
+            chunk: vi.fn(),
+            finish: vi.fn(),
+            abort: vi.fn(),
+          },
+        },
+        onSessionEvent: vi.fn(() => () => undefined),
+      } as unknown as Window['herdr'];
+
+      const view = render(<ConversationChatPanel pane={pane('w1:p1')} visible={false} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1_500);
+        await Promise.resolve();
+      });
+      expect(metadata).not.toHaveBeenCalled();
+
+      view.rerender(<ConversationChatPanel pane={pane('w1:p1')} visible />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(metadata).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(1_500);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(read).toHaveBeenNthCalledWith(2, {
+        target: 'w1:p1',
+        direction: 'newer',
+        limit: 256,
+        cursor: 'cursor-1',
+      });
+      expect(screen.getByText('Refresh from metadata')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

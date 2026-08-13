@@ -706,6 +706,13 @@ export class HerdrEngine {
     });
     return decodeConversationReadResult(result);
   }
+  async conversationMetadata(request: ConversationReadRequest): Promise<ConversationReadResult> {
+    const socket = await this.conversationSocket();
+    const result = await this.requestClient.request(socket, 'agent.conversation.metadata', {
+      target: request.target,
+    });
+    return decodeConversationReadResult(result);
+  }
 
   async conversationPrompt(request: ConversationPromptRequest): Promise<EngineBootstrap> {
     const socket = await this.conversationSocket();

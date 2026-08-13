@@ -85,6 +85,21 @@ describe('conversation model', () => {
     expect(store.resetRequired).toBe(false);
     expect(store.items).toHaveLength(1);
   });
+  it('replaces retained items after a same-generation reset', () => {
+    let store = applyConversationRead(
+      createConversationStore('w1:p1'),
+      page([item(10, 'old-item', 'stale item')], 'reader-1', 10),
+    );
+    store = applyConversationRead(store, {
+      type: 'reset_required',
+      session: { id: 'session' },
+      reader_generation: 'reader-1',
+    });
+    store = applyConversationRead(store, page([item(1, 'new-item', 'new item')], 'reader-1', 1));
+
+    expect(store.items.map(({ id }) => id)).toEqual(['new-item']);
+    expect(store.resetRequired).toBe(false);
+  });
 
   it('ignores conversation events for other panes and resets matching panes', () => {
     let store = applyConversationRead(createConversationStore('w1:p1'), page([item(1)]));
