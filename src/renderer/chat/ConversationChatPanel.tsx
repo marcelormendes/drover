@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { ConversationStatusStrip } from '@/renderer/chat/ConversationStatusStrip';
 import {
   ConversationTimeline,
   latestPlanUpdate,
@@ -559,6 +560,7 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
   // before its transcript exposes a started turn, so pane state fills only
   // that gap and never overrides a settled latest turn without new activity.
   const activeWork = useMemo(() => {
+    const plan = latestPlanUpdate(store.items);
     let latestState: Extract<ConversationItem, { type: 'turn_state' }> | undefined;
     let latestStateIndex = -1;
     for (let index = store.items.length - 1; index >= 0; index -= 1) {
@@ -570,11 +572,24 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       }
     }
     if (latestState?.state === 'started') {
-      const turnItems = store.items.filter((item) => item.turn_id === latestState.turn_id);
-      return {
-        startedMs: latestState.started_ms ?? statusStartedMs,
-        plan: latestPlanUpdate(turnItems),
-      };
+      let finalAnswerReceived = false;
+      for (let index = latestStateIndex + 1; index < store.items.length; index += 1) {
+        const item = store.items[index];
+        if (
+          item.type === 'assistant_message' &&
+          item.phase === 'final' &&
+          item.turn_id === latestState.turn_id
+        ) {
+          finalAnswerReceived = true;
+          break;
+        }
+      }
+      if (!finalAnswerReceived) {
+        return {
+          startedMs: latestState.started_ms ?? statusStartedMs,
+          plan,
+        };
+      }
     }
     if (!paneWorking) {
       return null;
@@ -597,12 +612,9 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
     if (latestState && !pendingTurn && !activeTurnId) {
       return null;
     }
-    const turnItems = activeTurnId
-      ? store.items.filter((item) => item.turn_id === activeTurnId)
-      : store.items;
     return {
       startedMs: statusStartedMs,
-      plan: latestPlanUpdate(turnItems),
+      plan,
     };
   }, [paneWorking, statusStartedMs, store.items, store.pending]);
 
@@ -968,6 +980,7 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
             {sending ? 'Sending…' : 'Send'}
           </Button>
         </div>
+        <ConversationStatusStrip pane={pane} />
       </form>
       <span className="sr-only">Current turn: {itemText(items)}</span>
     </div>

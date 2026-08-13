@@ -160,6 +160,30 @@
   background-clip: padding-box;
 }
 
+.todo-step-active {
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--chart-4) 20%, var(--secondary-background)),
+    color-mix(in oklab, var(--chart-4) 8%, var(--secondary-background))
+  );
+  box-shadow: 3px 3px 0 var(--chart-4);
+}
+
+.todo-step-pending {
+  background:
+    radial-gradient(
+      circle at 14% 35%,
+      color-mix(in oklab, var(--chart-5) 20%, transparent) 0 12%,
+      transparent 44%
+    ),
+    radial-gradient(
+      circle at 82% 65%,
+      color-mix(in oklab, var(--main) 14%, transparent) 0 10%,
+      transparent 48%
+    ),
+    var(--secondary-background);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

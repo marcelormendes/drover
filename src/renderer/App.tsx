@@ -2314,6 +2314,12 @@ function AppContent() {
         ) {
           streamStateRevision.current += 1;
           setConnectionState(state);
+          if (state === 'connected') {
+            // A live handoff reconnect can be the only event after the new
+            // server takes over. Refresh its version status so a pre-handoff
+            // RESTART NEEDED badge cannot remain cached indefinitely.
+            scheduleRefresh();
+          }
         }
         return;
       }

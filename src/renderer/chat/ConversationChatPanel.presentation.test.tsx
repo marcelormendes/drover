@@ -5,6 +5,7 @@ import {
   ConversationChatPanel,
   pruneConversationChatState,
 } from '@/renderer/chat/ConversationChatPanel';
+import { formatDuration } from '@/renderer/chat/ConversationTimeline';
 import type { ConversationItem, ConversationReadResult } from '@/shared/conversation';
 import type { PaneInfo } from '@/shared/herdr';
 
@@ -123,6 +124,62 @@ describe('ConversationChatPanel turn projection', () => {
     vi.restoreAllMocks();
   });
 
+  it('formats live work in seconds, minutes, and hours', () => {
+    expect(formatDuration(59_999)).toBe('59s');
+    expect(formatDuration(60_000)).toBe('1m 0s');
+    expect(formatDuration(1_303_000)).toBe('21m 43s');
+    expect(formatDuration(4_830_000)).toBe('1h 20m 30s');
+  });
+
+  it('renders OMP terminal metadata below the Chat composer', async () => {
+    const { view } = setup(page([]));
+    view.rerender(
+      <ConversationChatPanel
+        pane={
+          {
+            ...pane,
+            agent: 'omp',
+            display_agent: 'Oh My Pi',
+            cwd: '/home/marcelorm/workspace/herdr-desktop',
+            tokens: {
+              model: 'GPT-5.6-Sol',
+              thinking: 'xhigh',
+              cwd: '/home/marcelorm/workspace/herdr-desktop',
+              git_branch: 'feature/chat',
+              git_unstaged: '3',
+              git_staged: '2',
+              git_untracked: '1',
+              context_percent: '44.8',
+              context_tokens: '121856',
+              context_window: '272000',
+              input_tokens: '100000',
+              output_tokens: '20000',
+              cache_read_tokens: '1856',
+              cost: '182.54',
+              premium_requests: '0',
+              subscription: 'true',
+            },
+          } as PaneInfo
+        }
+      />,
+    );
+
+    const metadata = document.querySelector('[data-slot="agent-metadata"]');
+    expect(metadata).not.toBeNull();
+    expect(metadata).toHaveTextContent('GPT-5.6-Sol · xhigh');
+    expect(metadata).toHaveTextContent('~/workspace/herdr-desktop');
+    expect(metadata).toHaveTextContent('feature/chat *3 +2 ?1');
+    expect(metadata).toHaveTextContent('44.8%/272K');
+    expect(metadata).toHaveTextContent('in 100K');
+    expect(metadata).toHaveTextContent('out 20K');
+    expect(metadata).toHaveTextContent('cache 1.9K');
+    expect(metadata).toHaveTextContent('$182.54 (sub)');
+    expect(
+      screen.getByRole('textbox').compareDocumentPosition(metadata as HTMLElement) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('pins the complete active TODO above the live working duration', async () => {
     setup(
       page([
@@ -146,6 +203,7 @@ describe('ConversationChatPanel turn projection', () => {
           steps: [
             { label: 'Inspect source', status: 'completed' },
             { label: 'Write regression tests', status: 'active' },
+            { label: 'Prepare release notes', status: 'pending' },
           ],
         },
       ]),
@@ -160,11 +218,86 @@ describe('ConversationChatPanel turn projection', () => {
       within(activePlan as HTMLElement).getByText('Write regression tests'),
     ).toBeInTheDocument();
     expect(screen.getAllByText('Inspect source')).toHaveLength(1);
+    const activeStep = within(activePlan as HTMLElement)
+      .getByText('Write regression tests')
+      .closest('[data-slot="plan-step"]');
+    const pendingStep = within(activePlan as HTMLElement)
+      .getByText('Prepare release notes')
+      .closest('[data-slot="plan-step"]');
+    expect(activeStep).toHaveAttribute('aria-current', 'step');
+    expect(activeStep).toHaveAttribute('data-state', 'active');
+    expect(activeStep).toHaveClass('todo-step-active');
+    expect(activeStep?.querySelector('[data-slot="active-task-indicator"]')).not.toBeNull();
+    expect(within(activeStep as HTMLElement).getByText('working')).toBeVisible();
+    expect(pendingStep).toHaveAttribute('data-state', 'pending');
+    expect(pendingStep).toHaveClass('todo-step-pending');
+    expect(within(pendingStep as HTMLElement).getByText('queued')).toBeVisible();
     expect(
       (activePlan as HTMLElement).compareDocumentPosition(status) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(status).toHaveTextContent(/Working for \d+s/);
+  });
+
+  it('keeps the session TODO pinned when work resumes in a new turn', async () => {
+    const { view } = setup(
+      page([
+        {
+          id: 'plan',
+          sequence: 1,
+          provider: 'omp',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'plan_update',
+          steps: [
+            { label: 'Finish interrupted work', status: 'active' },
+            { label: 'Run final verification', status: 'pending' },
+          ],
+        },
+        {
+          id: 'interrupted',
+          sequence: 2,
+          provider: 'omp',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'interrupted',
+        },
+        {
+          id: 'resumed',
+          sequence: 3,
+          provider: 'omp',
+          session_id: 'session-1',
+          turn_id: 'turn-2',
+          type: 'user_message',
+          text: 'Resume.',
+        },
+        {
+          id: 'resumed-tool',
+          sequence: 4,
+          provider: 'omp',
+          session_id: 'session-1',
+          turn_id: 'turn-2',
+          type: 'tool_activity',
+          action: 'bash',
+          label: 'completed',
+          status: 'completed',
+        },
+      ]),
+    );
+    view.rerender(
+      <ConversationChatPanel pane={{ ...pane, agent_status: 'working' } as PaneInfo} />,
+    );
+
+    const status = await screen.findByRole('status');
+    const activePlan = document.querySelector('[data-slot="active-plan"]');
+    expect(activePlan).not.toBeNull();
+    expect(within(activePlan as HTMLElement).getByText('Finish interrupted work')).toBeVisible();
+    expect(within(activePlan as HTMLElement).getByText('Run final verification')).toBeVisible();
+    expect(
+      (activePlan as HTMLElement).compareDocumentPosition(status) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it('preserves the pane working duration across chat view remounts', async () => {
@@ -195,6 +328,40 @@ describe('ConversationChatPanel turn projection', () => {
     render(<ConversationChatPanel pane={workingPane} />);
 
     expect(await screen.findByRole('status')).toHaveTextContent('Working for 7s');
+  });
+
+  it('settles Working and the pinned TODO when a final answer arrives without a terminal turn event', async () => {
+    setup(
+      page([
+        {
+          id: 'started',
+          sequence: 1,
+          provider: 'omp',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'started',
+          started_ms: Date.now() - 5_000,
+        },
+        {
+          id: 'plan',
+          sequence: 2,
+          provider: 'omp',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'plan_update',
+          steps: [
+            { label: 'Run final verification', status: 'active' },
+            { label: 'Publish result', status: 'pending' },
+          ],
+        },
+        assistant(3, 'final', 'Everything is complete.'),
+      ]),
+    );
+
+    expect(await screen.findByText('Everything is complete.')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-slot="active-plan"]')).toBeNull();
   });
 
   it('folds settled work while keeping the rendered final answer prominent and visible', async () => {
