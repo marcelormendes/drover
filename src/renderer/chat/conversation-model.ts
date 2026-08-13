@@ -48,6 +48,16 @@ function sortItems(items: Iterable<ConversationItem>): ConversationItem[] {
     (left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id),
   );
 }
+function sameCapability(
+  left: ConversationCapability | undefined,
+  right: ConversationCapability,
+): boolean {
+  return (
+    left?.availability === right.availability &&
+    left.reason === right.reason &&
+    left.message === right.message
+  );
+}
 
 function replacePage(
   store: ConversationStore,
@@ -56,12 +66,6 @@ function replacePage(
 ): ConversationStore {
   const sameReader =
     store.readerGeneration === undefined || store.readerGeneration === page.reader_generation;
-  const byId = new Map<string, ConversationItem>(
-    sameReader ? store.items.map((item) => [item.id, item]) : [],
-  );
-  for (const item of page.items) {
-    byId.set(item.id, item);
-  }
   // Optimistic echoes resolve once the durable transcript contains the same
   // user text (the engine's prompt submission queues before persisting).
   const pending = [...store.pending];
@@ -83,6 +87,26 @@ function replacePage(
     olderCursor = page.previous_cursor;
   } else {
     newerCursor = page.next_cursor;
+  }
+  if (
+    sameReader &&
+    !store.resetRequired &&
+    page.items.length === 0 &&
+    store.provider === page.provider &&
+    store.session?.id === page.session.id &&
+    store.readerGeneration === page.reader_generation &&
+    sameCapability(store.capability, page.capability) &&
+    store.revision >= page.revision &&
+    store.olderCursor === olderCursor &&
+    store.newerCursor === newerCursor
+  ) {
+    return store;
+  }
+  const byId = new Map<string, ConversationItem>(
+    sameReader ? store.items.map((item) => [item.id, item]) : [],
+  );
+  for (const item of page.items) {
+    byId.set(item.id, item);
   }
   return {
     ...store,

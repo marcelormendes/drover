@@ -106,6 +106,11 @@ const api: DroverApi = {
     close: (paneId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.terminalClose, paneId) as Promise<void>,
     onEvent: (listener) => subscribe<TerminalEvent>(IPC_CHANNELS.terminalEvent, listener),
+    readClipboard: () => ipcRenderer.invoke(IPC_CHANNELS.terminalClipboardRead) as Promise<string>,
+    writeClipboard: (text: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.terminalClipboardWrite, text) as Promise<void>,
+    accessibilitySupportEnabled: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.terminalAccessibilitySupport) as Promise<boolean>,
   }),
   openExternal: (url) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url) as Promise<void>,
 };

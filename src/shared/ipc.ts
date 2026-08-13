@@ -27,6 +27,9 @@ export const IPC_CHANNELS = {
   terminalScroll: 'herdr:terminal-scroll',
   terminalClose: 'herdr:terminal-close',
   terminalEvent: 'herdr:terminal-event',
+  terminalClipboardRead: 'herdr:terminal-clipboard-read',
+  terminalClipboardWrite: 'herdr:terminal-clipboard-write',
+  terminalAccessibilitySupport: 'herdr:terminal-accessibility-support',
   desktopAction: 'desktop:action',
   openExternal: 'desktop:open-external',
 } as const;

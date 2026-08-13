@@ -92,34 +92,42 @@ describe('decodeConversationReadResult', () => {
     ).toThrow(/invalid conversation/);
   });
 
-  it('rejects malformed or oversized canonical items', () => {
-    expect(() =>
-      decodeConversationReadResult({
-        type: 'agent_conversation_read',
-        read: {
-          type: 'page',
-          page: {
-            provider: 'pi',
-            session: { id: 'opaque-session' },
-            capability: { availability: 'supported', reason: 'ready' },
-            items: [
-              {
-                id: 'item-1',
-                sequence: 1,
-                provider: 'pi',
-                type: 'assistant_message',
-                phase: 'final',
-                text: 'x'.repeat(20_000),
-                state: 'completed',
-              },
-            ],
-            has_older: false,
-            revision: 1,
-            reader_generation: 'generation-a',
-          },
+  it('accepts long canonical messages and rejects messages above the engine bound', () => {
+    const result = (text: string) => ({
+      type: 'agent_conversation_read',
+      read: {
+        type: 'page',
+        page: {
+          provider: 'pi',
+          session: { id: 'opaque-session' },
+          capability: { availability: 'supported', reason: 'ready' },
+          items: [
+            {
+              id: 'item-1',
+              sequence: 1,
+              provider: 'pi',
+              type: 'assistant_message',
+              phase: 'final',
+              text,
+              state: 'completed',
+            },
+          ],
+          has_older: false,
+          revision: 1,
+          reader_generation: 'generation-a',
         },
-      }),
-    ).toThrow(/invalid conversation/);
+      },
+    });
+
+    expect(decodeConversationReadResult(result('x'.repeat(20_000)))).toMatchObject({
+      type: 'page',
+      page: {
+        items: [expect.objectContaining({ text: 'x'.repeat(20_000) })],
+      },
+    });
+    expect(() => decodeConversationReadResult(result('x'.repeat(256 * 1024 + 1)))).toThrow(
+      /invalid conversation/,
+    );
   });
 });
 

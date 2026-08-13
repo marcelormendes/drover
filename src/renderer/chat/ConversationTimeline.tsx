@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ type ApprovalItem = Extract<ConversationItem, { type: 'approval' }>;
 type FileChangeItem = Extract<ConversationItem, { type: 'file_change' }>;
 type ToolActivityItem = Extract<ConversationItem, { type: 'tool_activity' }>;
 type TurnStateItem = Extract<ConversationItem, { type: 'turn_state' }>;
+type PlanUpdateItem = Extract<ConversationItem, { type: 'plan_update' }>;
 
 interface ConversationTimelineProps {
   items: readonly ConversationItem[];
@@ -31,6 +32,15 @@ interface TurnProjection {
   items: ConversationItem[];
 }
 
+interface TurnProps {
+  turn: TurnProjection;
+  paneId: string;
+  readerGeneration?: string;
+  session?: ConversationSessionIdentity;
+  onOpenTerminal?: () => void;
+  onRespond: ConversationTimelineProps['onRespond'];
+}
+
 export function ConversationTimeline({
   items,
   paneId,
@@ -39,6 +49,15 @@ export function ConversationTimeline({
   onOpenTerminal,
   onRespond,
 }: ConversationTimelineProps) {
+  const onOpenTerminalRef = useRef(onOpenTerminal);
+  const onRespondRef = useRef(onRespond);
+  onOpenTerminalRef.current = onOpenTerminal;
+  onRespondRef.current = onRespond;
+  const openTerminal = useCallback(() => onOpenTerminalRef.current?.(), []);
+  const respond = useCallback<ConversationTimelineProps['onRespond']>(
+    (approval, decisionId) => onRespondRef.current(approval, decisionId),
+    [],
+  );
   const turns = useMemo(() => projectTurns(items), [items]);
   return (
     <>
@@ -49,8 +68,8 @@ export function ConversationTimeline({
           paneId={paneId}
           readerGeneration={readerGeneration}
           session={session}
-          onOpenTerminal={onOpenTerminal}
-          onRespond={onRespond}
+          onOpenTerminal={openTerminal}
+          onRespond={respond}
         />
       ))}
     </>
@@ -82,21 +101,14 @@ function projectTurns(items: readonly ConversationItem[]): TurnProjection[] {
   return [...turns.values()];
 }
 
-function Turn({
+const Turn = memo(function Turn({
   turn,
   paneId,
   readerGeneration,
   session,
   onOpenTerminal,
   onRespond,
-}: {
-  turn: TurnProjection;
-  paneId: string;
-  readerGeneration?: string;
-  session?: ConversationSessionIdentity;
-  onOpenTerminal?: () => void;
-  onRespond: ConversationTimelineProps['onRespond'];
-}) {
+}: TurnProps) {
   const users = turn.items.filter(
     (item): item is Extract<ConversationItem, { type: 'user_message' }> =>
       item.type === 'user_message',
@@ -109,8 +121,9 @@ function Turn({
   const approvals = turn.items.filter((item): item is ApprovalItem => item.type === 'approval');
   const states = turn.items.filter((item): item is TurnStateItem => item.type === 'turn_state');
   const latestState = states.at(-1);
-  const active = latestState?.state === 'started';
   const settled = latestState && latestState.state !== 'started' ? latestState : undefined;
+  const collapseWork =
+    finals.length > 0 || (settled !== undefined && settled.state !== 'completed');
   const work = turn.items.filter(
     (item) =>
       item.type !== 'user_message' &&
@@ -128,8 +141,8 @@ function Turn({
       {users.map((item) => (
         <UserMessage key={item.id} item={item} />
       ))}
-      {active || !settled ? <WorkRows items={work} /> : null}
-      {settled && work.length > 0 ? <SettledWork state={settled} items={work} /> : null}
+      {work.length > 0 && !collapseWork ? <WorkRows expanded items={work} /> : null}
+      {work.length > 0 && collapseWork ? <SettledWork state={settled} items={work} /> : null}
       {approvals.map((approval) => (
         <ApprovalRow
           key={approval.id}
@@ -154,25 +167,58 @@ function Turn({
       ) : null}
     </section>
   );
+}, sameTurnProps);
+function sameTurnProps(previous: TurnProps, next: TurnProps): boolean {
+  if (
+    previous.turn.id !== next.turn.id ||
+    previous.paneId !== next.paneId ||
+    previous.readerGeneration !== next.readerGeneration ||
+    previous.session?.id !== next.session?.id ||
+    previous.onOpenTerminal !== next.onOpenTerminal ||
+    previous.onRespond !== next.onRespond ||
+    previous.turn.items.length !== next.turn.items.length
+  ) {
+    return false;
+  }
+  return previous.turn.items.every((item, index) => item === next.turn.items[index]);
 }
 
-export function latestActivePlanStep(items: readonly ConversationItem[]): string | undefined {
+export function latestPlanUpdate(items: readonly ConversationItem[]): PlanUpdateItem | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (item.type === 'plan_update') {
-      return item.steps.find((step) => step.status === 'active')?.label;
+      return item;
     }
   }
   return undefined;
 }
 
-export function WorkingIndicator({
-  startedMs,
-  activeStep,
+export const PlanUpdateCard = memo(function PlanUpdateCard({
+  item,
+  label = 'Plan',
 }: {
-  startedMs?: number;
-  activeStep?: string;
+  item: PlanUpdateItem;
+  label?: string;
 }) {
+  return (
+    <div className="rounded-base border-2 border-border bg-secondary-background p-3 text-sm">
+      <div className="mb-2 text-xs font-bold uppercase text-muted-foreground">{label}</div>
+      <ul className="space-y-1">
+        {item.steps.map((step) => (
+          <li key={`${step.label}:${step.status}`}>
+            <span className="mr-2" aria-hidden="true">
+              {step.status === 'completed' ? '✓' : step.status === 'active' ? '•' : '○'}
+            </span>
+            {step.label}
+            <span className="ml-2 text-xs text-muted-foreground">{step.status}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+});
+
+export function WorkingIndicator({ startedMs }: { startedMs?: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -188,26 +234,31 @@ export function WorkingIndicator({
         ●
       </span>
       <span className="font-bold">Working{elapsed > 0 ? ` for ${elapsed}s` : ''}</span>
-      {activeStep ? (
-        <span className="w-full pl-4 text-xs text-muted-foreground">{activeStep}</span>
-      ) : null}
     </div>
   );
 }
 
-function SettledWork({ state, items }: { state: TurnStateItem; items: ConversationItem[] }) {
+const SettledWork = memo(function SettledWork({
+  state,
+  items,
+}: {
+  state?: TurnStateItem;
+  items: ConversationItem[];
+}) {
   return (
     <details
       className="rounded-base border-2 border-border bg-secondary-background text-sm"
       data-testid="turn-work-summary"
     >
-      <summary className="cursor-pointer px-3 py-2 font-bold">{settledLabel(state)}</summary>
+      <summary className="cursor-pointer px-3 py-2 font-bold">
+        {state ? settledLabel(state) : 'Work'}
+      </summary>
       <div className="space-y-2 border-t-2 border-border p-2">
         <WorkRows items={items} />
       </div>
     </details>
   );
-}
+});
 
 function settledLabel(state: TurnStateItem): string {
   const duration = formatDuration(state.duration_ms);
@@ -220,18 +271,24 @@ function settledLabel(state: TurnStateItem): string {
   return `Failed${duration ? ` after ${duration}` : ''}${state.error ? `: ${state.error}` : ''}`;
 }
 
-function WorkRows({ items }: { items: readonly ConversationItem[] }) {
+const WorkRows = memo(function WorkRows({
+  expanded = false,
+  items,
+}: {
+  expanded?: boolean;
+  items: readonly ConversationItem[];
+}) {
   const rows: ReactNode[] = [];
   let toolCount = 0;
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (item.type !== 'tool_activity') {
-      rows.push(<WorkItemRow key={item.id} item={item} />);
+      rows.push(<WorkItemRow expanded={expanded} key={item.id} item={item} />);
       continue;
     }
     toolCount += 1;
-    if (toolCount <= VISIBLE_TOOL_LIMIT) {
-      rows.push(<ToolActivityRow key={item.id} item={item} />);
+    if (expanded || toolCount <= VISIBLE_TOOL_LIMIT) {
+      rows.push(<ToolActivityRow expanded={expanded} key={item.id} item={item} />);
       continue;
     }
     const grouped = [item];
@@ -243,34 +300,24 @@ function WorkRows({ items }: { items: readonly ConversationItem[] }) {
     rows.push(<GroupedTools key={`group:${grouped[0].id}`} items={grouped} />);
   }
   return <>{rows}</>;
-}
+});
 
-function WorkItemRow({ item }: { item: ConversationItem }) {
+const WorkItemRow = memo(function WorkItemRow({
+  expanded,
+  item,
+}: {
+  expanded: boolean;
+  item: ConversationItem;
+}) {
   switch (item.type) {
     case 'assistant_message':
       return (
         <div className="border-l-4 border-main px-3 py-1 text-sm" data-slot="commentary">
-          <div className="mb-1 text-xs font-bold uppercase text-muted-foreground">Commentary</div>
           <MarkdownText text={item.text} />
         </div>
       );
     case 'plan_update':
-      return (
-        <div className="rounded-base border-2 border-border p-3 text-sm">
-          <div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Plan</div>
-          <ul className="space-y-1">
-            {item.steps.map((step) => (
-              <li key={`${step.label}:${step.status}`}>
-                <span className="mr-2" aria-hidden="true">
-                  {step.status === 'completed' ? '✓' : step.status === 'active' ? '•' : '○'}
-                </span>
-                {step.label}
-                <span className="ml-2 text-xs text-muted-foreground">{step.status}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      );
+      return expanded ? null : <PlanUpdateCard item={item} />;
     case 'notice':
       return <div className="text-xs text-muted-foreground">{item.message}</div>;
     case 'tool_activity':
@@ -278,9 +325,15 @@ function WorkItemRow({ item }: { item: ConversationItem }) {
     default:
       return null;
   }
-}
+});
 
-function ToolActivityRow({ item }: { item: ToolActivityItem }) {
+const ToolActivityRow = memo(function ToolActivityRow({
+  expanded = false,
+  item,
+}: {
+  expanded?: boolean;
+  item: ToolActivityItem;
+}) {
   const [open, setOpen] = useState(false);
   const duration = formatDuration(item.duration_ms);
   const label =
@@ -323,8 +376,12 @@ function ToolActivityRow({ item }: { item: ToolActivityItem }) {
     <details
       className="rounded-base border-2 border-border bg-secondary-background text-sm"
       data-slot="tool-activity"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={expanded || open}
+      onToggle={(event) => {
+        if (!expanded) {
+          setOpen(event.currentTarget.open);
+        }
+      }}
     >
       <summary className="cursor-pointer px-3 py-2">{summary}</summary>
       <div className="border-t-2 border-border px-3 py-2 text-xs text-muted-foreground">
@@ -339,9 +396,9 @@ function ToolActivityRow({ item }: { item: ToolActivityItem }) {
       </div>
     </details>
   );
-}
+});
 
-function GroupedTools({ items }: { items: ToolActivityItem[] }) {
+const GroupedTools = memo(function GroupedTools({ items }: { items: ToolActivityItem[] }) {
   return (
     <details className="rounded-base border-2 border-border bg-secondary-background text-sm">
       <summary className="cursor-pointer px-3 py-2 font-medium">
@@ -354,9 +411,13 @@ function GroupedTools({ items }: { items: ToolActivityItem[] }) {
       </div>
     </details>
   );
-}
+});
 
-function UserMessage({ item }: { item: Extract<ConversationItem, { type: 'user_message' }> }) {
+const UserMessage = memo(function UserMessage({
+  item,
+}: {
+  item: Extract<ConversationItem, { type: 'user_message' }>;
+}) {
   return (
     <div className="rounded-base border-2 border-border bg-secondary-background p-3 text-sm">
       <div className="mb-1 text-xs font-bold uppercase text-muted-foreground">You</div>
@@ -375,27 +436,30 @@ function UserMessage({ item }: { item: Extract<ConversationItem, { type: 'user_m
       ) : null}
     </div>
   );
-}
+});
 
-function FinalAnswer({ item }: { item: Extract<ConversationItem, { type: 'assistant_message' }> }) {
+const FinalAnswer = memo(function FinalAnswer({
+  item,
+}: {
+  item: Extract<ConversationItem, { type: 'assistant_message' }>;
+}) {
   return (
     <article
       className="rounded-base border-2 border-border bg-background p-4 text-sm shadow-shadow"
       data-testid="final-answer"
     >
-      <div className="mb-2 text-xs font-bold uppercase text-main">Answer</div>
       <MarkdownText text={item.text} />
     </article>
   );
-}
+});
 
-function MarkdownText({ text }: { text: string }) {
+const MarkdownText = memo(function MarkdownText({ text }: { text: string }) {
   return (
     <div className="min-w-0 break-words text-response-foreground [&_a]:font-bold [&_a]:text-main [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded-sm [&_code]:bg-secondary-background [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-heading [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-heading [&_h3]:mb-1 [&_h3]:font-heading [&_li]:ml-5 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-base [&_pre]:border-2 [&_pre]:border-border [&_pre]:bg-secondary-background [&_pre]:p-3 [&_strong]:font-bold">
       <ReactMarkdown>{text}</ReactMarkdown>
     </div>
   );
-}
+});
 
 function ChangedFiles({ files }: { files: FileChangeItem[] }) {
   const visible = files.slice(0, VISIBLE_FILE_LIMIT);

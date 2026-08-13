@@ -57,6 +57,11 @@ describe('conversation model', () => {
     expect(store.revision).toBe(4);
     expect(store.olderCursor).toBe('older-cursor');
   });
+  it('preserves the store identity for an unchanged empty live-tail page', () => {
+    const store = applyConversationRead(createConversationStore('w1:p1'), page([]));
+
+    expect(applyConversationRead(store, page([]), 'newer')).toBe(store);
+  });
 
   it('resets before applying data from a changed reader generation', () => {
     let store = applyConversationRead(createConversationStore('w1:p1'), page([item(10)]));

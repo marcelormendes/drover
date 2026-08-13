@@ -31,6 +31,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import {
+  Activity,
   type CSSProperties,
   type FormEvent,
   useCallback,
@@ -740,6 +741,36 @@ function StartAgentDialog({
     </Dialog>
   );
 }
+function PersistentTerminalSurface({ pane, visible }: { pane: PaneInfo; visible: boolean }) {
+  const [mounted, setMounted] = useState(visible);
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+    }
+  }, [visible]);
+  if (!mounted) {
+    return null;
+  }
+  return (
+    <div aria-hidden={visible ? undefined : true} hidden={!visible}>
+      <TerminalPanel
+        onOpenExternal={(url) => void window.herdr.openExternal(url)}
+        onScrollRequest={(request) =>
+          void window.herdr.terminal.scroll({
+            paneId: request.paneId,
+            direction: request.direction,
+            lines:
+              request.unit === 'page'
+                ? (pane.scroll?.viewport_rows || 24) * request.amount
+                : request.amount,
+            source: request.unit === 'page' ? 'page_key' : 'wheel',
+          })
+        }
+        pane={pane}
+      />
+    </div>
+  );
+}
 
 function PaneStage({
   pane,
@@ -967,28 +998,15 @@ function PaneStage({
                   </div>
                 ) : null}
               </div>
-              {view === 'chat' ? (
-                <ConversationChatPanel
-                  onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
-                  pane={item}
-                />
-              ) : (
-                <TerminalPanel
-                  onOpenExternal={(url) => void window.herdr.openExternal(url)}
-                  onScrollRequest={(request) =>
-                    void window.herdr.terminal.scroll({
-                      paneId: request.paneId,
-                      direction: request.direction,
-                      lines:
-                        request.unit === 'page'
-                          ? (item.scroll?.viewport_rows || 24) * request.amount
-                          : request.amount,
-                      source: request.unit === 'page' ? 'page_key' : 'wheel',
-                    })
-                  }
-                  pane={item}
-                />
-              )}
+              {hasAgent && chatEnabled ? (
+                <Activity mode={view === 'chat' ? 'visible' : 'hidden'}>
+                  <ConversationChatPanel
+                    onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
+                    pane={item}
+                  />
+                </Activity>
+              ) : null}
+              <PersistentTerminalSurface pane={item} visible={view === 'terminal'} />
             </Card>
           </div>
         );

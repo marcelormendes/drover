@@ -299,6 +299,9 @@ describe('App', () => {
         scroll: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
         onEvent: vi.fn(() => () => undefined),
+        readClipboard: vi.fn(async () => ''),
+        writeClipboard: vi.fn(async () => undefined),
+        accessibilitySupportEnabled: vi.fn(async () => false),
       },
       openExternal: vi.fn(async () => undefined),
     };
@@ -342,7 +345,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Chat view' })).toHaveClass('text-main-foreground');
     await user.click(screen.getByRole('button', { name: 'Terminal view' }));
     expect(screen.getByTestId('terminal-w1:p1')).toBeInTheDocument();
-    expect(screen.queryByTestId('chat-w1:p1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chat-w1:p1')).not.toBeVisible();
 
     await user.click(screen.getByRole('button', { name: 'Chat view' }));
     expect(screen.getByTestId('chat-w1:p1')).toBeInTheDocument();
@@ -975,9 +978,10 @@ describe('App', () => {
         args,
         timeoutMs: 45_000,
       });
-      expect(await screen.findByTestId(`${expectedView}-w1:p1`)).toBeInTheDocument();
+      const selectedView = await screen.findByTestId(`${expectedView}-w1:p1`);
       const hiddenView = expectedView === 'chat' ? 'terminal' : 'chat';
-      expect(screen.queryByTestId(`${hiddenView}-w1:p1`)).not.toBeInTheDocument();
+      expect(selectedView).toBeVisible();
+      expect(await screen.findByTestId(`${hiddenView}-w1:p1`)).not.toBeVisible();
     },
   );
 
@@ -1078,9 +1082,9 @@ describe('App', () => {
       await waitFor(() => expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2), {
         timeout: 2_000,
       });
-      expect(screen.getByTestId(`${expectedView}-w1:p1`)).toBeInTheDocument();
+      expect(screen.getByTestId(`${expectedView}-w1:p1`)).toBeVisible();
       const hiddenView = expectedView === 'chat' ? 'terminal' : 'chat';
-      expect(screen.queryByTestId(`${hiddenView}-w1:p1`)).not.toBeInTheDocument();
+      expect(await screen.findByTestId(`${hiddenView}-w1:p1`)).not.toBeVisible();
     },
   );
 
@@ -1114,7 +1118,7 @@ describe('App', () => {
       timeout: 2_000,
     });
     expect(screen.getByTestId('chat-w1:p1')).toBeInTheDocument();
-    expect(screen.queryByTestId('terminal-w1:p1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('terminal-w1:p1')).not.toBeVisible();
   });
 
   it('opens complete pane controls and routes graphical actions to Herdr', async () => {

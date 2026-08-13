@@ -483,6 +483,9 @@ export interface DroverApi {
     scroll(request: TerminalScrollRequest): Promise<void>;
     close(paneId: string): Promise<void>;
     onEvent(listener: (event: TerminalEvent) => void): () => void;
+    readClipboard(): Promise<string>;
+    writeClipboard(text: string): Promise<void>;
+    accessibilitySupportEnabled(): Promise<boolean>;
   };
   openExternal(url: string): Promise<void>;
 }

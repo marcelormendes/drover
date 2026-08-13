@@ -123,7 +123,7 @@ describe('ConversationChatPanel turn projection', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows the active plan step beside the live working duration', async () => {
+  it('pins the complete active TODO above the live working duration', async () => {
     setup(
       page([
         {
@@ -152,8 +152,19 @@ describe('ConversationChatPanel turn projection', () => {
     );
 
     const status = await screen.findByRole('status');
+    const activePlan = document.querySelector('[data-slot="active-plan"]');
+    expect(activePlan).not.toBeNull();
+    expect(within(activePlan as HTMLElement).getByText('TODO')).toBeInTheDocument();
+    expect(within(activePlan as HTMLElement).getByText('Inspect source')).toBeInTheDocument();
+    expect(
+      within(activePlan as HTMLElement).getByText('Write regression tests'),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('Inspect source')).toHaveLength(1);
+    expect(
+      (activePlan as HTMLElement).compareDocumentPosition(status) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(status).toHaveTextContent(/Working for \d+s/);
-    expect(status).toHaveTextContent('Write regression tests');
   });
 
   it('preserves the pane working duration across chat view remounts', async () => {
@@ -193,6 +204,15 @@ describe('ConversationChatPanel turn projection', () => {
         tool(2, 'bash', 'cargo test'),
         assistant(3, 'final', '## Result\n\n**Everything passes.**'),
         {
+          id: 'user',
+          sequence: 0,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'user_message',
+          text: 'Please verify this.',
+        },
+        {
           id: 'completed',
           sequence: 4,
           provider: 'pi',
@@ -213,6 +233,20 @@ describe('ConversationChatPanel turn projection', () => {
     expect(within(answer).getByRole('heading', { name: 'Result' })).toBeInTheDocument();
     expect(within(answer).getByText('Everything passes.').tagName).toBe('STRONG');
     expect(answer).not.toHaveTextContent('**');
+    expect(screen.getByText('You')).toBeInTheDocument();
+    expect(screen.queryByText('Commentary', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('Answer', { exact: true })).not.toBeInTheDocument();
+  });
+
+  it('renders a final answer larger than the former engine text limit in full', async () => {
+    const ending = 'The complete final conclusion remains visible.';
+    const longAnswer = `${'Detailed evidence. '.repeat(600)}\n\n${ending}`;
+
+    setup(page([assistant(1, 'final', longAnswer)]));
+
+    const answer = await screen.findByTestId('final-answer');
+    expect(answer).toHaveTextContent(ending);
+    expect(answer.textContent?.match(/Detailed evidence\./g)).toHaveLength(600);
   });
 
   it('keeps commentary between chronological work rows in an active turn', async () => {
@@ -245,7 +279,7 @@ describe('ConversationChatPanel turn projection', () => {
     ).toBeTruthy();
   });
 
-  it('groups repetitive tools after four visible rows and keeps all rows accessible', async () => {
+  it('keeps every active tool row visible instead of grouping later calls', async () => {
     setup(
       page([
         {
@@ -261,11 +295,32 @@ describe('ConversationChatPanel turn projection', () => {
       ]),
     );
 
+    await screen.findByText('tool-7');
+    expect(screen.queryByText('+2 tool calls')).not.toBeInTheDocument();
+  });
+
+  it('groups repetitive tool rows after the final answer arrives', async () => {
+    setup(
+      page([
+        ...Array.from({ length: 6 }, (_, index) => tool(index + 1)),
+        assistant(7, 'final', 'Done.'),
+        {
+          id: 'completed',
+          sequence: 8,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'completed',
+        },
+      ]),
+    );
+
     const disclosure = await screen.findByText('+2 tool calls');
     const grouped = disclosure.closest('details');
     expect(grouped).not.toBeNull();
+    expect(within(grouped as HTMLElement).getByText('tool-5')).toBeInTheDocument();
     expect(within(grouped as HTMLElement).getByText('tool-6')).toBeInTheDocument();
-    expect(within(grouped as HTMLElement).getByText('tool-7')).toBeInTheDocument();
   });
 
   it('does not render a useless disclosure for a tool with no detail', async () => {
@@ -275,7 +330,7 @@ describe('ConversationChatPanel turn projection', () => {
     expect(label.closest('details')).toBeNull();
   });
 
-  it('keeps a running bash command collapsed and reveals it in a black command block', async () => {
+  it('keeps a running bash command expanded during active work', async () => {
     setup(
       page([
         {
@@ -290,13 +345,31 @@ describe('ConversationChatPanel turn projection', () => {
     const label = await screen.findByText('bash');
     const disclosure = label.closest('details');
     expect(disclosure).not.toBeNull();
-    expect(disclosure).not.toHaveAttribute('open');
+    expect(disclosure).toHaveAttribute('open');
     const command = within(disclosure as HTMLElement).getByText("printf 'hello\\n'");
     expect(command.tagName).toBe('CODE');
     expect(command.parentElement).toHaveClass('bg-black', 'text-white');
+  });
 
-    fireEvent.click((disclosure as HTMLElement).querySelector('summary') as HTMLElement);
+  it('keeps completed work expanded until its final answer arrives', async () => {
+    setup(
+      page([
+        tool(1, 'bash', 'npm test'),
+        {
+          id: 'completed',
+          sequence: 2,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'completed',
+        },
+      ]),
+    );
+
+    const disclosure = (await screen.findByText('bash')).closest('details');
     expect(disclosure).toHaveAttribute('open');
+    expect(screen.queryByTestId('turn-work-summary')).not.toBeInTheDocument();
   });
 
   it('attaches a bounded changed-files summary below the final answer', async () => {

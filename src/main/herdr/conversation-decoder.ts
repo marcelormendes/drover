@@ -17,6 +17,7 @@ import type {
 
 const MAX_ITEMS = 256;
 const MAX_TEXT_LENGTH = 16_384;
+const MAX_MESSAGE_LENGTH = 256 * 1024;
 const MAX_OPAQUE_LENGTH = 256;
 const MAX_PATHS = 64;
 const MAX_ATTACHMENTS = 16;
@@ -155,14 +156,16 @@ function decodePayload(value: Record<string, unknown>): ConversationItemPayload 
   switch (value.type) {
     case 'user_message': {
       const text =
-        typeof value.text === 'string' && value.text.length <= MAX_TEXT_LENGTH ? value.text : null;
+        typeof value.text === 'string' && value.text.length <= MAX_MESSAGE_LENGTH
+          ? value.text
+          : null;
       const attachments = decodeAttachments(value.attachments);
       return text !== null && (text.length > 0 || attachments.length > 0)
         ? { type: value.type, text, attachments }
         : invalid();
     }
     case 'assistant_message': {
-      const text = boundedString(value.text);
+      const text = boundedString(value.text, MAX_MESSAGE_LENGTH);
       const phase = value.phase;
       const state = value.state;
       return text &&

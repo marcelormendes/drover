@@ -22,20 +22,38 @@ const terminalControl = vi.hoisted(() => ({
   cols: 80,
   customKeyHandler: undefined as ((event: KeyboardEvent) => boolean) | undefined,
   dataListener: undefined as ((value: string) => void) | undefined,
+  loadedAddons: [] as unknown[],
   options: undefined as
     | {
+        screenReaderMode?: boolean;
         theme?: Record<string, string>;
       }
     | undefined,
+  paste: vi.fn(),
   selection: '',
   selectionListener: undefined as (() => void) | undefined,
+  write: vi.fn(),
+  reset: vi.fn(),
   rows: 24,
   scrollToBottom: vi.fn(),
 }));
 const webLinks = vi.hoisted(() => ({
   activate: undefined as ((event: MouseEvent, uri: string) => void) | undefined,
 }));
+const webgl = vi.hoisted(() => ({
+  contextLoss: undefined as (() => void) | undefined,
+  dispose: vi.fn(),
+}));
 
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    dispose = webgl.dispose;
+    onContextLoss(listener: () => void) {
+      webgl.contextLoss = listener;
+      return { dispose() {} };
+    }
+  },
+}));
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
     fit() {}
@@ -60,7 +78,7 @@ vi.mock('@xterm/addon-web-links', () => ({
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
-    constructor(options: { theme?: Record<string, string> }) {
+    constructor(options: { screenReaderMode?: boolean; theme?: Record<string, string> }) {
       terminalControl.options = options;
     }
     get cols() {
@@ -69,9 +87,16 @@ vi.mock('@xterm/xterm', () => ({
     get rows() {
       return terminalControl.rows;
     }
-    loadAddon() {}
+    get options() {
+      return terminalControl.options ?? {};
+    }
+    loadAddon(addon: unknown) {
+      terminalControl.loadedAddons.push(addon);
+    }
     open() {}
-    write() {}
+    write = terminalControl.write;
+    paste = terminalControl.paste;
+    reset = terminalControl.reset;
     dispose() {}
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       terminalControl.customKeyHandler = handler;
@@ -129,22 +154,28 @@ describe('TerminalPanel', () => {
     terminalControl.customKeyHandler = undefined;
     terminalControl.cols = 80;
     terminalControl.dataListener = undefined;
+    terminalControl.loadedAddons = [];
     terminalControl.options = undefined;
     terminalControl.selection = '';
+    terminalControl.paste.mockReset();
     terminalControl.selectionListener = undefined;
+    terminalControl.reset.mockReset();
     terminalControl.rows = 24;
+    terminalControl.write.mockReset();
     resizeObserver.listener = undefined;
     webLinks.activate = undefined;
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn(async () => undefined) },
-    });
+    webgl.contextLoss = undefined;
+    webgl.dispose.mockReset();
+    terminalControl.scrollToBottom.mockReset();
     window.herdr = {
       terminal: {
         open: vi.fn(async () => undefined),
         input: vi.fn(async () => undefined),
         resize: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
+        readClipboard: vi.fn(async () => ''),
+        writeClipboard: vi.fn(async () => undefined),
+        accessibilitySupportEnabled: vi.fn(async () => false),
         onEvent: vi.fn((listener) => {
           terminalEvents.listener = listener;
           return () => undefined;
@@ -159,6 +190,7 @@ describe('TerminalPanel', () => {
 
   it('matches the desktop dark theme in the terminal palette', () => {
     render(<TerminalPanel pane={pane} />);
+    expect(terminalControl.options?.screenReaderMode).toBe(false);
 
     expect(terminalControl.options?.theme).toEqual({
       background: '#0f0f10',
@@ -167,6 +199,23 @@ describe('TerminalPanel', () => {
       cursorAccent: '#0f0f10',
       selectionBackground: '#4d9eff66',
     });
+  });
+
+  it('uses the WebGL renderer and falls back cleanly after context loss', () => {
+    render(<TerminalPanel pane={pane} />);
+
+    expect(terminalControl.loadedAddons).toHaveLength(4);
+    expect(webgl.contextLoss).toEqual(expect.any(Function));
+    webgl.contextLoss?.();
+    expect(webgl.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('enables xterm screen-reader DOM only when Electron accessibility is active', async () => {
+    vi.mocked(window.herdr.terminal.accessibilitySupportEnabled).mockResolvedValue(true);
+
+    render(<TerminalPanel pane={pane} />);
+
+    await waitFor(() => expect(terminalControl.options?.screenReaderMode).toBe(true));
   });
 
   it('forwards terminal input without interpreting shell commands', () => {
@@ -320,29 +369,23 @@ describe('TerminalPanel', () => {
     expect(searchAddon.clearDecorations).toHaveBeenCalledOnce();
   });
 
-  it('copies the explicit terminal selection and announces success', async () => {
+  it('copies the explicit terminal selection through Electron clipboard IPC', async () => {
     const user = userEvent.setup();
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
     render(<TerminalPanel pane={pane} />);
     terminalControl.selection = 'selected output';
     act(() => terminalControl.selectionListener?.());
 
     await user.click(screen.getByRole('button', { name: 'Copy terminal selection' }));
 
-    expect(writeText).toHaveBeenCalledWith('selected output');
+    expect(window.herdr.terminal.writeClipboard).toHaveBeenCalledWith('selected output');
     expect(screen.getByRole('status')).toHaveTextContent('Selection copied');
   });
 
   it('announces when copying the terminal selection fails', async () => {
     const user = userEvent.setup();
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn(async () => Promise.reject(new Error('permission denied'))) },
-    });
+    vi.mocked(window.herdr.terminal.writeClipboard).mockRejectedValueOnce(
+      new Error('permission denied'),
+    );
     render(<TerminalPanel pane={pane} />);
     terminalControl.selection = 'selected output';
     act(() => terminalControl.selectionListener?.());
@@ -352,12 +395,7 @@ describe('TerminalPanel', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Could not copy selection');
   });
 
-  it('copies the terminal selection with Ctrl+Shift+C when a selection exists', async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
+  it('copies with the standard terminal shortcut when a selection exists', async () => {
     render(<TerminalPanel pane={pane} />);
     terminalControl.selection = 'selected output';
     act(() => terminalControl.selectionListener?.());
@@ -367,19 +405,43 @@ describe('TerminalPanel', () => {
     );
 
     expect(intercepted).toBe(false);
-    expect(writeText).toHaveBeenCalledWith('selected output');
+    expect(window.herdr.terminal.writeClipboard).toHaveBeenCalledWith('selected output');
     expect(await screen.findByRole('status')).toHaveTextContent('Selection copied');
   });
 
-  it('lets plain Ctrl+C pass through to the pane when there is no selection', () => {
+  it('always lets plain Ctrl+C pass through to the pane', () => {
     render(<TerminalPanel pane={pane} />);
-    terminalControl.selection = '';
+    terminalControl.selection = 'selected output';
 
     const intercepted = terminalControl.customKeyHandler?.(
       new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }),
     );
 
     expect(intercepted).toBe(true);
+    expect(window.herdr.terminal.writeClipboard).not.toHaveBeenCalled();
+  });
+
+  it('pastes through xterm so bracketed-paste handling reaches the pane', async () => {
+    const user = userEvent.setup();
+    vi.mocked(window.herdr.terminal.readClipboard).mockResolvedValueOnce('pasted command');
+    render(<TerminalPanel pane={pane} />);
+
+    await user.click(screen.getByRole('button', { name: 'Paste terminal clipboard' }));
+
+    expect(terminalControl.paste).toHaveBeenCalledWith('pasted command');
+    expect(screen.getByRole('status')).toHaveTextContent('Clipboard pasted');
+  });
+
+  it('pastes with Ctrl+Shift+V', async () => {
+    vi.mocked(window.herdr.terminal.readClipboard).mockResolvedValueOnce('shortcut paste');
+    render(<TerminalPanel pane={pane} />);
+
+    const intercepted = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, shiftKey: true }),
+    );
+
+    expect(intercepted).toBe(false);
+    await waitFor(() => expect(terminalControl.paste).toHaveBeenCalledWith('shortcut paste'));
   });
 
   it('opens only modifier-clicked HTTP links through the injected callback', () => {
@@ -409,26 +471,24 @@ describe('TerminalPanel', () => {
     expect(terminalControl.scrollToBottom).toHaveBeenCalledOnce();
   });
 
-  it('emits engine-backed line scrolling from terminal wheel direction', () => {
+  it('coalesces high-frequency wheel events into one engine scroll per frame', async () => {
     const onScrollRequest = vi.fn();
     render(<TerminalPanel onScrollRequest={onScrollRequest} pane={pane} />);
     const terminal = screen.getByRole('region', { name: 'Terminal output w1:p2' });
 
-    fireEvent.wheel(terminal, { deltaY: -120 });
-    fireEvent.wheel(terminal, { deltaY: 120 });
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.wheel(terminal, { deltaY: -120 });
+    }
 
-    expect(onScrollRequest).toHaveBeenNthCalledWith(1, {
-      paneId: 'w1:p2',
-      direction: 'up',
-      unit: 'line',
-      amount: 1,
-    });
-    expect(onScrollRequest).toHaveBeenNthCalledWith(2, {
-      paneId: 'w1:p2',
-      direction: 'down',
-      unit: 'line',
-      amount: 1,
-    });
+    await waitFor(() =>
+      expect(onScrollRequest).toHaveBeenCalledWith({
+        paneId: 'w1:p2',
+        direction: 'up',
+        unit: 'line',
+        amount: 60,
+      }),
+    );
+    expect(onScrollRequest).toHaveBeenCalledOnce();
   });
 
   it('emits engine-backed page scrolling from explicit controls', async () => {
