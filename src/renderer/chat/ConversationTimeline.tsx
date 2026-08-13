@@ -1,5 +1,6 @@
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -83,13 +84,13 @@ export function formatDuration(milliseconds: number | undefined): string | null 
   }
   const seconds = Math.floor(milliseconds / 1_000);
   if (seconds < 60) {
-    return `${seconds}s`;
+    return `${seconds}S`;
   }
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
-    return `${minutes}m ${seconds % 60}s`;
+    return `${minutes}M ${seconds % 60}S`;
   }
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}H ${minutes % 60}M ${seconds % 60}S`;
 }
 
 function projectTurns(items: readonly ConversationItem[]): TurnProjection[] {
@@ -192,7 +193,7 @@ export function latestPlanUpdate(items: readonly ConversationItem[]): PlanUpdate
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (item.type === 'plan_update') {
-      return item;
+      return item.steps.length > 0 ? item : undefined;
     }
   }
   return undefined;
@@ -328,7 +329,7 @@ export function WorkingIndicator({ startedMs }: { startedMs?: number }) {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
-  const elapsed = startedMs === undefined ? 0 : Math.max(0, Math.floor((now - startedMs) / 1_000));
+  const duration = formatDuration(startedMs === undefined ? undefined : now - startedMs);
   return (
     <div
       className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-base border-2 border-main bg-secondary-background px-3 py-2 text-sm shadow-shadow"
@@ -337,7 +338,7 @@ export function WorkingIndicator({ startedMs }: { startedMs?: number }) {
       <span className="motion-safe:animate-pulse text-main" aria-hidden="true">
         ●
       </span>
-      <span className="font-bold">Working{elapsed > 0 ? ` for ${elapsed}s` : ''}</span>
+      <span className="font-bold">Working{duration === null ? '' : ` for ${duration}`}</span>
     </div>
   );
 }
@@ -448,7 +449,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
   const hasDetail = Boolean(
     item.preview ||
       item.detail ||
-      (duration !== null && duration !== '0s') ||
+      (duration !== null && duration !== '0S') ||
       (item.paths?.length ?? 0) > 0,
   );
   const summary = (
@@ -489,7 +490,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
     >
       <summary className="cursor-pointer px-3 py-2">{summary}</summary>
       <div className="border-t-2 border-border px-3 py-2 text-xs text-muted-foreground">
-        {duration !== null && duration !== '0s' ? <div>Duration: {duration}</div> : null}
+        {duration !== null && duration !== '0S' ? <div>Duration: {duration}</div> : null}
         {item.preview ? (
           <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-base border-2 border-border bg-black p-3 text-white">
             <code>{item.preview}</code>
@@ -523,19 +524,31 @@ const UserMessage = memo(function UserMessage({
   item: Extract<ConversationItem, { type: 'user_message' }>;
 }) {
   return (
-    <div className="rounded-base border-2 border-border bg-secondary-background p-3 text-sm">
-      <div className="mb-1 text-xs font-bold uppercase text-muted-foreground">You</div>
+    <div
+      className="rounded-base border-2 border-border bg-main p-3 text-sm text-main-foreground"
+      data-slot="user-message"
+    >
+      <div className="mb-1 text-xs font-bold uppercase text-main-foreground/70">You</div>
       {item.text ? <p className="whitespace-pre-wrap break-words">{item.text}</p> : null}
       {item.attachments?.length ? (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {item.attachments.map((attachment) => (
-            <span
-              className="rounded-base border border-border px-2 py-1 font-mono text-[11px]"
-              key={`${attachment.name}:${attachment.media_type}:${attachment.byte_size}`}
-            >
-              {attachment.name}
-            </span>
-          ))}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {item.attachments.map((attachment) =>
+            attachment.preview_url && attachment.media_type.startsWith('image/') ? (
+              <img
+                alt={`Attached image: ${attachment.name}`}
+                className="size-16 rounded-base border-2 border-border object-cover"
+                key={`${attachment.name}:${attachment.preview_url}`}
+                src={attachment.preview_url}
+              />
+            ) : (
+              <span
+                className="rounded-base border border-border px-2 py-1 font-mono text-[11px]"
+                key={`${attachment.name}:${attachment.media_type}:${attachment.byte_size}`}
+              >
+                {attachment.name}
+              </span>
+            ),
+          )}
         </div>
       ) : null}
     </div>
@@ -557,10 +570,30 @@ const FinalAnswer = memo(function FinalAnswer({
   );
 });
 
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
+const MARKDOWN_COMPONENTS: Components = {
+  table: ({ node: _node, ...props }) => (
+    <div className="my-3 overflow-x-auto rounded-base border-2 border-border">
+      <table className="w-full min-w-[36rem] border-collapse text-left" {...props} />
+    </div>
+  ),
+  th: ({ node: _node, ...props }) => (
+    <th
+      className="border-b-2 border-r border-border bg-secondary-background p-2 font-bold last:border-r-0"
+      {...props}
+    />
+  ),
+  td: ({ node: _node, ...props }) => (
+    <td className="border-r border-t border-border p-2 align-top last:border-r-0" {...props} />
+  ),
+};
+
 const MarkdownText = memo(function MarkdownText({ text }: { text: string }) {
   return (
     <div className="min-w-0 break-words text-response-foreground [&_a]:font-bold [&_a]:text-main [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_code]:rounded-sm [&_code]:bg-secondary-background [&_code]:px-1 [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-heading [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-heading [&_h3]:mb-1 [&_h3]:font-heading [&_li]:ml-5 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-base [&_pre]:border-2 [&_pre]:border-border [&_pre]:bg-secondary-background [&_pre]:p-3 [&_strong]:font-bold">
-      <ReactMarkdown>{text}</ReactMarkdown>
+      <ReactMarkdown components={MARKDOWN_COMPONENTS} remarkPlugins={MARKDOWN_REMARK_PLUGINS}>
+        {text}
+      </ReactMarkdown>
     </div>
   );
 });

@@ -365,6 +365,33 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByTestId('prompt-outcome')).toHaveTextContent('resolved'));
   });
 
+  it('keeps Chat synchronized while Terminal is selected', async () => {
+    const terminalFirstSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1' ? { ...pane, agent_has_arguments: true } : pane,
+      ),
+      agents: snapshot.agents.map((agent) =>
+        agent.pane_id === 'w1:p1' ? { ...agent, agent_has_arguments: true } : agent,
+      ),
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+      ...connected,
+      snapshot: terminalFirstSnapshot,
+    });
+
+    render(<App />);
+
+    expect(await screen.findByTestId('terminal-w1:p1')).toBeVisible();
+    expect(screen.getByTestId('chat-w1:p1').parentElement).toHaveStyle({ display: 'none' });
+    await waitFor(() =>
+      expect(window.herdr.conversation.read).toHaveBeenCalledWith({
+        target: 'w1:p1',
+        direction: 'newest',
+      }),
+    );
+  });
+
   it('keeps Chat disabled when an older engine omits conversation capability', async () => {
     const legacySnapshot: SessionSnapshot = {
       ...snapshot,
@@ -1764,6 +1791,25 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
   });
 
+  it('does not request a restart when the engine can live hand off', async () => {
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+      ...connected,
+      status: {
+        ...connected.status,
+        server: {
+          ...connected.status.server,
+          restart_needed: true,
+        },
+        update: { restart_needed: true },
+      },
+    });
+
+    render(<App />);
+
+    await screen.findByRole('heading', { name: 'drover' });
+    expect(screen.queryByText('RESTART NEEDED')).not.toBeInTheDocument();
+  });
+
   it('clears stale restart-needed status after the event stream reconnects', async () => {
     let sessionEvent:
       | ((event: { event: string; data: Record<string, unknown> }) => void)
@@ -1780,6 +1826,10 @@ describe('App', () => {
           ...connected.status.server,
           version: '0.7.9',
           restart_needed: true,
+          capabilities: {
+            ...connected.status.server.capabilities,
+            live_handoff: false,
+          },
         },
         update: { restart_needed: true },
       },

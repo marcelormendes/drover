@@ -10,10 +10,17 @@ import type {
   ConversationSessionIdentity,
 } from '@/shared/conversation';
 
+export interface PendingAttachment {
+  readonly media_type: string;
+  readonly name: string;
+  readonly preview_url: string;
+}
+
 export interface PendingMessage {
   readonly id: string;
   readonly text: string;
   readonly status: 'queued' | 'syncing' | 'failed';
+  readonly attachments?: readonly PendingAttachment[];
 }
 
 export interface ConversationStore {
@@ -59,6 +66,23 @@ function sameCapability(
   );
 }
 
+function withAttachmentPreviews(
+  item: ConversationItem,
+  pendingAttachments: readonly PendingAttachment[] | undefined,
+  previous: ConversationItem | undefined,
+): ConversationItem {
+  if (item.type !== 'user_message' || !item.attachments?.length) {
+    return item;
+  }
+  const previousAttachments = previous?.type === 'user_message' ? previous.attachments : undefined;
+  const attachments = item.attachments.map((attachment, index) => {
+    const previewUrl =
+      pendingAttachments?.[index]?.preview_url ?? previousAttachments?.[index]?.preview_url;
+    return previewUrl === undefined ? attachment : { ...attachment, preview_url: previewUrl };
+  });
+  return { ...item, attachments };
+}
+
 function replacePage(
   store: ConversationStore,
   page: ConversationPage,
@@ -69,13 +93,17 @@ function replacePage(
   // Optimistic echoes resolve once the durable transcript contains the same
   // user text (the engine's prompt submission queues before persisting).
   const pending = [...store.pending];
+  const pendingAttachmentsByItemId = new Map<string, readonly PendingAttachment[]>();
   for (const item of page.items) {
     if (item.type !== 'user_message') {
       continue;
     }
     const match = pending.findIndex((candidate) => candidate.text === item.text);
     if (match >= 0) {
-      pending.splice(match, 1);
+      const [matched] = pending.splice(match, 1);
+      if (matched.attachments?.length) {
+        pendingAttachmentsByItemId.set(item.id, matched.attachments);
+      }
     }
   }
   let olderCursor = sameReader ? store.olderCursor : undefined;
@@ -106,7 +134,12 @@ function replacePage(
     sameReader ? store.items.map((item) => [item.id, item]) : [],
   );
   for (const item of page.items) {
-    byId.set(item.id, item);
+    const nextItem = withAttachmentPreviews(
+      item,
+      pendingAttachmentsByItemId.get(item.id),
+      byId.get(item.id),
+    );
+    byId.set(nextItem.id, nextItem);
   }
   return {
     ...store,

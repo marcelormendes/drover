@@ -73,6 +73,8 @@ export interface AttachmentMetadata {
   media_type: string;
   name: string;
   byte_size: number;
+  /** Renderer-local object URL for a just-sent image; never supplied by the engine. */
+  preview_url?: string;
 }
 
 export type AssistantMessagePhase = 'commentary' | 'final';
