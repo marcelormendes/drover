@@ -239,6 +239,24 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         setSearchOpen(true);
         return false;
       }
+      if (
+        event.type === 'keydown' &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        (event.key === '=' ||
+          event.key === '+' ||
+          event.key === '-' ||
+          event.key === '_' ||
+          event.key === '0' ||
+          event.code === 'Equal' ||
+          event.code === 'Minus' ||
+          event.code === 'Digit0' ||
+          event.code === 'NumpadAdd' ||
+          event.code === 'NumpadSubtract' ||
+          event.code === 'Numpad0')
+      ) {
+        return false;
+      }
       if (event.type === 'keydown' && !event.altKey) {
         const key = event.key.toLowerCase();
         const terminalClipboardShortcut = event.metaKey || (event.ctrlKey && event.shiftKey);

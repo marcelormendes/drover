@@ -434,6 +434,31 @@ describe('TerminalPanel', () => {
     expect(intercepted).toBe(false);
     await waitFor(() => expect(terminalControl.paste).toHaveBeenCalledWith('shortcut paste'));
   });
+  it('allows window zoom in, zoom out, and reset zoom shortcuts through the custom key handler', () => {
+    render(<TerminalPanel pane={pane} />);
+
+    const zoomInEqual = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: '=', metaKey: true }),
+    );
+    const zoomInPlus = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: '+', ctrlKey: true }),
+    );
+    const zoomOutMinus = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: '-', metaKey: true }),
+    );
+    const resetZoomZero = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: '0', ctrlKey: true }),
+    );
+    const numpadAdd = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { code: 'NumpadAdd', metaKey: true }),
+    );
+
+    expect(zoomInEqual).toBe(false);
+    expect(zoomInPlus).toBe(false);
+    expect(zoomOutMinus).toBe(false);
+    expect(resetZoomZero).toBe(false);
+    expect(numpadAdd).toBe(false);
+  });
 
   it('opens only modifier-clicked HTTP links through the injected callback', () => {
     const onOpenExternal = vi.fn();

@@ -21,5 +21,11 @@ describe('ShortcutHelpDialog', () => {
     await user.clear(screen.getByLabelText('Search shortcuts'));
     await user.type(screen.getByLabelText('Search shortcuts'), '⌘K');
     expect(screen.getByText('Open Navigator')).toBeInTheDocument();
+    await user.clear(screen.getByLabelText('Search shortcuts'));
+    await user.type(screen.getByLabelText('Search shortcuts'), 'zoom');
+    expect(screen.getByText('Zoom in')).toBeInTheDocument();
+    expect(screen.getByText('Zoom out')).toBeInTheDocument();
+    expect(screen.getByText('Reset zoom')).toBeInTheDocument();
+    expect(screen.getByText('Toggle pane zoom')).toBeInTheDocument();
   });
 });
