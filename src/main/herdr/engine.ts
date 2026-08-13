@@ -782,10 +782,10 @@ export class HerdrEngine {
   }
 
   /**
-   * Ensures the running engine provides structured Chat by installing the
-   * pinned fork build when the `agent_conversations` capability is missing.
-   * `herdr update` cannot be used here: it always downloads the stock
-   * upstream binary, which lacks the capability. The pinned build is
+   * Ensures the pinned fork build is used when structured Chat is unavailable
+   * or the running/client engine is not the exact pinned release. `herdr update`
+   * cannot be used here: it always downloads the stock upstream binary, which
+   * lacks the capability. The pinned build is
    * downloaded from the fork release, checksum-verified, installed in place
    * of the resolved engine binary, and the running server is live-handed
    * onto it. Always returns an `EngineUpdateResult` instead of throwing,
@@ -801,8 +801,11 @@ export class HerdrEngine {
       // The engine may be missing or unstartable; the install below fixes that.
     }
     const bootstrap = await this.bootstrap();
-
-    if (status?.server.capabilities?.agent_conversations === true) {
+    const pinnedChatAvailable =
+      status?.client.version === PINNED_ENGINE.version &&
+      status.server.version === PINNED_ENGINE.version &&
+      status.server.capabilities?.agent_conversations === true;
+    if (pinnedChatAvailable) {
       return {
         bootstrap,
         updated: false,

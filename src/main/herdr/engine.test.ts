@@ -913,8 +913,10 @@ describe('HerdrEngine.query', () => {
 describe('HerdrEngine.update', () => {
   const chatStatus = {
     ...runningStatus,
+    client: { ...runningStatus.client, version: PINNED_ENGINE.version },
     server: {
       ...runningStatus.server,
+      version: PINNED_ENGINE.version,
       capabilities: { ...runningStatus.server.capabilities, agent_conversations: true },
     },
   };
@@ -951,10 +953,63 @@ describe('HerdrEngine.update', () => {
     expect(result).toEqual({
       bootstrap: { state: 'connected', status: chatStatus, snapshot },
       updated: false,
-      version: '0.8.0',
-      message: 'Herdr engine already provides structured Chat (v0.8.0).',
+      version: PINNED_ENGINE.version,
+      message: `Herdr engine already provides structured Chat (v${PINNED_ENGINE.version}).`,
     });
     expect(installPinnedEngineBinary).not.toHaveBeenCalled();
+  });
+  it('installs the pinned engine when an older engine already advertises Chat', async () => {
+    vi.mocked(pinnedEngineAsset).mockReturnValue(fakeAsset);
+    let installed = false;
+    vi.mocked(installPinnedEngineBinary).mockImplementation(async () => {
+      installed = true;
+    });
+    const legacyChatStatus = {
+      ...chatStatus,
+      client: { ...chatStatus.client, version: '0.8.4' },
+      server: { ...chatStatus.server, version: '0.8.4' },
+    };
+    const installedStatus = {
+      ...legacyChatStatus,
+      client: { ...legacyChatStatus.client, version: PINNED_ENGINE.version },
+    };
+    let handedOff = false;
+    const runner = createRunner(async (args) => {
+      if (args[0] === 'server' && args[1] === 'live-handoff') {
+        handedOff = true;
+        return { stdout: '', stderr: 'live handoff complete' };
+      }
+      if (args[0] === 'integration' && args[1] === 'status') {
+        return { stdout: 'pi: current (v11) (/x/herdr-agent-state.ts)\n', stderr: '' };
+      }
+      if (args[0] === 'integration' && args[1] === 'install') {
+        return { stdout: '', stderr: '' };
+      }
+      if (args[1] === 'snapshot') {
+        return snapshotResponse;
+      }
+      return {
+        stdout: JSON.stringify(
+          handedOff ? chatStatus : installed ? installedStatus : legacyChatStatus,
+        ),
+        stderr: '',
+      };
+    });
+
+    const result = await new HerdrEngine(runner).update();
+
+    expect(installPinnedEngineBinary).toHaveBeenCalledWith({
+      asset: fakeAsset,
+      installTo: '/usr/local/bin/herdr',
+    });
+    expect(runner.run).toHaveBeenCalledWith(
+      ['server', 'live-handoff', '--import-exe', '/usr/local/bin/herdr'],
+      { timeoutMs: 10 * 60 * 1000 },
+    );
+    expect(result).toMatchObject({
+      updated: true,
+      version: PINNED_ENGINE.version,
+    });
   });
 
   it('installs the pinned engine and live-hands the running server onto it', async () => {
