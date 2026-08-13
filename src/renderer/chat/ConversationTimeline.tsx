@@ -7,6 +7,7 @@ import type {
   ConversationItem,
   ConversationRespondResult,
   ConversationSessionIdentity,
+  PlanStepStatus,
 } from '@/shared/conversation';
 
 const VISIBLE_TOOL_LIMIT = 4;
@@ -84,7 +85,11 @@ export function formatDuration(milliseconds: number | undefined): string | null 
   if (seconds < 60) {
     return `${seconds}s`;
   }
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ${seconds % 60}s`;
+  }
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
 }
 
 function projectTurns(items: readonly ConversationItem[]): TurnProjection[] {
@@ -200,23 +205,122 @@ export const PlanUpdateCard = memo(function PlanUpdateCard({
   item: PlanUpdateItem;
   label?: string;
 }) {
+  const completedSteps = item.steps.filter((step) => step.status === 'completed').length;
   return (
-    <div className="rounded-base border-2 border-border bg-secondary-background p-3 text-sm">
-      <div className="mb-2 text-xs font-bold uppercase text-muted-foreground">{label}</div>
-      <ul className="space-y-1">
+    <div className="rounded-base border-2 border-border bg-background p-3 text-sm shadow-shadow">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <span className="-rotate-1 rounded-base border-2 border-border bg-main px-2 py-1 text-[11px] font-heading uppercase text-main-foreground shadow-[2px_2px_0_var(--border)]">
+          {label}
+        </span>
+        <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          {completedSteps}/{item.steps.length} done
+        </span>
+      </div>
+      <ul className="space-y-2">
         {item.steps.map((step) => (
-          <li key={`${step.label}:${step.status}`}>
-            <span className="mr-2" aria-hidden="true">
-              {step.status === 'completed' ? '✓' : step.status === 'active' ? '•' : '○'}
+          <li
+            aria-current={step.status === 'active' ? 'step' : undefined}
+            className={cn(
+              'flex min-w-0 items-center gap-3 rounded-base border-2 px-3 py-2 transition-transform',
+              planStepClassName(step.status),
+            )}
+            data-slot="plan-step"
+            data-state={step.status}
+            key={`${step.label}:${step.status}`}
+          >
+            <PlanStepMarker status={step.status} />
+            <span
+              className={cn(
+                'min-w-0 flex-1 break-words',
+                step.status === 'active' && 'font-bold',
+                step.status === 'completed' && 'line-through opacity-65',
+              )}
+            >
+              {step.label}
             </span>
-            {step.label}
-            <span className="ml-2 text-xs text-muted-foreground">{step.status}</span>
+            <span
+              className={cn(
+                'shrink-0 rounded-full border-2 border-border px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider',
+                planStepStatusClassName(step.status),
+              )}
+            >
+              {planStepStatusLabel(step.status)}
+            </span>
           </li>
         ))}
       </ul>
     </div>
   );
 });
+
+function PlanStepMarker({ status }: { status: PlanStepStatus }) {
+  if (status === 'active') {
+    return (
+      <span className="relative flex size-4 shrink-0" data-slot="active-task-indicator">
+        <span
+          aria-hidden="true"
+          className="absolute inline-flex size-full rounded-full bg-chart-4 opacity-70 motion-safe:animate-ping"
+        />
+        <span
+          aria-hidden="true"
+          className="relative inline-flex size-4 rounded-full border-2 border-border bg-chart-4"
+        />
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'grid size-5 shrink-0 place-items-center rounded-full border-2 border-border font-mono text-[11px] font-black',
+        status === 'completed' && 'bg-chart-4 text-black',
+        status === 'pending' && 'bg-secondary-background',
+        status === 'failed' && 'bg-chart-2 text-white',
+      )}
+    >
+      {status === 'completed' ? '✓' : status === 'failed' ? '!' : ''}
+    </span>
+  );
+}
+
+function planStepClassName(status: PlanStepStatus): string {
+  if (status === 'active') {
+    return 'todo-step-active border-chart-4';
+  }
+  if (status === 'pending') {
+    return 'todo-step-pending border-dashed';
+  }
+  if (status === 'failed') {
+    return 'border-chart-2 bg-chart-2/10';
+  }
+  return 'bg-chart-4/10';
+}
+
+function planStepStatusClassName(status: PlanStepStatus): string {
+  if (status === 'active') {
+    return 'bg-chart-4 text-black';
+  }
+  if (status === 'pending') {
+    return 'bg-chart-5/15 text-foreground';
+  }
+  if (status === 'failed') {
+    return 'bg-chart-2 text-white';
+  }
+  return 'bg-chart-4/15 text-foreground';
+}
+
+function planStepStatusLabel(status: PlanStepStatus): string {
+  if (status === 'active') {
+    return 'working';
+  }
+  if (status === 'pending') {
+    return 'queued';
+  }
+  if (status === 'completed') {
+    return 'done';
+  }
+  return 'blocked';
+}
 
 export function WorkingIndicator({ startedMs }: { startedMs?: number }) {
   const [now, setNow] = useState(() => Date.now());

@@ -1764,6 +1764,50 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
   });
 
+  it('clears stale restart-needed status after the event stream reconnects', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    const restartNeeded = {
+      ...connected,
+      status: {
+        ...connected.status,
+        server: {
+          ...connected.status.server,
+          version: '0.7.9',
+          restart_needed: true,
+        },
+        update: { restart_needed: true },
+      },
+    } as EngineBootstrap;
+    vi.mocked(window.herdr.bootstrap)
+      .mockResolvedValueOnce(restartNeeded)
+      .mockResolvedValue(connected);
+    const view = render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+    expect(screen.getByText('RESTART NEEDED')).toBeInTheDocument();
+    vi.useFakeTimers();
+
+    try {
+      act(() =>
+        sessionEvent?.({ event: 'desktop.connection_state', data: { state: 'connected' } }),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText('RESTART NEEDED')).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the canonical session when a background bootstrap transiently fails', async () => {
     let sessionEvent:
       | ((event: { event: string; data: Record<string, unknown> }) => void)
