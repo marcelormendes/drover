@@ -40,20 +40,6 @@ const terminalControl = vi.hoisted(() => ({
 const webLinks = vi.hoisted(() => ({
   activate: undefined as ((event: MouseEvent, uri: string) => void) | undefined,
 }));
-const webgl = vi.hoisted(() => ({
-  contextLoss: undefined as (() => void) | undefined,
-  dispose: vi.fn(),
-}));
-
-vi.mock('@xterm/addon-webgl', () => ({
-  WebglAddon: class {
-    dispose = webgl.dispose;
-    onContextLoss(listener: () => void) {
-      webgl.contextLoss = listener;
-      return { dispose() {} };
-    }
-  },
-}));
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
     fit() {}
@@ -164,8 +150,6 @@ describe('TerminalPanel', () => {
     terminalControl.write.mockReset();
     resizeObserver.listener = undefined;
     webLinks.activate = undefined;
-    webgl.contextLoss = undefined;
-    webgl.dispose.mockReset();
     terminalControl.scrollToBottom.mockReset();
     window.herdr = {
       terminal: {
@@ -201,13 +185,20 @@ describe('TerminalPanel', () => {
     });
   });
 
-  it('uses the WebGL renderer and falls back cleanly after context loss', () => {
+  it('uses xterm DOM rendering without a GPU context', () => {
     render(<TerminalPanel pane={pane} />);
 
-    expect(terminalControl.loadedAddons).toHaveLength(4);
-    expect(webgl.contextLoss).toEqual(expect.any(Function));
-    webgl.contextLoss?.();
-    expect(webgl.dispose).toHaveBeenCalledOnce();
+    expect(terminalControl.loadedAddons).toHaveLength(3);
+  });
+
+  it('contains xterm intrinsic dimensions within the pane', () => {
+    render(<TerminalPanel pane={pane} />);
+
+    expect(screen.getByRole('region', { name: 'Terminal output w1:p2' }).parentElement).toHaveClass(
+      'min-h-0',
+      'min-w-0',
+      'overflow-hidden',
+    );
   });
 
   it('enables xterm screen-reader DOM only when Electron accessibility is active', async () => {

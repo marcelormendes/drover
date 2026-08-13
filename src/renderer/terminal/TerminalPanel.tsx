@@ -1,7 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import {
   ArrowDownToLine,
@@ -217,13 +216,6 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       })
       .catch(() => undefined);
     terminal.open(container);
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => webglAddon.dispose());
-      terminal.loadAddon(webglAddon);
-    } catch {
-      // xterm keeps its default renderer when WebGL2 is unavailable.
-    }
     terminal.attachCustomKeyEventHandler((event) => {
       if (
         event.type === 'keydown' &&
@@ -367,7 +359,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   }, [copySelection, pane.pane_id, pasteClipboard]);
 
   return (
-    <div className="relative min-h-0 flex-1 bg-[#0f0f10]">
+    <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0f0f10]">
       <section
         aria-label={`Terminal output ${pane.pane_id}`}
         className="h-full w-full p-3"
