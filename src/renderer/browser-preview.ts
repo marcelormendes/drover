@@ -184,6 +184,9 @@ export function createBrowserPreviewApi(): DroverApi {
       scroll: async () => undefined,
       close: async () => undefined,
       onEvent: () => () => undefined,
+      readClipboard: async () => '',
+      writeClipboard: async () => undefined,
+      accessibilitySupportEnabled: async () => false,
     },
     openExternal: async () => undefined,
   };

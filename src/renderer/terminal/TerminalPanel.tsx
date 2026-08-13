@@ -1,9 +1,19 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
-import { ArrowDownToLine, ChevronDown, ChevronUp, Copy, RefreshCw, Search, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  ArrowDownToLine,
+  ChevronDown,
+  ChevronUp,
+  ClipboardPaste,
+  Copy,
+  RefreshCw,
+  Search,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -37,14 +47,15 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   const containerRef = useRef<HTMLDivElement>(null);
   const searchAddonRef = useRef<SearchAddon>(null);
   const terminalRef = useRef<Terminal>(null);
+  const connectionRef = useRef<{ restart: () => void } | null>(null);
+  const wheelFrameRef = useRef<number | null>(null);
+  const wheelLinesRef = useRef(0);
   const openExternalRef = useRef(onOpenExternal);
   openExternalRef.current = onOpenExternal;
   const scrollRequestRef = useRef(onScrollRequest);
   scrollRequestRef.current = onScrollRequest;
   const [state, setState] = useState<'attaching' | 'attached' | 'closed' | 'error'>('attaching');
   const [message, setMessage] = useState('Attaching through Herdr…');
-  const [connectionAttempt, setConnectionAttempt] = useState(0);
-  const [engineGeneration, setEngineGeneration] = useState(0);
   const retryRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const stableTimerRef = useRef<number | null>(null);
@@ -59,28 +70,64 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     setSearchOpen(false);
   };
 
-  const copySelection = async () => {
+  const copySelection = useCallback(async () => {
     const selection = terminalRef.current?.getSelection();
     if (!selection) {
       return;
     }
     try {
-      await navigator.clipboard.writeText(selection);
+      await window.herdr.terminal.writeClipboard(selection);
       setCopyFeedback('Selection copied');
     } catch {
       setCopyFeedback('Could not copy selection');
     }
+  }, []);
+
+  const pasteClipboard = useCallback(async () => {
+    try {
+      const text = await window.herdr.terminal.readClipboard();
+      if (text) {
+        terminalRef.current?.paste(text);
+      }
+      setCopyFeedback(text ? 'Clipboard pasted' : 'Clipboard is empty');
+    } catch {
+      setCopyFeedback('Could not paste clipboard');
+    }
+  }, []);
+
+  const queueWheelScroll = (deltaY: number, deltaMode: number, viewportRows: number) => {
+    const magnitude =
+      deltaMode === 1
+        ? Math.abs(deltaY)
+        : deltaMode === 2
+          ? Math.abs(deltaY) * viewportRows
+          : Math.abs(deltaY) / 40;
+    wheelLinesRef.current += (deltaY < 0 ? -1 : 1) * Math.max(1, Math.round(magnitude));
+    if (wheelFrameRef.current !== null) {
+      return;
+    }
+    wheelFrameRef.current = window.requestAnimationFrame(() => {
+      wheelFrameRef.current = null;
+      const lines = wheelLinesRef.current;
+      wheelLinesRef.current = 0;
+      if (lines === 0) {
+        return;
+      }
+      scrollRequestRef.current?.({
+        paneId: pane.pane_id,
+        direction: lines < 0 ? 'up' : 'down',
+        unit: 'line',
+        amount: Math.abs(lines),
+      });
+    });
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: engineGeneration is an intentional dependency — the engine-changed event bumps it so this effect re-runs and the view attaches through the new engine.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) {
       return;
     }
 
-    setState('attaching');
-    setMessage(connectionAttempt ? 'Reconnecting through Herdr…' : 'Attaching through Herdr…');
     const terminal = new Terminal({
       allowProposedApi: false,
       cursorBlink: true,
@@ -88,7 +135,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
       fontSize: 13,
       lineHeight: 1.2,
-      screenReaderMode: true,
+      screenReaderMode: false,
       scrollback: 10_000,
       theme: {
         background: '#0f0f10',
@@ -111,7 +158,72 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(webLinksAddon);
     searchAddonRef.current = searchAddon;
+    let disposed = false;
+    let attachmentRequested = false;
+    let everAttached = false;
+    let receivedFrame = false;
+
+    const clearConnectionTimers = () => {
+      if (retryTimerRef.current !== null) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      if (stableTimerRef.current !== null) {
+        window.clearTimeout(stableTimerRef.current);
+        stableTimerRef.current = null;
+      }
+    };
+    const attachWhenSized = () => {
+      if (disposed || attachmentRequested || terminal.cols < 1 || terminal.rows < 1) {
+        return;
+      }
+      if (everAttached) {
+        terminal.reset();
+      }
+      setState('attaching');
+      setMessage(everAttached ? 'Reconnecting through Herdr…' : 'Attaching through Herdr…');
+      everAttached = true;
+      attachmentRequested = true;
+      receivedFrame = false;
+      void window.herdr.terminal
+        .open({ paneId: pane.pane_id, cols: terminal.cols, rows: terminal.rows })
+        .catch((error: unknown) => {
+          if (!disposed && attachmentRequested) {
+            attachmentRequested = false;
+            setState('error');
+            setMessage(error instanceof Error ? error.message : 'Terminal attachment failed.');
+          }
+        });
+    };
+    const restart = () => {
+      if (disposed) {
+        return;
+      }
+      attachmentRequested = false;
+      receivedFrame = false;
+      clearConnectionTimers();
+      setState('attaching');
+      setMessage('Reconnecting through Herdr…');
+      void window.herdr.terminal.close(pane.pane_id).finally(attachWhenSized);
+    };
+    connectionRef.current = { restart };
+
+    void window.herdr.terminal
+      .accessibilitySupportEnabled()
+      .then((enabled) => {
+        if (!disposed) {
+          terminal.options.screenReaderMode = enabled;
+        }
+      })
+      .catch(() => undefined);
     terminal.open(container);
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => webglAddon.dispose());
+      terminal.loadAddon(webglAddon);
+    } catch {
+      // xterm keeps its default renderer when WebGL2 is unavailable.
+    }
     terminal.attachCustomKeyEventHandler((event) => {
       if (
         event.type === 'keydown' &&
@@ -135,18 +247,19 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         setSearchOpen(true);
         return false;
       }
-      if (
-        event.type === 'keydown' &&
-        (event.metaKey || event.ctrlKey) &&
-        !event.altKey &&
-        event.key.toLowerCase() === 'c' &&
-        terminalRef.current?.hasSelection()
-      ) {
-        // Standard terminal copy shortcut; only intercepts when a selection
-        // exists so Ctrl+C keeps sending the interrupt to the pane.
-        event.preventDefault();
-        void copySelection();
-        return false;
+      if (event.type === 'keydown' && !event.altKey) {
+        const key = event.key.toLowerCase();
+        const terminalClipboardShortcut = event.metaKey || (event.ctrlKey && event.shiftKey);
+        if (terminalClipboardShortcut && key === 'c' && terminalRef.current?.hasSelection()) {
+          event.preventDefault();
+          void copySelection();
+          return false;
+        }
+        if (terminalClipboardShortcut && key === 'v') {
+          event.preventDefault();
+          void pasteClipboard();
+          return false;
+        }
       }
       return true;
     });
@@ -156,16 +269,15 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         fitAddon.fit();
       }
     };
-
     const stopEvents = window.herdr.terminal.onEvent((event) => {
       if (event.paneId !== pane.pane_id) {
         return;
       }
       if (event.type === 'terminal.frame') {
-        setState('attached');
-        setMessage('Live control through Herdr');
-        if (stableTimerRef.current === null) {
-          // A connection that stays attached earns its retry budget back.
+        if (!receivedFrame) {
+          receivedFrame = true;
+          setState('attached');
+          setMessage('Live control through Herdr');
           stableTimerRef.current = window.setTimeout(() => {
             retryRef.current = 0;
             stableTimerRef.current = null;
@@ -173,20 +285,16 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         }
         terminal.write(decodeTerminalBytes(event.bytes));
       } else if (event.type === 'terminal.closed') {
+        attachmentRequested = false;
         if (stableTimerRef.current !== null) {
-          clearTimeout(stableTimerRef.current);
+          window.clearTimeout(stableTimerRef.current);
           stableTimerRef.current = null;
         }
         if (retryRef.current < 2) {
-          // The engine detaches cleanly during quick reopens and takeover
-          // windows; reattach a bounded number of times before surfacing it.
           retryRef.current += 1;
           setState('attaching');
           setMessage('Reattaching through Herdr…');
-          retryTimerRef.current = window.setTimeout(
-            () => setConnectionAttempt((attempt) => attempt + 1),
-            400 * retryRef.current,
-          );
+          retryTimerRef.current = window.setTimeout(attachWhenSized, 400 * retryRef.current);
         } else {
           setState('closed');
           setMessage(event.reason);
@@ -197,21 +305,10 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       }
     });
     const input = terminal.onData((value) => {
-      void window.herdr.terminal.input({ paneId: pane.pane_id, text: value });
-    });
-    let attachmentRequested = false;
-    const attachWhenSized = () => {
-      if (attachmentRequested || terminal.cols < 1 || terminal.rows < 1) {
-        return;
+      if (attachmentRequested) {
+        void window.herdr.terminal.input({ paneId: pane.pane_id, text: value });
       }
-      attachmentRequested = true;
-      void window.herdr.terminal
-        .open({ paneId: pane.pane_id, cols: terminal.cols, rows: terminal.rows })
-        .catch((error: unknown) => {
-          setState('error');
-          setMessage(error instanceof Error ? error.message : 'Terminal attachment failed.');
-        });
-    };
+    });
     const resize = terminal.onResize(({ cols, rows }) => {
       if (attachmentRequested) {
         void window.herdr.terminal.resize({ paneId: pane.pane_id, cols, rows });
@@ -221,33 +318,40 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     });
     const selection = terminal.onSelectionChange(() => setHasSelection(terminal.hasSelection()));
     const stopSessionEvents = window.herdr.onSessionEvent((event) => {
-      // The engine target changed (local ↔ remote): the main process closed
-      // every terminal controller, so this view must attach again through the
-      // new engine even when the pane id is unchanged.
       if (event.event === 'desktop.engine_changed') {
-        setEngineGeneration((generation) => generation + 1);
+        restart();
       }
     });
+    let fitFrame: number | null = null;
     const observer = new ResizeObserver(() => {
-      fitTerminal();
-      attachWhenSized();
+      if (fitFrame !== null) {
+        return;
+      }
+      fitFrame = window.requestAnimationFrame(() => {
+        fitFrame = null;
+        fitTerminal();
+        attachWhenSized();
+      });
     });
     observer.observe(container);
     fitTerminal();
     attachWhenSized();
 
     return () => {
+      disposed = true;
+      connectionRef.current = null;
       observer.disconnect();
+      if (fitFrame !== null) {
+        window.cancelAnimationFrame(fitFrame);
+      }
+      if (wheelFrameRef.current !== null) {
+        window.cancelAnimationFrame(wheelFrameRef.current);
+        wheelFrameRef.current = null;
+        wheelLinesRef.current = 0;
+      }
       stopEvents();
       stopSessionEvents();
-      if (retryTimerRef.current !== null) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-      if (stableTimerRef.current !== null) {
-        clearTimeout(stableTimerRef.current);
-        stableTimerRef.current = null;
-      }
+      clearConnectionTimers();
       input.dispose();
       resize.dispose();
       selection.dispose();
@@ -260,7 +364,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       }
       void window.herdr.terminal.close(pane.pane_id);
     };
-  }, [connectionAttempt, engineGeneration, pane.pane_id]);
+  }, [copySelection, pane.pane_id, pasteClipboard]);
 
   return (
     <div className="relative min-h-0 flex-1 bg-[#0f0f10]">
@@ -274,12 +378,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
           }
           event.preventDefault();
           event.stopPropagation();
-          onScroll({
-            paneId: pane.pane_id,
-            direction: event.deltaY < 0 ? 'up' : 'down',
-            unit: 'line',
-            amount: 1,
-          });
+          queueWheelScroll(event.deltaY, event.deltaMode, terminalRef.current?.rows ?? 24);
         }}
         ref={containerRef}
       />
@@ -338,6 +437,15 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
           variant="neutral"
         >
           <Copy aria-hidden="true" />
+        </Button>
+        <Button
+          aria-label="Paste terminal clipboard"
+          className="size-8"
+          onClick={() => void pasteClipboard()}
+          size="icon"
+          variant="neutral"
+        >
+          <ClipboardPaste aria-hidden="true" />
         </Button>
         {searchOpen ? (
           <div className="flex items-center gap-1 rounded-base border-2 border-border bg-secondary-background p-1 shadow-shadow">
@@ -437,7 +545,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
               className="h-7 shrink-0 px-2 text-xs"
               onClick={() => {
                 retryRef.current = 0;
-                setConnectionAttempt((attempt) => attempt + 1);
+                connectionRef.current?.restart();
               }}
               size="sm"
               variant="neutral"

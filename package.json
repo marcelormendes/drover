@@ -1,7 +1,7 @@
 {
   "name": "drover",
   "productName": "Drover",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.",
   "main": ".vite/build/main.js",
   "private": true,
@@ -79,6 +79,7 @@
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",
     "@xterm/addon-web-links": "0.12.0",
+    "@xterm/addon-webgl": "0.19.0",
     "@xterm/xterm": "6.0.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",

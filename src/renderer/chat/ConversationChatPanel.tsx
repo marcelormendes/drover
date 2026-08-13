@@ -16,7 +16,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import {
   ConversationTimeline,
-  latestActivePlanStep,
+  latestPlanUpdate,
+  PlanUpdateCard,
   WorkingIndicator,
 } from '@/renderer/chat/ConversationTimeline';
 import {
@@ -572,7 +573,7 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       const turnItems = store.items.filter((item) => item.turn_id === latestState.turn_id);
       return {
         startedMs: latestState.started_ms ?? statusStartedMs,
-        activeStep: latestActivePlanStep(turnItems),
+        plan: latestPlanUpdate(turnItems),
       };
     }
     if (!paneWorking) {
@@ -601,7 +602,7 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
       : store.items;
     return {
       startedMs: statusStartedMs,
-      activeStep: latestActivePlanStep(turnItems),
+      plan: latestPlanUpdate(turnItems),
     };
   }, [paneWorking, statusStartedMs, store.items, store.pending]);
 
@@ -812,8 +813,13 @@ function ConversationChatPanelForPane({ pane, onOpenTerminal }: ConversationChat
         </div>
       </ScrollArea>
       {activeWork ? (
-        <div className="shrink-0" data-slot="active-work">
-          <WorkingIndicator startedMs={activeWork.startedMs} activeStep={activeWork.activeStep} />
+        <div className="shrink-0 space-y-2" data-slot="active-work">
+          {activeWork.plan ? (
+            <div className="max-h-[min(40vh,18rem)] overflow-y-auto" data-slot="active-plan">
+              <PlanUpdateCard item={activeWork.plan} label="TODO" />
+            </div>
+          ) : null}
+          <WorkingIndicator startedMs={activeWork.startedMs} />
         </div>
       ) : null}
       <form

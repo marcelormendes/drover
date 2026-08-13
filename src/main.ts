@@ -3,7 +3,7 @@ import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
 import started from 'electron-squirrel-startup';
 import { APP_NAME, configureApplicationBranding } from '@/main/app-branding';
 import { applicationMenuTemplate } from '@/main/application-menu';
@@ -506,6 +506,24 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.terminalClose, (event, paneId: unknown) => {
     assertTrustedSender(event.senderFrame?.url);
     terminalControllers.close(parsePaneId(paneId));
+  });
+
+  ipcMain.handle(IPC_CHANNELS.terminalClipboardRead, (event) => {
+    assertTrustedSender(event.senderFrame?.url);
+    return clipboard.readText();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.terminalClipboardWrite, (event, candidate: unknown) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (typeof candidate !== 'string') {
+      throw new Error('Invalid clipboard text.');
+    }
+    clipboard.writeText(candidate);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.terminalAccessibilitySupport, (event) => {
+    assertTrustedSender(event.senderFrame?.url);
+    return app.isAccessibilitySupportEnabled();
   });
 
   ipcMain.handle(IPC_CHANNELS.openExternal, async (event, candidate: unknown) => {
