@@ -1121,6 +1121,30 @@ describe('App', () => {
     expect(screen.getByTestId('terminal-w1:p1')).not.toBeVisible();
   });
 
+  it('constrains the persistent terminal while switching pane views', async () => {
+    const user = userEvent.setup();
+    const terminalFirstSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1' ? { ...pane, agent_has_arguments: true } : pane,
+      ),
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+      ...connected,
+      snapshot: terminalFirstSnapshot,
+    });
+    render(<App />);
+
+    const terminal = await screen.findByTestId('terminal-w1:p1');
+    const surface = terminal.parentElement;
+    expect(surface).toHaveClass('flex', 'min-h-0', 'min-w-0', 'flex-1', 'overflow-hidden');
+    expect(surface).not.toHaveClass('hidden');
+
+    await user.click(screen.getByRole('button', { name: 'Chat view' }));
+    expect(terminal.parentElement).toBe(surface);
+    expect(surface).toHaveClass('hidden', 'min-h-0', 'min-w-0', 'flex-1', 'overflow-hidden');
+  });
+
   it('opens complete pane controls and routes graphical actions to Herdr', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -1738,6 +1762,32 @@ describe('App', () => {
 
     expect(screen.getByText('Engine reconnecting')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
+  });
+
+  it('keeps the canonical session when a background bootstrap transiently fails', async () => {
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    vi.mocked(window.herdr.bootstrap).mockResolvedValueOnce(connected).mockResolvedValue({
+      state: 'error',
+      message: 'Herdr could not be reached.',
+      details: 'transient socket error',
+    });
+    render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+
+    act(() => sessionEvent?.({ event: 'layout.updated', data: {} }));
+    await waitFor(() => expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2), {
+      timeout: 2_000,
+    });
+
+    expect(screen.getByRole('heading', { name: 'drover' })).toBeInTheDocument();
+    expect(screen.queryByText('Herdr could not be reached')).not.toBeInTheDocument();
+    expect(screen.getByText('Engine disconnected')).toBeInTheDocument();
   });
 
   it('coalesces background refreshes while session events stream', async () => {

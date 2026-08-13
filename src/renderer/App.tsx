@@ -752,7 +752,11 @@ function PersistentTerminalSurface({ pane, visible }: { pane: PaneInfo; visible:
     return null;
   }
   return (
-    <div aria-hidden={visible ? undefined : true} hidden={!visible}>
+    <div
+      aria-hidden={visible ? undefined : true}
+      className={cn('min-h-0 min-w-0 flex-1 overflow-hidden', visible ? 'flex' : 'hidden')}
+      hidden={!visible}
+    >
       <TerminalPanel
         onOpenExternal={(url) => void window.herdr.openExternal(url)}
         onScrollRequest={(request) =>
@@ -1936,13 +1940,20 @@ function AppContent() {
   >([]);
 
   const streamStateRevision = useRef(0);
-  const applyLatestResult = useCallback((sequence: number, next: EngineBootstrap) => {
-    if (sequence !== resultRequestSequence.current) {
-      return false;
-    }
-    setResult(next);
-    return true;
-  }, []);
+  const applyLatestResult = useCallback(
+    (sequence: number, next: EngineBootstrap, preserveConnected = false) => {
+      if (sequence !== resultRequestSequence.current) {
+        return false;
+      }
+      setResult((current) =>
+        preserveConnected && next.state !== 'connected' && current?.state === 'connected'
+          ? current
+          : next,
+      );
+      return true;
+    },
+    [],
+  );
 
   const load = useCallback(
     async (quiet = false) => {
@@ -1955,7 +1966,10 @@ function AppContent() {
       }
       try {
         const next = await window.herdr.bootstrap();
-        if (applyLatestResult(sequence, next) && streamStateRevision.current === streamRevision) {
+        if (
+          applyLatestResult(sequence, next, quiet) &&
+          streamStateRevision.current === streamRevision
+        ) {
           setConnectionState(next.state === 'connected' ? 'connected' : 'disconnected');
         }
       } finally {
