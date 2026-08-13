@@ -93,9 +93,14 @@ export function applicationMenuTemplate(
     {
       label: 'View',
       submenu: [
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        { role: 'resetZoom', accelerator: 'CmdOrCtrl+0' },
+        { role: 'zoomIn', accelerator: 'CmdOrCtrl+=' },
+        { role: 'zoomIn', accelerator: 'CmdOrCtrl+Plus', visible: false },
+        { role: 'zoomIn', accelerator: 'CmdOrCtrl+numadd', visible: false },
+        { role: 'zoomOut', accelerator: 'CmdOrCtrl+-' },
+        { role: 'zoomOut', accelerator: 'CmdOrCtrl+_', visible: false },
+        { role: 'zoomOut', accelerator: 'CmdOrCtrl+numsub', visible: false },
+        { role: 'resetZoom', accelerator: 'CmdOrCtrl+num0', visible: false },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],

@@ -16,7 +16,7 @@ interface ShortcutHelpDialogProps {
 }
 
 interface ShortcutDefinition {
-  category: 'Session' | 'Spaces' | 'Tabs' | 'Panes' | 'Terminal';
+  category: 'Session' | 'Spaces' | 'Tabs' | 'Panes' | 'Terminal' | 'View';
   action: string;
   keys: string;
 }
@@ -40,6 +40,9 @@ export const DESKTOP_SHORTCUTS: readonly ShortcutDefinition[] = [
   { category: 'Panes', action: 'Split pane right', keys: '⌘⌥→' },
   { category: 'Panes', action: 'Split pane down', keys: '⌘⌥↓' },
   { category: 'Panes', action: 'Toggle pane zoom', keys: '⌘⇧Z' },
+  { category: 'View', action: 'Zoom in', keys: '⌘+' },
+  { category: 'View', action: 'Zoom out', keys: '⌘-' },
+  { category: 'View', action: 'Reset zoom', keys: '⌘0' },
   { category: 'Terminal', action: 'Search terminal', keys: '⌘F' },
   { category: 'Terminal', action: 'Copy terminal selection', keys: '⌘C' },
 ] as const;

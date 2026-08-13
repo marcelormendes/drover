@@ -565,6 +565,7 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.setVisualZoomLevelLimits(1, 3);
   if (smokeTestMode) {
     mainWindow.webContents.once('did-finish-load', () => app.exit(0));
     mainWindow.webContents.once('did-fail-load', (_event, code, description, url) => {
