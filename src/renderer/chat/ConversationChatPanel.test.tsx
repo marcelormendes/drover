@@ -812,6 +812,73 @@ describe('ConversationChatPanel onboarding', () => {
 });
 
 describe('ConversationChatPanel live state', () => {
+  it('deduplicates rapid clicks of "Load older history" to one in-flight read', async () => {
+    let finishOlder: ((page: ConversationReadResult) => void) | undefined;
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([item(1)], 'newer-1', 'old-1'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ConversationReadResult>((resolve) => {
+            finishOlder = resolve;
+          }),
+      )
+      .mockImplementationOnce(() => Promise.resolve(page([item(0)], 'newer-1', 'old-2')));
+    window.herdr = {
+      conversation: {
+        read,
+        prompt: vi.fn(),
+        respond: vi.fn(),
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+
+    render(<ConversationChatPanel pane={pane('w-older:p1')} />);
+    const button = await screen.findByRole('button', { name: 'Load older history' });
+    expect(button).toBeEnabled();
+
+    // Burst of rapid clicks while the older read is still pending.
+    for (let click = 0; click < 20; click += 1) {
+      fireEvent.click(button);
+    }
+
+    // Only the single in-flight older read is enqueued.
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(read).toHaveBeenNthCalledWith(2, {
+      target: 'w-older:p1',
+      direction: 'older',
+      limit: 256,
+      cursor: 'old-1',
+    });
+
+    // Button is disabled and shows the loading affordance while pending.
+    const loadingButton = await screen.findByRole('button', {
+      name: 'Loading older history…',
+    });
+    expect(loadingButton).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Load older history' })).not.toBeInTheDocument();
+
+    // Resolve the older page; the button re-enables with the normal label.
+    act(() => finishOlder?.(page([item(0)], 'newer-1', 'old-2')));
+    const reenabled = await screen.findByRole('button', { name: 'Load older history' });
+    expect(reenabled).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Loading older history…' }),
+    ).not.toBeInTheDocument();
+
+    // A subsequent single click still works and uses the updated older cursor.
+    fireEvent.click(reenabled);
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(read).toHaveBeenNthCalledWith(3, {
+      target: 'w-older:p1',
+      direction: 'older',
+      limit: 256,
+      cursor: 'old-2',
+    });
+  });
+
   it('renders a prominent working indicator for an in-progress turn', async () => {
     const read = vi.fn<Window['herdr']['conversation']['read']>().mockResolvedValue(
       page(
