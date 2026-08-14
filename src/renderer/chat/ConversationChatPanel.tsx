@@ -255,6 +255,7 @@ function ConversationChatPanelForPane({
   const [slashMenuSelectedIndex, setSlashMenuSelectedIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [loading, setLoading] = useState(savedStore === undefined);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const [planHydrationRetry, setPlanHydrationRetry] = useState(0);
@@ -278,6 +279,7 @@ function ConversationChatPanelForPane({
   );
   const planHydrationPromiseRef = useRef<Promise<boolean> | undefined>(undefined);
   const pollInFlightRef = useRef(false);
+  const loadingOlderRef = useRef(false);
   const pendingRefreshRevisionRef = useRef<number | undefined>(undefined);
   const pendingPayloadDrainRef = useRef(false);
   const planHydrationRetryRef = useRef(0);
@@ -999,6 +1001,13 @@ function ConversationChatPanelForPane({
   }, [items, store.pending]);
 
   const loadOlder = useCallback(async () => {
+    // Ignore duplicate clicks while an older page is already in flight and
+    // when there is no recorded older page to fetch.
+    if (loadingOlderRef.current || storeRef.current.olderCursor === undefined) {
+      return;
+    }
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
     const viewport = scrollViewportRef.current;
     if (viewport) {
       olderAnchorRef.current = {
@@ -1012,6 +1021,9 @@ function ConversationChatPanelForPane({
     } catch (reason) {
       olderAnchorRef.current = undefined;
       setError(reason instanceof Error ? reason.message : 'Could not load older history.');
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
     }
   }, [read]);
 
@@ -1077,10 +1089,10 @@ function ConversationChatPanelForPane({
               type="button"
               className="w-full"
               variant="neutral"
-              disabled={loading}
+              disabled={loading || loadingOlder}
               onClick={() => void loadOlder()}
             >
-              Load older history
+              {loadingOlder ? 'Loading older history…' : 'Load older history'}
             </Button>
           ) : null}
           {loading && items.length === 0 ? (
