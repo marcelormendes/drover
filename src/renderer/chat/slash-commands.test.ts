@@ -24,6 +24,20 @@ describe('slashCommandsForAgent', () => {
     expect(Object.keys(SLASH_COMMAND_SETS).sort()).toEqual(['claude', 'codex', 'pi']);
   });
 
+  it('uses the pi catalog for OMP and Oh My Pi aliases', () => {
+    const pi = slashCommandsForAgent('pi');
+    expect(slashCommandsForAgent('omp')).toBe(pi);
+    expect(slashCommandsForAgent('Oh My Pi')).toBe(pi);
+    expect(slashCommandsForAgent('OMP')).toBe(pi);
+    expect(new Set(pi.map((command) => command.name)).has('help')).toBe(false);
+  });
+
+  it('uses the claude catalog for Claude Code aliases', () => {
+    const claude = slashCommandsForAgent('claude');
+    expect(slashCommandsForAgent('Claude Code')).toBe(claude);
+    expect(slashCommandsForAgent('claude code')).toBe(claude);
+  });
+
   it('lists exactly the commands the installed pi 0.83 binary registers', () => {
     // Verified against the installed pi package's slash-commands module; pi
     // has no /help or /clear — those would fall through as ordinary prompts.
