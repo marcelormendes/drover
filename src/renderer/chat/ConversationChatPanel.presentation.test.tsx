@@ -683,6 +683,37 @@ describe('ConversationChatPanel turn projection', () => {
     expect(document.querySelector('[data-slot="active-plan"]')).toBeNull();
   });
 
+  it('settles Working when a settled turn still carries a stale running tool', async () => {
+    setup(
+      page([
+        {
+          id: 'completed',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'turn_state',
+          state: 'completed',
+          duration_ms: 6_000,
+        },
+        {
+          id: 'stale-tool',
+          sequence: 2,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'turn-1',
+          type: 'tool_activity',
+          action: 'bash',
+          label: 'bash',
+          status: 'running',
+        },
+      ]),
+    );
+
+    await screen.findByText('running');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('folds settled work while keeping the rendered final answer prominent and visible', async () => {
     setup(
       page([
