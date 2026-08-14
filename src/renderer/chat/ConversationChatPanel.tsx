@@ -257,7 +257,7 @@ function ConversationChatPanelForPane({
   const [loading, setLoading] = useState(savedStore === undefined);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
-  const [planHydrationRetry, setPlanHydrationRetry] = useState(false);
+  const [planHydrationRetry, setPlanHydrationRetry] = useState(0);
   const capability = pane.conversation_capability;
   const preSessionChat = isPreSessionConversationCapability(capability);
   const conversationReadable = capability?.availability === 'supported';
@@ -456,7 +456,7 @@ function ConversationChatPanelForPane({
           window.clearTimeout(planHydrationRetryTimerRef.current);
           planHydrationRetryTimerRef.current = undefined;
         }
-        setPlanHydrationRetry(true);
+        setPlanHydrationRetry((retry) => retry + 1);
       }
     });
   }, []);
@@ -568,6 +568,13 @@ function ConversationChatPanelForPane({
           return false;
         }
       }
+    }
+    if (
+      cursor === undefined &&
+      !planBoundaryKnownRef.current &&
+      epoch === requestEpochRef.current
+    ) {
+      planBoundaryKnownRef.current = true;
     }
     return (
       cursor !== undefined &&
@@ -843,9 +850,9 @@ function ConversationChatPanelForPane({
       plan,
     };
   }, [paneWorking, sending, statusStartedMs, store.items, store.pending]);
+  const hasActiveWork = activeWork !== null;
   useEffect(() => {
-    const canHydrate =
-      visible && planHistorySupported && conversationReadable && activeWork !== null;
+    const canHydrate = visible && planHistorySupported && conversationReadable && hasActiveWork;
     const wasAllowed = planHydrationAllowedRef.current;
     if (!canHydrate) {
       planHydrationAllowedRef.current = false;
@@ -856,9 +863,7 @@ function ConversationChatPanelForPane({
       }
       planHydrationAllowedRef.current = true;
     }
-    if (planHydrationRetry) {
-      setPlanHydrationRetry(false);
-    }
+    void planHydrationRetry;
     const clearRetryTimer = () => {
       if (planHydrationRetryTimerRef.current !== undefined) {
         window.clearTimeout(planHydrationRetryTimerRef.current);
@@ -889,7 +894,7 @@ function ConversationChatPanelForPane({
       planHydrationRetryTimerRef.current = window.setTimeout(() => {
         planHydrationRetryTimerRef.current = undefined;
         if (planHydrationAllowedRef.current) {
-          setPlanHydrationRetry(true);
+          setPlanHydrationRetry((retry) => retry + 1);
         }
       }, delay);
     };
@@ -912,8 +917,8 @@ function ConversationChatPanelForPane({
       }
     });
   }, [
-    activeWork,
     conversationReadable,
+    hasActiveWork,
     hydratePlanHistory,
     planHistorySupported,
     planHydrationRetry,

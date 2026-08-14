@@ -110,7 +110,8 @@ function replacePage(
   let olderCursor = canMergeExisting ? store.olderCursor : undefined;
   let newerCursor = canMergeExisting ? store.newerCursor : undefined;
   if (direction === 'newest') {
-    olderCursor = page.previous_cursor;
+    olderCursor =
+      canMergeExisting && store.items.length > 0 ? store.olderCursor : page.previous_cursor;
     newerCursor = page.next_cursor;
   } else if (direction === 'older') {
     olderCursor = page.previous_cursor;

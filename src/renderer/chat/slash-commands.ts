@@ -127,7 +127,14 @@ export const FALLBACK_SLASH_COMMANDS: readonly SlashCommand[] = [
 ];
 
 export function slashCommandsForAgent(agent: string): readonly SlashCommand[] {
-  return SLASH_COMMAND_SETS[agent] ?? FALLBACK_SLASH_COMMANDS;
+  const key = agent.trim().toLowerCase();
+  if (key === 'omp' || key === 'oh my pi') {
+    return SLASH_COMMAND_SETS.pi;
+  }
+  if (key === 'claude code') {
+    return SLASH_COMMAND_SETS.claude;
+  }
+  return SLASH_COMMAND_SETS[key] ?? FALLBACK_SLASH_COMMANDS;
 }
 
 /**

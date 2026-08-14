@@ -570,6 +570,55 @@ describe('ConversationChatPanel turn projection', () => {
     });
   });
 
+  it('stops hydrating history when no plan boundary exists and history is exhausted', async () => {
+    const runningTool: ConversationItem = {
+      id: 'running-no-plan-tail',
+      sequence: 2,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'tool_activity',
+      action: 'bash',
+      label: 'running',
+      status: 'running',
+    };
+    const historyItem: ConversationItem = {
+      id: 'history-item-1',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'user_message',
+      text: 'start long job without todo',
+    };
+    let olderCalls = 0;
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockImplementation(async (request) => {
+        if (request.direction === 'older') {
+          olderCalls += 1;
+          return page([historyItem], { previousCursor: undefined, nextCursor: 'older-next' });
+        }
+        return page([runningTool], { previousCursor: 'history-1', nextCursor: 'live-1' });
+      });
+
+    const { view } = setup(
+      page([runningTool], { previousCursor: 'history-1', nextCursor: 'live-1' }),
+      {
+        read,
+      },
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('start long job without todo')).toBeInTheDocument(),
+    );
+    expect(olderCalls).toBe(1);
+
+    view.rerender(<ConversationChatPanel pane={pane} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(olderCalls).toBe(1);
+  });
+
   it('preserves the pane working duration across chat view remounts', async () => {
     let now = 1_800_000_000_000;
     vi.spyOn(Date, 'now').mockImplementation(() => now);

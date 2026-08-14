@@ -153,6 +153,31 @@ describe('conversation model', () => {
     expect(store.newerCursor).toBe('live-next');
     expect(store.items.map(({ sequence }) => sequence)).toEqual([1, 10, 11]);
   });
+  it('preserves the oldest history cursor when refreshing the newest page', () => {
+    let store = applyConversationRead(createConversationStore('w1:p1'), page([item(10)]));
+    const history = {
+      ...page([item(1)], 'reader-1', 1),
+      page: {
+        ...page([item(1)], 'reader-1', 1).page,
+        next_cursor: 'history-next',
+        previous_cursor: 'history-oldest',
+      },
+    } satisfies ConversationReadResult;
+    store = applyConversationRead(store, history, 'older');
+    expect(store.olderCursor).toBe('history-oldest');
+
+    const refreshedNewest = {
+      ...page([item(10)], 'reader-1', 2),
+      page: {
+        ...page([item(10)], 'reader-1', 2).page,
+        next_cursor: 'newest-live',
+        previous_cursor: 'newest-older-1',
+      },
+    } satisfies ConversationReadResult;
+    store = applyConversationRead(store, refreshedNewest, 'newest');
+    expect(store.olderCursor).toBe('history-oldest');
+    expect(store.newerCursor).toBe('newest-live');
+  });
 
   it('allows callers to clear the changed marker after batching', () => {
     const store = applyConversationRead(createConversationStore('w1:p1'), page([item(1)]));
