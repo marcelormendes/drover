@@ -793,6 +793,13 @@ function ConversationChatPanelForPane({
     const runningTool = store.items.some(
       (item) => item.type === 'tool_activity' && item.status === 'running',
     );
+    // A provider can leave a tool in `running` when its terminal event is
+    // missed, so a settled latest turn must not stay pinned on a stale tool.
+    const latestTurnSettled =
+      latestState !== undefined &&
+      (latestState.state === 'completed' ||
+        latestState.state === 'interrupted' ||
+        latestState.state === 'failed');
     if (latestState?.state === 'started') {
       let finalAnswerReceived = false;
       for (let index = latestStateIndex + 1; index < store.items.length; index += 1) {
@@ -820,7 +827,7 @@ function ConversationChatPanelForPane({
         plan,
       };
     }
-    if (runningTool) {
+    if (runningTool && !latestTurnSettled) {
       return {
         startedMs: statusStartedMs,
         plan,
