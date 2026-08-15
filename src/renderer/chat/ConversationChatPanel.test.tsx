@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ConversationChatPanel,
+  LOAD_OLDER_COALESCE_MS,
   pruneConversationChatState,
 } from '@/renderer/chat/ConversationChatPanel';
 import type { ConversationItem, ConversationReadResult } from '@/shared/conversation';
@@ -877,6 +878,105 @@ describe('ConversationChatPanel live state', () => {
       limit: 256,
       cursor: 'old-2',
     });
+  });
+
+  it('coalesces a trailing burst of "Load older history" clicks into one follow-up read', async () => {
+    vi.useFakeTimers();
+    try {
+      let finishOlder: ((result: ConversationReadResult) => void) | undefined;
+      const read = vi
+        .fn<Window['herdr']['conversation']['read']>()
+        .mockResolvedValueOnce(page([item(1)], 'newer-1', 'old-1'))
+        .mockImplementationOnce(
+          () =>
+            new Promise<ConversationReadResult>((resolve) => {
+              finishOlder = resolve;
+            }),
+        )
+        .mockImplementationOnce(() => Promise.resolve(page([item(0)], 'newer-1', 'old-2')));
+      window.herdr = {
+        conversation: {
+          read,
+          prompt: vi.fn(),
+          respond: vi.fn(),
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+        },
+        onSessionEvent: vi.fn(() => () => undefined),
+      } as unknown as Window['herdr'];
+
+      render(<ConversationChatPanel pane={pane('w-older:p2')} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const button = screen.getByRole('button', { name: 'Load older history' });
+      expect(button).toBeEnabled();
+
+      // A single synchronous burst of clicks: the first starts the in-flight
+      // older read and every later click is folded into a pending coalesced
+      // follow-up rather than issuing one read per click.
+      act(() => {
+        for (let click = 0; click < 30; click += 1) {
+          fireEvent.click(button);
+        }
+      });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      // 30 clicks -> only the in-flight older read is enqueued (mount was call 1).
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(read).toHaveBeenNthCalledWith(2, {
+        target: 'w-older:p2',
+        direction: 'older',
+        limit: 256,
+        cursor: 'old-1',
+      });
+
+      // The button stays in the disabled/loading state while the read settles.
+      expect(screen.getByRole('button', { name: 'Loading older history…' })).toBeDisabled();
+
+      // Resolve the in-flight page. The trailing coalesce window opens; when it
+      // elapses exactly ONE follow-up read is issued, not thirty.
+      act(() => finishOlder?.(page([item(0)], 'newer-1', 'old-2')));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(LOAD_OLDER_COALESCE_MS);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(read).toHaveBeenCalledTimes(3);
+      expect(read).toHaveBeenNthCalledWith(3, {
+        target: 'w-older:p2',
+        direction: 'older',
+        limit: 256,
+        cursor: 'old-2',
+      });
+
+      // The follow-up read settles and nothing else fires; the button re-enables.
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(LOAD_OLDER_COALESCE_MS);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(read).toHaveBeenCalledTimes(3);
+      const reenabled = screen.getByRole('button', { name: 'Load older history' });
+      expect(reenabled).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders a prominent working indicator for an in-progress turn', async () => {

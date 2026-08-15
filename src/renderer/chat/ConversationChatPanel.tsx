@@ -68,6 +68,10 @@ const CONVERSATION_READ_LIMIT = 256;
 const PLAN_HISTORY_REFRESH_INTERVAL = 32;
 const PLAN_HYDRATION_RETRY_DELAY_MS = 500;
 const PLAN_HYDRATION_MAX_RETRY_DELAY_MS = 5_000;
+// Trailing coalesce window for "Load older history": clicks that keep arriving
+// after an in-flight read resolves are folded into a single follow-up read so a
+// hammered button never issues one read per click. Exported for tests.
+export const LOAD_OLDER_COALESCE_MS = 300;
 
 export function pruneConversationChatState(activePaneIds: readonly string[]): void {
   const active = new Set(activePaneIds);
@@ -280,6 +284,11 @@ function ConversationChatPanelForPane({
   const planHydrationPromiseRef = useRef<Promise<boolean> | undefined>(undefined);
   const pollInFlightRef = useRef(false);
   const loadingOlderRef = useRef(false);
+  // Coalescing bookkeeping for "Load older history": any click while an older
+  // read is in flight (or while a follow-up is already scheduled) is folded into
+  // a single trailing read rather than issuing one read per click.
+  const pendingOlderLoadRef = useRef(false);
+  const olderDebounceTimerRef = useRef<number | undefined>(undefined);
   const pendingRefreshRevisionRef = useRef<number | undefined>(undefined);
   const pendingPayloadDrainRef = useRef(false);
   const planHydrationRetryRef = useRef(0);
@@ -986,24 +995,44 @@ function ConversationChatPanelForPane({
         viewport.scrollTop = viewport.scrollHeight;
       }
     };
+    // Scroll immediately and once more on the next frame so a freshly committed
+    // items batch settles into place; one rAF per committed batch, not per item.
     scrollToLatest();
     const frame = window.requestAnimationFrame(scrollToLatest);
-    const content = viewport.firstElementChild;
-    let observer: ResizeObserver | undefined;
-    if (content && typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(scrollToLatest);
-      observer.observe(content);
-    }
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer?.disconnect();
-    };
+    return () => window.cancelAnimationFrame(frame);
   }, [items, store.pending]);
 
+  // Follow-latest scroll accompaniment: keep the observer attached for the life
+  // of the content element instead of tearing it down and recreating it on every
+  // items/pending identity change (which is what made rapid "Load older history"
+  // clicks churn the layout and flicker).
+  useLayoutEffect(() => {
+    const viewport = scrollViewportRef.current;
+    const content = viewport?.firstElementChild;
+    if (!viewport || !content || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const scrollToLatest = () => {
+      if (scrollViewportRef.current === viewport && followLatestRef.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    };
+    const observer = new ResizeObserver(scrollToLatest);
+    observer.observe(content);
+    return () => observer.disconnect();
+    // The viewport content element is stable for the panel's lifetime; re-keying
+    // on items identity would recreate the observer on every commit.
+  }, []);
+
   const loadOlder = useCallback(async () => {
-    // Ignore duplicate clicks while an older page is already in flight and
-    // when there is no recorded older page to fetch.
-    if (loadingOlderRef.current || storeRef.current.olderCursor === undefined) {
+    // Ignore clicks when there is no recorded older page to fetch.
+    if (storeRef.current.olderCursor === undefined) {
+      return;
+    }
+    // While a read is in flight or a coalesced follow-up is already scheduled,
+    // fold the click into a single trailing read instead of one read per click.
+    if (loadingOlderRef.current || olderDebounceTimerRef.current !== undefined) {
+      pendingOlderLoadRef.current = true;
       return;
     }
     loadingOlderRef.current = true;
@@ -1023,9 +1052,36 @@ function ConversationChatPanelForPane({
       setError(reason instanceof Error ? reason.message : 'Could not load older history.');
     } finally {
       loadingOlderRef.current = false;
-      setLoadingOlder(false);
+      // Open a short trailing coalesce window after EVERY older read settles.
+      // Residual clicks that were queued while the read was in flight (and land
+      // after it resolves, or during this window) fold into a single follow-up,
+      // so a hammered button never issues one read per click. When the window
+      // closes with no further clicks, the button finally re-enables.
+      if (olderDebounceTimerRef.current === undefined) {
+        olderDebounceTimerRef.current = window.setTimeout(() => {
+          olderDebounceTimerRef.current = undefined;
+          if (pendingOlderLoadRef.current && storeRef.current.olderCursor !== undefined) {
+            pendingOlderLoadRef.current = false;
+            void loadOlder();
+          } else {
+            pendingOlderLoadRef.current = false;
+            setLoadingOlder(false);
+          }
+        }, LOAD_OLDER_COALESCE_MS);
+      }
     }
   }, [read]);
+
+  // Drop any pending coalesce timer on unmount so a payload is never scheduled
+  // against a detached panel.
+  useEffect(
+    () => () => {
+      if (olderDebounceTimerRef.current !== undefined) {
+        window.clearTimeout(olderDebounceTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const commandMenu = useMemo(() => {
     const trimmed = draft.trimStart();

@@ -179,6 +179,34 @@ describe('conversation model', () => {
     expect(store.newerCursor).toBe('newest-live');
   });
 
+  it('prepending older history preserves item identity and relative order', () => {
+    let store = applyConversationRead(createConversationStore('w1:p1'), page([item(2), item(3)]));
+    const existingIds = store.items.map(({ id }) => id);
+    const existingById = new Map(store.items.map((entry) => [entry.id, entry]));
+
+    const older = {
+      ...page([item(1), item(2, 'item-2', 'revised')], 'reader-1', 3),
+      page: {
+        ...page([item(1), item(2, 'item-2', 'revised')], 'reader-1', 3).page,
+        next_cursor: 'history-next',
+        previous_cursor: 'history-oldest',
+      },
+    } satisfies ConversationReadResult;
+    store = applyConversationRead(store, older, 'older');
+
+    expect(store.items.map(({ sequence }) => sequence)).toEqual([1, 2, 3]);
+    // Unchanged items keep their exact object identity so memoized turns do not
+    // re-render after an older page is prepended.
+    expect(store.items.find(({ id }) => id === 'item-3')).toBe(existingById.get('item-3'));
+    // The prior relative order of retained items is unchanged.
+    const relative = store.items.filter(({ id }) => existingIds.includes(id)).map(({ id }) => id);
+    expect(relative).toEqual(existingIds);
+    // An updated item is replaced (new identity) with the revised content.
+    const revised = store.items.find(({ id }) => id === 'item-2');
+    expect(revised).not.toBe(existingById.get('item-2'));
+    expect(revised?.type === 'assistant_message' && revised.text).toBe('revised');
+  });
+
   it('allows callers to clear the changed marker after batching', () => {
     const store = applyConversationRead(createConversationStore('w1:p1'), page([item(1)]));
     expect(consumeChanged(store).changed).toBe(false);
