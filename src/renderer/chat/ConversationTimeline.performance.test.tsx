@@ -46,4 +46,28 @@ describe('ConversationTimeline rendering performance', () => {
     }
     expect(markdownRenders.get(latest.type === 'assistant_message' ? latest.text : '')).toBe(1);
   });
+
+  it('does not re-render historical Markdown when older history is prepended', () => {
+    markdownRenders.clear();
+    const existing = Array.from({ length: 100 }, (_, index) => finalAnswer(11 + index));
+    const onRespond = vi.fn();
+    const view = render(
+      <ConversationTimeline items={existing} paneId="w1:p1" onRespond={onRespond} />,
+    );
+
+    const older = Array.from({ length: 10 }, (_, index) => finalAnswer(index + 1));
+    view.rerender(
+      <ConversationTimeline items={[...older, ...existing]} paneId="w1:p1" onRespond={onRespond} />,
+    );
+
+    // Existing turns share object identity, so their Markdown is not re-rendered
+    // after a contiguous older-page prepend that does not recreate them.
+    for (const item of existing) {
+      const text = item.type === 'assistant_message' ? item.text : '';
+      expect(markdownRenders.get(text)).toBe(1);
+    }
+    for (const item of older) {
+      expect(markdownRenders.get(item.type === 'assistant_message' ? item.text : '')).toBe(1);
+    }
+  });
 });

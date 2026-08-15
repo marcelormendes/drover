@@ -55,6 +55,64 @@ function sortItems(items: Iterable<ConversationItem>): ConversationItem[] {
     (left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id),
   );
 }
+function compareBySequence(left: ConversationItem, right: ConversationItem): number {
+  return left.sequence - right.sequence || left.id.localeCompare(right.id);
+}
+/**
+ * Merge an incoming page into the existing (already sequence-sorted) item list
+ * without re-sorting the whole collection and without recreating unchanged item
+ * objects. ConversationItem.sequence is monotonically increasing within a
+ * conversation, so older/newer pages are contiguous prepends/appends and
+ * refreshed pages only update already-present ids in place.
+ *
+ * Unchanged items keep their exact object identity (so memoized Turn rendering
+ * does not re-run), while brand-new items are inserted at their sorted position
+ * with a linear two-pointer merge. If an incoming item reuses an existing id but
+ * with a different sequence (not expected), fall back to the previous full sort.
+ */
+function mergePageIntoItems(
+  existing: readonly ConversationItem[],
+  incoming: readonly ConversationItem[],
+): ConversationItem[] {
+  if (incoming.length === 0) {
+    return [...existing];
+  }
+  if (existing.length === 0) {
+    return sortItems(incoming);
+  }
+  const existingById = new Map<string, ConversationItem>();
+  for (const item of existing) {
+    existingById.set(item.id, item);
+  }
+  for (const item of incoming) {
+    const previous = existingById.get(item.id);
+    if (previous !== undefined && previous.sequence !== item.sequence) {
+      return sortItems([...existing, ...incoming]);
+    }
+  }
+  const incomingById = new Map<string, ConversationItem>();
+  for (const item of incoming) {
+    incomingById.set(item.id, item);
+  }
+  const replaced = existing.map((item) => incomingById.get(item.id) ?? item);
+  const brandNew = incoming.filter((item) => !existingById.has(item.id)).sort(compareBySequence);
+  if (brandNew.length === 0) {
+    return replaced;
+  }
+  const merged: ConversationItem[] = [];
+  let index = 0;
+  for (const item of brandNew) {
+    while (index < replaced.length && compareBySequence(replaced[index], item) <= 0) {
+      merged.push(replaced[index]);
+      index += 1;
+    }
+    merged.push(item);
+  }
+  for (; index < replaced.length; index += 1) {
+    merged.push(replaced[index]);
+  }
+  return merged;
+}
 function sameCapability(
   left: ConversationCapability | undefined,
   right: ConversationCapability,
@@ -134,21 +192,16 @@ function replacePage(
   const byId = new Map<string, ConversationItem>(
     canMergeExisting ? store.items.map((item) => [item.id, item]) : [],
   );
-  for (const item of page.items) {
-    const nextItem = withAttachmentPreviews(
-      item,
-      pendingAttachmentsByItemId.get(item.id),
-      byId.get(item.id),
-    );
-    byId.set(nextItem.id, nextItem);
-  }
+  const incoming = page.items.map((item) =>
+    withAttachmentPreviews(item, pendingAttachmentsByItemId.get(item.id), byId.get(item.id)),
+  );
   return {
     ...store,
     provider: page.provider,
     session: page.session,
     readerGeneration: page.reader_generation,
     capability: page.capability,
-    items: sortItems(byId.values()),
+    items: mergePageIntoItems(canMergeExisting ? store.items : [], incoming),
     pending: canMergeExisting ? pending : store.pending,
     revision: canMergeExisting ? Math.max(store.revision, page.revision) : page.revision,
     olderCursor,
