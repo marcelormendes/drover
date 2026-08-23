@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { decodeTerminalBytes } from '@/renderer/terminal/terminal-codec';
+import { installTerminalImeMiddleInsertionFix } from '@/renderer/terminal/terminal-ime';
 import type { PaneInfo } from '@/shared/herdr';
 
 interface TerminalPanelProps {
@@ -216,6 +217,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       })
       .catch(() => undefined);
     terminal.open(container);
+    const imeMiddleInsertionFix = installTerminalImeMiddleInsertionFix(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
       if (
         event.type === 'keydown' &&
@@ -362,6 +364,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       stopEvents();
       stopSessionEvents();
       clearConnectionTimers();
+      imeMiddleInsertionFix.dispose();
       input.dispose();
       resize.dispose();
       selection.dispose();
