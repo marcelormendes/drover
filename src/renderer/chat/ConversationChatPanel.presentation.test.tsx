@@ -1078,6 +1078,84 @@ describe('ConversationChatPanel approval and delivery states', () => {
       vi.restoreAllMocks();
     }
   });
+  it('settles a fast reply without pane working events and keeps a new follow-up active', async () => {
+    const user: ConversationItem = {
+      id: 'durable',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'user_message',
+      text: 'answer quickly',
+    };
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([]))
+      .mockResolvedValueOnce(page([user, assistant(2, 'final', 'Fast answer')]))
+      .mockResolvedValue(
+        page([
+          user,
+          assistant(2, 'final', 'Fast answer'),
+          {
+            ...user,
+            id: 'follow-up',
+            sequence: 3,
+            turn_id: 'turn-2',
+            text: 'keep going',
+          },
+        ]),
+      );
+    setup(page([]), { read });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'answer quickly' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('Fast answer')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    fireEvent.change(input, { target: { value: 'keep going' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole('status')).toHaveTextContent('Working');
+  });
+
+  it('clears the optimistic Working timer when a resumed native session changes identity', async () => {
+    const user: ConversationItem = {
+      id: 'durable',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'user_message',
+      text: 'start now',
+    };
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([]))
+      .mockResolvedValue(page([user]));
+    const { view } = setup(page([]), { read });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'start now' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('status')).toHaveTextContent('Working');
+    view.rerender(
+      <ConversationChatPanel
+        pane={{
+          ...pane,
+          agent_session: {
+            agent: 'pi',
+            source: 'herdr:pi',
+            kind: 'session_id',
+            value: 'resumed-session',
+          },
+        }}
+      />,
+    );
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('keeps a failed optimistic message retryable without restoring the draft', async () => {
     const prompt = vi
       .fn<Window['herdr']['conversation']['prompt']>()

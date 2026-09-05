@@ -278,6 +278,7 @@ function ConversationChatPanelForPane({
   const [planHydrationRetry, setPlanHydrationRetry] = useState(0);
   const paneIdentity = conversationPaneIdentity(pane);
   const readCapabilityIdentityRef = useRef(savedStore ? paneIdentity : undefined);
+  const workingIdentityRef = useRef(paneIdentity);
   const paneCapability = pane.conversation_capability;
   const paneConversationReadable = paneCapability?.availability === 'supported';
   const canProbeConversation =
@@ -397,6 +398,10 @@ function ConversationChatPanelForPane({
   }, [pane.pane_id, store.items, store.pending]);
 
   useEffect(() => {
+    if (workingIdentityRef.current !== paneIdentity) {
+      workingStartedMsByPane.delete(pane.pane_id);
+      workingIdentityRef.current = paneIdentity;
+    }
     if (!paneWorking) {
       workingStartedMsByPane.delete(pane.pane_id);
       setStatusStartedMs(undefined);
@@ -405,7 +410,7 @@ function ConversationChatPanelForPane({
     const startedMs = workingStartedMsByPane.get(pane.pane_id) ?? Date.now();
     workingStartedMsByPane.set(pane.pane_id, startedMs);
     setStatusStartedMs(startedMs);
-  }, [pane.pane_id, paneWorking]);
+  }, [pane.pane_id, paneIdentity, paneWorking]);
 
   const addAttachments = useCallback((files: File[]) => {
     if (files.length === 0) {
@@ -962,6 +967,7 @@ function ConversationChatPanelForPane({
       };
     }
     let activeTurnId: string | undefined;
+    let activeUserIndex = -1;
     for (let index = store.items.length - 1; index > latestStateIndex; index -= 1) {
       const item = store.items[index];
       if (
@@ -971,10 +977,24 @@ function ConversationChatPanelForPane({
         item.turn_id !== latestState?.turn_id
       ) {
         activeTurnId = item.turn_id;
+        activeUserIndex = index;
         break;
       }
     }
-    if (!paneWorking && (activeTurnId === undefined || statusStartedMs === undefined)) {
+    const activeTurnAnswered =
+      activeUserIndex >= 0 &&
+      store.items
+        .slice(activeUserIndex + 1)
+        .some(
+          (item) =>
+            item.type === 'assistant_message' &&
+            item.phase === 'final' &&
+            item.turn_id === activeTurnId,
+        );
+    if (
+      !paneWorking &&
+      (activeTurnAnswered || activeTurnId === undefined || statusStartedMs === undefined)
+    ) {
       return null;
     }
     if (latestState && !pendingTurn && !activeTurnId) {
