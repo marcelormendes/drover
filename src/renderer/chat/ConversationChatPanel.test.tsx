@@ -755,6 +755,71 @@ describe('ConversationChatPanel onboarding', () => {
     },
   );
 
+  it.each(['rerender', 'remount'] as const)(
+    'does not reuse discovered capability after the native agent session changes on %s',
+    async (transition) => {
+      const read = vi
+        .fn<Window['herdr']['conversation']['read']>()
+        .mockResolvedValue(pageEnd([item(1)]));
+      const metadata = vi
+        .fn<NonNullable<Window['herdr']['conversation']['metadata']>>()
+        .mockResolvedValueOnce(pageEnd([item(1)]))
+        .mockRejectedValue(new Error('new session has no transcript yet'));
+      window.herdr = {
+        conversation: {
+          read,
+          metadata,
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+        },
+        onSessionEvent: vi.fn(() => () => undefined),
+      } as unknown as Window['herdr'];
+      const initialPane = pane('w1:p1', {
+        conversation_capability: { availability: 'unavailable', reason: 'transcript_missing' },
+        agent_session: {
+          agent: 'codex',
+          source: 'herdr:codex',
+          kind: 'session_id',
+          value: 'old-session',
+        },
+      });
+      const view = render(<ConversationChatPanel pane={initialPane} />);
+      expect(await screen.findByText('answer 1')).toBeInTheDocument();
+      expect(
+        screen.queryByText(
+          'No conversation transcript yet. Your first prompt will start the conversation.',
+        ),
+      ).not.toBeInTheDocument();
+      const replacement = (
+        <ConversationChatPanel
+          pane={{
+            ...initialPane,
+            agent_session: {
+              agent: 'codex',
+              source: 'herdr:codex',
+              kind: 'session_id',
+              value: 'new-session',
+            },
+          }}
+        />
+      );
+      if (transition === 'remount') {
+        view.unmount();
+        render(replacement);
+      } else {
+        view.rerender(replacement);
+      }
+      await waitFor(() => expect(metadata).toHaveBeenCalledTimes(2));
+      expect(
+        screen.getByText(
+          'No conversation transcript yet. Your first prompt will start the conversation.',
+        ),
+      ).toBeInTheDocument();
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText('answer 1')).not.toBeInTheDocument();
+    },
+  );
+
   it('probes missing transcripts only when visible and never probes unsupported providers', async () => {
     vi.useFakeTimers();
     try {

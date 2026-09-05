@@ -127,6 +127,17 @@ function eventForPane(event: HerdrEventEnvelope, paneId: string) {
   return changed?.pane_id === paneId ? changed : null;
 }
 
+function conversationPaneIdentity(pane: PaneInfo): string {
+  return JSON.stringify([
+    pane.pane_id,
+    pane.agent,
+    pane.conversation_session?.id,
+    pane.agent_session?.source,
+    pane.agent_session?.kind,
+    pane.agent_session?.value,
+  ]);
+}
+
 const PROVIDER_NAME_BY_AGENT: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
@@ -265,6 +276,8 @@ function ConversationChatPanelForPane({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const [planHydrationRetry, setPlanHydrationRetry] = useState(0);
+  const paneIdentity = conversationPaneIdentity(pane);
+  const readCapabilityIdentityRef = useRef(savedStore ? paneIdentity : undefined);
   const paneCapability = pane.conversation_capability;
   const paneConversationReadable = paneCapability?.availability === 'supported';
   const canProbeConversation =
@@ -272,6 +285,7 @@ function ConversationChatPanelForPane({
   // A successful read is newer evidence than the pane snapshot that was
   // captured before the provider created its first transcript.
   const discoveredSessionMatches =
+    readCapabilityIdentityRef.current === paneIdentity &&
     (!pane.conversation_session || pane.conversation_session.id === store.session?.id) &&
     (!pane.agent || pane.agent.toLowerCase() === store.provider);
   const capability =
@@ -535,6 +549,7 @@ function ConversationChatPanelForPane({
           if (effectiveDirection !== 'older') {
             pendingPayloadDrainRef.current = true;
           }
+          const requestedPaneIdentity = conversationPaneIdentity(paneRef.current);
           const result = await window.herdr.conversation.read({
             target: pane.pane_id,
             direction: effectiveDirection,
@@ -542,8 +557,14 @@ function ConversationChatPanelForPane({
             ...(nextCursor === undefined ? {} : { cursor: nextCursor }),
           });
           lastResult = result;
-          if (epoch !== requestEpochRef.current) {
+          if (
+            epoch !== requestEpochRef.current ||
+            requestedPaneIdentity !== conversationPaneIdentity(paneRef.current)
+          ) {
             return result;
+          }
+          if (result.type === 'page') {
+            readCapabilityIdentityRef.current = requestedPaneIdentity;
           }
           if (result.type === 'reset_required') {
             planBoundaryKnownRef.current = false;
@@ -649,26 +670,35 @@ function ConversationChatPanelForPane({
       return;
     }
     pollInFlightRef.current = true;
+    const epoch = requestEpochRef.current;
     try {
       const metadata = window.herdr.conversation.metadata;
       if (typeof metadata !== 'function') {
-        await read('newer');
+        await read('newer', undefined, epoch);
         return;
       }
       let result: ConversationReadResult;
       try {
         result = await metadata({ target: pane.pane_id });
       } catch {
+        if (epoch !== requestEpochRef.current) {
+          return;
+        }
         if (
           !isPreSessionConversationCapability(paneRef.current.conversation_capability) ||
-          storeRef.current.capability?.availability === 'supported'
+          (storeRef.current.capability?.availability === 'supported' &&
+            readCapabilityIdentityRef.current === conversationPaneIdentity(paneRef.current))
         ) {
-          await read('newer');
+          await read('newer', undefined, epoch);
         }
+        return;
+      }
+      if (epoch !== requestEpochRef.current) {
         return;
       }
       const current = storeRef.current;
       const needsRefresh =
+        readCapabilityIdentityRef.current !== conversationPaneIdentity(paneRef.current) ||
         result.type === 'reset_required' ||
         pendingRefreshRevisionRef.current !== undefined ||
         pendingPayloadDrainRef.current ||
@@ -677,7 +707,7 @@ function ConversationChatPanelForPane({
         current.session?.id !== result.page.session.id ||
         result.page.revision !== current.revision;
       if (needsRefresh) {
-        await read(result.type === 'reset_required' ? 'newest' : 'newer');
+        await read(result.type === 'reset_required' ? 'newest' : 'newer', undefined, epoch);
       }
     } finally {
       pollInFlightRef.current = false;
@@ -688,6 +718,9 @@ function ConversationChatPanelForPane({
     const epoch = ++requestEpochRef.current;
     readQueueRef.current = Promise.resolve();
     let cancelled = false;
+    if (readCapabilityIdentityRef.current !== paneIdentity) {
+      updateStore(() => createConversationStore(pane.pane_id));
+    }
     const initialCursor = storeRef.current.newerCursor;
     const initialDirection = initialCursor === undefined ? 'newest' : 'newer';
     setLoading(paneConversationReadable && storeRef.current.items.length === 0);
@@ -750,6 +783,7 @@ function ConversationChatPanelForPane({
     canProbeConversation,
     paneConversationReadable,
     pane.pane_id,
+    paneIdentity,
     pollConversation,
     read,
     updateStore,
@@ -831,7 +865,8 @@ function ConversationChatPanelForPane({
       setAttachments([]);
       if (
         paneRef.current.conversation_capability?.availability === 'supported' ||
-        storeRef.current.capability?.availability === 'supported'
+        (storeRef.current.capability?.availability === 'supported' &&
+          readCapabilityIdentityRef.current === conversationPaneIdentity(paneRef.current))
       ) {
         await read('newer', store.newerCursor);
       } else if (typeof window.herdr.conversation.metadata === 'function') {
