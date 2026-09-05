@@ -295,18 +295,16 @@ function ConversationChatPanelForPane({
   const planHistorySupported = pane.agent?.toLowerCase() !== 'claude';
   const paneWorking = pane.agent_status === 'working';
   const agentStarting = agentReadiness?.launch_pending === true;
-  const agentNeedsSetup =
-    !agentStarting && preSessionChat && agentReadiness?.interactive_ready === false && !paneWorking;
-  const promptBlocked = agentStarting || agentNeedsSetup;
+  // interactive_ready describes managed launches; unmanaged agents can accept
+  // prompts while it is false. The engine enforces runtime and permission checks.
+  const promptBlocked = agentStarting;
   const readinessMessage = agentStarting
     ? 'Agent is starting. Chat will be ready when launch completes.'
-    : agentNeedsSetup
-      ? 'The agent is not ready for prompts. Open Terminal to finish startup.'
-      : preSessionChat
-        ? store.pending.some((pending) => pending.status === 'syncing')
-          ? 'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.'
-          : 'No conversation transcript yet. Your first prompt will start the conversation.'
-        : undefined;
+    : preSessionChat
+      ? store.pending.some((pending) => pending.status === 'syncing')
+        ? 'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.'
+        : 'No conversation transcript yet. Your first prompt will start the conversation.'
+      : undefined;
   const [statusStartedMs, setStatusStartedMs] = useState<number | undefined>(() =>
     workingStartedMsByPane.get(pane.pane_id),
   );
