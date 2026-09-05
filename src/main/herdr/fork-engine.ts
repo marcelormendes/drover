@@ -16,24 +16,24 @@ import { dirname, join } from 'node:path';
  * yet and the install is refused.
  */
 export const PINNED_ENGINE = {
-  version: '0.8.6',
+  version: '0.8.7',
   repository: 'marcelormendes/herdr',
   assets: {
     'linux-x64': {
-      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.6/herdr-linux-x86_64',
-      sha256: '96368fd8819202623d5240becfd05dd399598568445346172d140e207eda9d8c',
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.7/herdr-linux-x86_64',
+      sha256: '8e91cd5860cb02b51dab48382c36401deea0e7b4e29013162c62b43ec8da051b',
     },
     'linux-arm64': {
-      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.6/herdr-linux-aarch64',
-      sha256: 'e7ae26708468e69130aa8b5a4afc20153f88d6cdc00bfc549d27d47c5b9293a1',
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.7/herdr-linux-aarch64',
+      sha256: '91766168cdf50ef23643d4e9cc8d216130060ad0e06222f2e21557ce93aaf895',
     },
     'darwin-x64': {
-      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.6/herdr-macos-x86_64',
-      sha256: '2a9ed1d69fd9a736790764dd6ef8859d7d537754749620edd7b1ae4268144f9f',
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.7/herdr-macos-x86_64',
+      sha256: 'e912af7212ca305897bf0bc20c4bf04c12a21318a7009286ae3fbf49318df0b3',
     },
     'darwin-arm64': {
-      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.6/herdr-macos-aarch64',
-      sha256: '9afedf84bb0a5c9222daeb33ad1a47daf8e31b55d8f743bb5d003a63b9162f13',
+      url: 'https://github.com/marcelormendes/herdr/releases/download/v0.8.7/herdr-macos-aarch64',
+      sha256: '7d93d1fc52599e3a85f934379d439f82886f4717ed6e3e875ad5dbdf0869e196',
     },
   },
 } as const;

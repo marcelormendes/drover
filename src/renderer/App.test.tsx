@@ -330,11 +330,6 @@ describe('App', () => {
     // Agents live under spaces in one rail, matching the Herdr TUI.
     const rail = screen.getByText('spaces').closest('aside');
     expect(screen.getByText('agents').closest('aside')).toBe(rail);
-    expect(container.querySelector('[data-slot="app-mark"]')).toHaveClass(
-      'shrink-0',
-      'shadow-none',
-      'text-main-foreground',
-    );
 
     const tabActions = container.querySelector('[data-slot="tab-actions"]');
     expect(tabActions).toHaveClass('ml-2', 'flex', 'items-center', 'gap-1');

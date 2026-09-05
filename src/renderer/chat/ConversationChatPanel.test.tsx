@@ -1050,7 +1050,7 @@ describe('ConversationChatPanel onboarding', () => {
       />,
     );
 
-    expect(await screen.findByLabelText('Drover')).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: 'Drover' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: label })).toBeInTheDocument();
     expect(
       within(document.querySelector('[data-slot="provider-welcome"]') as HTMLElement).getByText(

@@ -40,7 +40,6 @@ describe('Flatpak packaging contract', () => {
       `${FLATPAK_APP_ID}.desktop`,
       `${FLATPAK_APP_ID}.metainfo.xml`,
       'icon-512.png',
-      'icon.svg',
     ]) {
       const source = resolved.find(
         (candidate) => candidate.type === 'file' && candidate.path === file,
@@ -57,7 +56,6 @@ describe('Flatpak packaging contract', () => {
       `${FLATPAK_APP_ID}.desktop`,
       `${FLATPAK_APP_ID}.metainfo.xml`,
       'icon-512.png',
-      'icon.svg',
     ]);
     // The dir source must rename itself so the `cp -a flatpak-app/.` build
     // command sees a flatpak-app subdirectory in the module build root.
@@ -69,7 +67,6 @@ describe('Flatpak packaging contract', () => {
       `${FLATPAK_APP_ID}.desktop`,
       `${FLATPAK_APP_ID}.metainfo.xml`,
       'icon-512.png',
-      'icon.svg',
     ]) {
       expect(existsSync(path.join(ROOT, 'flatpak', file))).toBe(true);
     }

@@ -1,4 +1,4 @@
-import { Command, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -49,6 +49,7 @@ import {
 } from '@/shared/conversation';
 import type { HerdrEventEnvelope } from '@/shared/events';
 import type { AgentInfo, PaneInfo } from '@/shared/herdr';
+import droverIcon from '../../../resources/icon-1024.png';
 
 interface ComposerState {
   draft: string;
@@ -214,13 +215,7 @@ function ProviderWelcome({ pane, items }: { pane: PaneInfo; items: readonly Conv
   return (
     <section className="grid min-h-full place-items-center px-4 py-8" data-slot="provider-welcome">
       <div className="w-full max-w-lg rounded-base border-2 border-border bg-secondary-background p-6 shadow-shadow">
-        <div
-          role="img"
-          aria-label="Drover"
-          className="mx-auto mb-4 grid size-16 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-shadow"
-        >
-          <Command aria-hidden="true" className="size-8 stroke-[3]" />
-        </div>
+        <img src={droverIcon} alt="Drover" className="mx-auto mb-4 size-16 object-contain" />
         <div className="text-center">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Drover

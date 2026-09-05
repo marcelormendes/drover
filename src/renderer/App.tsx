@@ -7,7 +7,6 @@ import {
   ChevronUp,
   CircleAlert,
   CloudCog,
-  Command,
   Download,
   FolderGit2,
   GitBranch,
@@ -143,6 +142,7 @@ import {
 } from '@/shared/preferences';
 import type { RemoteEngineStatus } from '@/shared/remote-engine';
 import packageMetadata from '../../package.json';
+import droverIcon from '../../resources/icon-1024.png';
 
 const INSTALL_URL = 'https://github.com/herdrdev/herdr#installation';
 const currentPluginPlatform = pluginPlatformFromNavigator(navigator.platform, navigator.userAgent);
@@ -159,12 +159,7 @@ type PaneView = 'chat' | 'terminal';
 
 function AppMark() {
   return (
-    <div
-      className="grid size-8 shrink-0 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-none"
-      data-slot="app-mark"
-    >
-      <Command aria-hidden="true" className="size-4 stroke-[3]" />
-    </div>
+    <img src={droverIcon} alt="" className="size-8 shrink-0 object-contain" data-slot="app-mark" />
   );
 }
 

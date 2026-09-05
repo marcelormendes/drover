@@ -64,7 +64,7 @@ const config: ForgeConfig = {
     new MakerAppImage({
       options: {
         bin: APP_NAME,
-        icon: 'resources/icon.svg',
+        icon: 'resources/icon-1024.png',
         categories: ['Development', 'Utility'],
         // Vendored type-2 runtime (AppImage/type2-runtime, sha256
         // 1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf) so
