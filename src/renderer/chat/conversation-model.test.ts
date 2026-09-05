@@ -63,6 +63,46 @@ describe('conversation model', () => {
     expect(applyConversationRead(store, page([]), 'newer')).toBe(store);
   });
 
+  it('keeps unchanged replayed items and empty-page collections stable', () => {
+    const store = applyConversationRead(createConversationStore('w1:p1'), page([item(1)]));
+    const replayed = applyConversationRead(store, page([item(1)]));
+    expect(replayed.items).toBe(store.items);
+    expect(replayed.pending).toBe(store.pending);
+    const empty = page([], 'reader-1', 2);
+    expect(applyConversationRead(replayed, empty, 'newer').items).toBe(store.items);
+    const updated = applyConversationRead(replayed, page([item(1, 'item-1', 'updated')]));
+    expect(updated.items[0]).not.toBe(store.items[0]);
+  });
+
+  it('deduplicates items even if an existing id changes sequence', () => {
+    const store = applyConversationRead(createConversationStore('w1:p1'), page([item(1)]));
+    const updated = applyConversationRead(store, page([item(3, 'item-1'), item(2)]));
+    expect(updated.items.map(({ id }) => id)).toEqual(['item-2', 'item-1']);
+    const duplicate = applyConversationRead(updated, page([item(4), item(4)]));
+    expect(duplicate.items.map(({ id }) => id)).toEqual(['item-2', 'item-1', 'item-4']);
+  });
+
+  it('ends history at has_older false even if the page retains a cursor', () => {
+    const store = applyConversationRead(createConversationStore('w1:p1'), page([item(2)]));
+    const oldest = page([item(1)]);
+    const updated = applyConversationRead(
+      store,
+      { ...oldest, page: { ...oldest.page, has_older: false } },
+      'older',
+    );
+    expect(updated.olderCursor).toBeUndefined();
+    expect(updated.newerCursor).toBe(store.newerCursor);
+  });
+
+  it('does not merge items across different sessions with the same reader', () => {
+    const store = applyConversationRead(createConversationStore('w1:p1'), page([item(2)]));
+    const replacement = page([item(1)]);
+    replacement.page.session.id = 'replacement';
+    expect(applyConversationRead(store, replacement).items.map(({ sequence }) => sequence)).toEqual(
+      [1],
+    );
+  });
+
   it('resets before applying data from a changed reader generation', () => {
     let store = applyConversationRead(createConversationStore('w1:p1'), page([item(10)]));
     store = applyConversationRead(store, page([item(1)], 'reader-2', 1));

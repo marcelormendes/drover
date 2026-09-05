@@ -73,12 +73,12 @@ function compareBySequence(left: ConversationItem, right: ConversationItem): num
 function mergePageIntoItems(
   existing: readonly ConversationItem[],
   incoming: readonly ConversationItem[],
-): ConversationItem[] {
+): readonly ConversationItem[] {
   if (incoming.length === 0) {
-    return [...existing];
+    return existing;
   }
   if (existing.length === 0) {
-    return sortItems(incoming);
+    return sortItems(new Map(incoming.map((item) => [item.id, item])).values());
   }
   const existingById = new Map<string, ConversationItem>();
   for (const item of existing) {
@@ -87,17 +87,23 @@ function mergePageIntoItems(
   for (const item of incoming) {
     const previous = existingById.get(item.id);
     if (previous !== undefined && previous.sequence !== item.sequence) {
-      return sortItems([...existing, ...incoming]);
+      return sortItems(new Map([...existing, ...incoming].map((item) => [item.id, item])).values());
     }
   }
   const incomingById = new Map<string, ConversationItem>();
   for (const item of incoming) {
-    incomingById.set(item.id, item);
+    const previous = existingById.get(item.id);
+    incomingById.set(
+      item.id,
+      previous !== undefined && JSON.stringify(previous) === JSON.stringify(item) ? previous : item,
+    );
   }
   const replaced = existing.map((item) => incomingById.get(item.id) ?? item);
-  const brandNew = incoming.filter((item) => !existingById.has(item.id)).sort(compareBySequence);
+  const brandNew = [...incomingById.values()]
+    .filter((item) => !existingById.has(item.id))
+    .sort(compareBySequence);
   if (brandNew.length === 0) {
-    return replaced;
+    return replaced.every((item, index) => item === existing[index]) ? existing : replaced;
   }
   const merged: ConversationItem[] = [];
   let index = 0;
@@ -148,7 +154,9 @@ function replacePage(
 ): ConversationStore {
   const sameReader =
     store.readerGeneration === undefined || store.readerGeneration === page.reader_generation;
-  const canMergeExisting = sameReader && !store.resetRequired;
+  const sameSession = store.session === undefined || store.session.id === page.session.id;
+  const canMergeExisting = sameReader && sameSession && !store.resetRequired;
+  const previousCursor = page.has_older ? page.previous_cursor : undefined;
   // Optimistic echoes resolve once the durable transcript contains the same
   // user text (the engine's prompt submission queues before persisting).
   const pending = [...store.pending];
@@ -168,11 +176,10 @@ function replacePage(
   let olderCursor = canMergeExisting ? store.olderCursor : undefined;
   let newerCursor = canMergeExisting ? store.newerCursor : undefined;
   if (direction === 'newest') {
-    olderCursor =
-      canMergeExisting && store.items.length > 0 ? store.olderCursor : page.previous_cursor;
+    olderCursor = canMergeExisting && store.items.length > 0 ? store.olderCursor : previousCursor;
     newerCursor = page.next_cursor;
   } else if (direction === 'older') {
-    olderCursor = page.previous_cursor;
+    olderCursor = previousCursor;
   } else {
     newerCursor = page.next_cursor;
   }
@@ -202,7 +209,7 @@ function replacePage(
     readerGeneration: page.reader_generation,
     capability: page.capability,
     items: mergePageIntoItems(canMergeExisting ? store.items : [], incoming),
-    pending: canMergeExisting ? pending : store.pending,
+    pending: canMergeExisting && pending.length !== store.pending.length ? pending : store.pending,
     revision: canMergeExisting ? Math.max(store.revision, page.revision) : page.revision,
     olderCursor,
     newerCursor,

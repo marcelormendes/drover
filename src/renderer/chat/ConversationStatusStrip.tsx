@@ -40,15 +40,16 @@ export const ConversationStatusStrip = ({ pane }: ConversationStatusStripProps) 
 const metadataSegments = (pane: PaneInfo): StatusSegment[] => {
   const tokens = pane.tokens ?? {};
   const segments: StatusSegment[] = [];
-  const model = tokens.model;
-  const thinking = tokens.thinking;
+  const model = nonemptyToken(tokens.model);
+  const thinking = nonemptyToken(tokens.thinking);
   if (model || thinking) {
     segments.push({
       id: 'model',
       text: [model, thinking].filter(Boolean).join(' · '),
     });
   }
-  const cwd = tokens.cwd;
+  const cwd =
+    nonemptyToken(tokens.cwd) ?? nonemptyToken(pane.foreground_cwd) ?? nonemptyToken(pane.cwd);
   if (cwd) {
     segments.push({ id: 'cwd', text: compactPath(cwd), title: cwd });
   }
@@ -63,17 +64,29 @@ const metadataSegments = (pane: PaneInfo): StatusSegment[] => {
     segments.push({ id: 'context', text: context });
   }
 
+  const usageScope = tokens.usage_scope;
+  if (usageScope === 'last_response' || usageScope === 'session') {
+    segments.push({
+      id: 'usage-scope',
+      text: usageScope === 'last_response' ? 'last response' : 'session usage',
+    });
+  }
   const input = numericToken(tokens.input_tokens);
-  if (input && input > 0) {
+  if (input !== undefined) {
     segments.push({ id: 'input', text: `in ${formatCompactNumber(input)}` });
   }
   const output = numericToken(tokens.output_tokens);
-  if (output && output > 0) {
+  if (output !== undefined) {
     segments.push({ id: 'output', text: `out ${formatCompactNumber(output)}` });
   }
   const cacheRead = numericToken(tokens.cache_read_tokens);
-  if (cacheRead && cacheRead > 0) {
+  if (cacheRead !== undefined) {
     segments.push({ id: 'cache', text: `cache ${formatCompactNumber(cacheRead)}` });
+  }
+
+  const cacheWrite = numericToken(tokens.cache_write_tokens);
+  if (cacheWrite !== undefined) {
+    segments.push({ id: 'cache-write', text: `cache write ${formatCompactNumber(cacheWrite)}` });
   }
 
   const billing = billingSegment(tokens);
@@ -84,7 +97,7 @@ const metadataSegments = (pane: PaneInfo): StatusSegment[] => {
 };
 
 const gitSegment = (tokens: Record<string, string>): StatusSegment | undefined => {
-  const branch = tokens.git_branch;
+  const branch = nonemptyToken(tokens.git_branch);
   const unstaged = numericToken(tokens.git_unstaged) ?? 0;
   const staged = numericToken(tokens.git_staged) ?? 0;
   const untracked = numericToken(tokens.git_untracked) ?? 0;
@@ -109,11 +122,17 @@ const gitSegment = (tokens: Record<string, string>): StatusSegment | undefined =
 };
 
 const contextSegment = (tokens: Record<string, string>): string | undefined => {
-  const percent = numericToken(tokens.context_percent);
+  const reportedPercent = numericToken(tokens.context_percent);
   const used = numericToken(tokens.context_tokens);
   const window = numericToken(tokens.context_window);
+  const percent =
+    reportedPercent ??
+    (used !== undefined && window && window > 0 ? (used / window) * 100 : undefined);
   if (window && window > 0) {
     return `${percent === undefined ? '?' : `${percent.toFixed(1)}%`}/${formatCompactNumber(window)}`;
+  }
+  if (percent !== undefined) {
+    return `${percent.toFixed(1)}% context`;
   }
   return used === undefined ? undefined : `${formatCompactNumber(used)}/?`;
 };
@@ -121,7 +140,7 @@ const contextSegment = (tokens: Record<string, string>): string | undefined => {
 const billingSegment = (tokens: Record<string, string>): string | undefined => {
   const parts: string[] = [];
   const cost = numericToken(tokens.cost);
-  if (cost && cost > 0) {
+  if (cost !== undefined) {
     parts.push(`$${cost.toFixed(2)}`);
   }
   const premiumRequests = numericToken(tokens.premium_requests);
@@ -134,8 +153,10 @@ const billingSegment = (tokens: Record<string, string>): string | undefined => {
   return parts.length > 0 ? parts.join(' ') : undefined;
 };
 
+const nonemptyToken = (value: string | undefined): string | undefined => value?.trim() || undefined;
+
 const numericToken = (value: string | undefined): number | undefined => {
-  if (value === undefined || value.length === 0) {
+  if (value === undefined || value.trim().length === 0) {
     return undefined;
   }
   const number = Number(value);

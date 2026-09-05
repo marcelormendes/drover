@@ -20,11 +20,6 @@ const BUILD_SCRIPT = path.join(ROOT, 'scripts', 'build-flatpak.mjs');
 const CI_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'ci.yml');
 const RELEASE_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'release.yml');
 
-const flatpakBuilderAvailable =
-  spawnSync('sh', ['-c', 'command -v flatpak-builder'], {
-    stdio: 'ignore',
-  }).status === 0;
-
 describe('Flatpak packaging contract', () => {
   it('pins the application ID, branch, runtime, and bundle name', () => {
     expect(FLATPAK_APP_ID).toBe('io.github.marcelormendes.drover');
@@ -156,14 +151,16 @@ describe('Flatpak packaging contract', () => {
     }
   });
 
-  it('invokes the build through the CLI entry point (missing-tool failure proves main runs)', {
-    skip: flatpakBuilderAvailable,
-  }, () => {
+  it('runs CLI prerequisite checks before attempting to build', () => {
     const result = spawnSync(process.execPath, [BUILD_SCRIPT], {
       encoding: 'utf8',
-      env: { ...process.env, HOME: process.env.HOME },
+      env: { ...process.env, PATH: '' },
     });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('flatpak-builder is required');
+    expect(result.stderr).toContain(
+      process.arch === 'x64'
+        ? 'flatpak-builder is required'
+        : `Flatpak bundles are built for x86_64; this machine is ${process.arch}.`,
+    );
   });
 });

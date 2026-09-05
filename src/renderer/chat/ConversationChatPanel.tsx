@@ -48,7 +48,7 @@ import {
   isPreSessionConversationCapability,
 } from '@/shared/conversation';
 import type { HerdrEventEnvelope } from '@/shared/events';
-import type { PaneInfo } from '@/shared/herdr';
+import type { AgentInfo, PaneInfo } from '@/shared/herdr';
 
 interface ComposerState {
   draft: string;
@@ -105,6 +105,7 @@ export function pruneConversationChatState(activePaneIds: readonly string[]): vo
 
 interface ConversationChatPanelProps {
   pane: PaneInfo;
+  agentReadiness?: Pick<AgentInfo, 'launch_pending' | 'interactive_ready'>;
   onOpenTerminal?: () => void;
   visible?: boolean;
 }
@@ -241,6 +242,7 @@ export function ConversationChatPanel(props: ConversationChatPanelProps) {
 
 function ConversationChatPanelForPane({
   pane,
+  agentReadiness,
   onOpenTerminal,
   visible = true,
 }: ConversationChatPanelProps) {
@@ -268,6 +270,19 @@ function ConversationChatPanelForPane({
   const conversationReadable = capability?.availability === 'supported';
   const planHistorySupported = pane.agent?.toLowerCase() !== 'claude';
   const paneWorking = pane.agent_status === 'working';
+  const agentStarting = agentReadiness?.launch_pending === true;
+  const agentNeedsSetup =
+    !agentStarting && preSessionChat && agentReadiness?.interactive_ready === false && !paneWorking;
+  const promptBlocked = agentStarting || agentNeedsSetup;
+  const readinessMessage = agentStarting
+    ? 'Agent is starting. Chat will be ready when launch completes.'
+    : agentNeedsSetup
+      ? 'The agent is not ready for prompts. Open Terminal to finish startup.'
+      : preSessionChat
+        ? store.pending.some((pending) => pending.status === 'syncing')
+          ? 'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.'
+          : 'No conversation transcript yet. Your first prompt will start the conversation.'
+        : undefined;
   const [statusStartedMs, setStatusStartedMs] = useState<number | undefined>(() =>
     workingStartedMsByPane.get(pane.pane_id),
   );
@@ -297,9 +312,15 @@ function ConversationChatPanelForPane({
   const wasVisibleRef = useRef(visible);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
-  const olderAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(undefined);
+  const [olderAnchor, setOlderAnchor] = useState<{ scrollHeight: number; scrollTop: number }>();
   const slashMenuId = useId();
-  storeRef.current = store;
+  const updateStore = useCallback((update: (current: ConversationStore) => ConversationStore) => {
+    // Queued reads can settle before React commits. Advance their shared cursor
+    // immediately so the next request does not replay the page just received.
+    const next = update(storeRef.current);
+    storeRef.current = next;
+    setStore(next);
+  }, []);
   const composerStateRef = useRef<ComposerState>({
     draft,
     attachments,
@@ -476,7 +497,9 @@ function ConversationChatPanelForPane({
     (direction: 'newest' | 'older' | 'newer', cursor?: string, epoch = requestEpochRef.current) => {
       const run = async () => {
         let requestedDirection = direction;
-        let nextCursor = cursor;
+        // Plan backfill and the history button share this queue. Resolve the
+        // history boundary when the request starts, after earlier reads apply.
+        let nextCursor = direction === 'older' ? storeRef.current.olderCursor : cursor;
         let lastResult: ConversationReadResult | undefined;
         for (;;) {
           if (epoch !== requestEpochRef.current) {
@@ -487,6 +510,9 @@ function ConversationChatPanelForPane({
               requestedDirection === 'newer'
                 ? storeRef.current.newerCursor
                 : storeRef.current.olderCursor;
+          }
+          if (requestedDirection === 'older' && nextCursor === undefined) {
+            return lastResult;
           }
           const effectiveDirection =
             nextCursor === undefined && requestedDirection !== 'newest'
@@ -512,7 +538,18 @@ function ConversationChatPanelForPane({
           } else if (effectiveDirection === 'newest') {
             planBoundaryKnownRef.current = false;
           }
-          setStore((current) => applyConversationRead(current, result, effectiveDirection));
+          if (effectiveDirection === 'older' && result.type === 'page') {
+            const viewport = scrollViewportRef.current;
+            // Capture the current viewport only once the queued history read
+            // returns: live output or user scrolling may have moved it meanwhile.
+            if (viewport && !followLatestRef.current) {
+              setOlderAnchor({
+                scrollHeight: viewport.scrollHeight,
+                scrollTop: viewport.scrollTop,
+              });
+            }
+          }
+          updateStore((current) => applyConversationRead(current, result, effectiveDirection));
           if (result.type === 'reset_required' && effectiveDirection !== 'newest') {
             requestedDirection = 'newest';
             nextCursor = undefined;
@@ -546,7 +583,7 @@ function ConversationChatPanelForPane({
       );
       return queued;
     },
-    [pane.pane_id, wakePlanHydration],
+    [pane.pane_id, updateStore, wakePlanHydration],
   );
   const hydratePlanHistory = useCallback(async (): Promise<boolean> => {
     const epoch = requestEpochRef.current;
@@ -566,7 +603,7 @@ function ConversationChatPanelForPane({
       if (result?.type !== 'page') {
         return false;
       }
-      cursor = result.page.previous_cursor;
+      cursor = result.page.has_older ? result.page.previous_cursor : undefined;
       if (
         cursor !== undefined &&
         pagesRead % PLAN_HISTORY_REFRESH_INTERVAL === 0 &&
@@ -655,7 +692,7 @@ function ConversationChatPanelForPane({
       if (!changed) {
         return;
       }
-      setStore((current) => applyConversationChanged(current, changed));
+      updateStore((current) => applyConversationChanged(current, changed));
       pendingRefreshRevisionRef.current = changed.reset_required
         ? 0
         : Math.max(pendingRefreshRevisionRef.current ?? 0, changed.revision);
@@ -683,7 +720,7 @@ function ConversationChatPanelForPane({
       unsubscribe();
       void window.herdr.conversation.unsubscribe(pane.pane_id).catch(() => undefined);
     };
-  }, [conversationReadable, pane.pane_id, pollConversation, read]);
+  }, [conversationReadable, pane.pane_id, pollConversation, read, updateStore]);
   useEffect(() => {
     const wasVisible = wasVisibleRef.current;
     wasVisibleRef.current = visible;
@@ -694,7 +731,7 @@ function ConversationChatPanelForPane({
 
   const send = async (retry?: { id: string; text: string }) => {
     const text = retry?.text ?? draft.trim();
-    if ((!text && attachments.length === 0) || sending) {
+    if ((!text && attachments.length === 0) || sending || promptBlocked) {
       return;
     }
     const submittedStartedMs = workingStartedMsByPane.get(pane.pane_id) ?? Date.now();
@@ -710,7 +747,7 @@ function ConversationChatPanelForPane({
     }));
     const pendingId = retry?.id ?? `pending:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     if (retry) {
-      setStore((current) => ({
+      updateStore((current) => ({
         ...current,
         pending: current.pending.map((pending) =>
           pending.id === pendingId ? { ...pending, status: 'queued' } : pending,
@@ -719,7 +756,7 @@ function ConversationChatPanelForPane({
     } else {
       // Optimistic echo: the engine queues the prompt before Pi persists it,
       // so show the message and image previews immediately as queued.
-      setStore((current) => ({
+      updateStore((current) => ({
         ...current,
         pending: [
           ...current.pending,
@@ -740,7 +777,7 @@ function ConversationChatPanelForPane({
         text,
         ...(staged.length === 0 ? {} : { attachments: staged.map((handle) => ({ handle })) }),
       });
-      setStore((current) => ({
+      updateStore((current) => ({
         ...current,
         pending: current.pending.map((pending) =>
           pending.id === pendingId ? { ...pending, status: 'syncing' } : pending,
@@ -765,7 +802,7 @@ function ConversationChatPanelForPane({
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'Could not send prompt.');
       if (text) {
-        setStore((current) => ({
+        updateStore((current) => ({
           ...current,
           pending: current.pending.map((pending) =>
             pending.id === pendingId ? { ...pending, status: 'failed' } : pending,
@@ -790,6 +827,9 @@ function ConversationChatPanelForPane({
   // before its transcript exposes a started turn, so pane state fills only
   // that gap and never overrides a settled latest turn without new activity.
   const activeWork = useMemo(() => {
+    if (agentStarting || (!conversationReadable && !paneWorking)) {
+      return null;
+    }
     const plan = latestPlanUpdate(store.items);
     let latestState: Extract<ConversationItem, { type: 'turn_state' }> | undefined;
     let latestStateIndex = -1;
@@ -832,7 +872,11 @@ function ConversationChatPanelForPane({
       }
     }
     const pendingTurn = store.pending.some((pending) => pending.status !== 'failed');
-    if (pendingTurn || sending) {
+    if (
+      sending ||
+      store.pending.some((pending) => pending.status === 'queued') ||
+      (pendingTurn && paneWorking)
+    ) {
       return {
         startedMs: statusStartedMs,
         plan,
@@ -867,7 +911,15 @@ function ConversationChatPanelForPane({
       startedMs: statusStartedMs,
       plan,
     };
-  }, [paneWorking, sending, statusStartedMs, store.items, store.pending]);
+  }, [
+    agentStarting,
+    conversationReadable,
+    paneWorking,
+    sending,
+    statusStartedMs,
+    store.items,
+    store.pending,
+  ]);
   const hasActiveWork = activeWork !== null;
   useEffect(() => {
     const canHydrate = visible && planHistorySupported && conversationReadable && hasActiveWork;
@@ -980,10 +1032,10 @@ function ConversationChatPanelForPane({
 
   useLayoutEffect(() => {
     const viewport = scrollViewportRef.current;
-    const anchor = olderAnchorRef.current;
+    const anchor = olderAnchor;
     if (viewport && anchor) {
       viewport.scrollTop = anchor.scrollTop + viewport.scrollHeight - anchor.scrollHeight;
-      olderAnchorRef.current = undefined;
+      setOlderAnchor(undefined);
       return;
     }
     if (!viewport || !followLatestRef.current || items.length + store.pending.length === 0) {
@@ -1000,7 +1052,7 @@ function ConversationChatPanelForPane({
     scrollToLatest();
     const frame = window.requestAnimationFrame(scrollToLatest);
     return () => window.cancelAnimationFrame(frame);
-  }, [items, store.pending]);
+  }, [olderAnchor, items, store.pending]);
 
   // Follow-latest scroll accompaniment: keep the observer attached for the life
   // of the content element instead of tearing it down and recreating it on every
@@ -1039,16 +1091,13 @@ function ConversationChatPanelForPane({
     setLoadingOlder(true);
     const viewport = scrollViewportRef.current;
     if (viewport) {
-      olderAnchorRef.current = {
-        scrollHeight: viewport.scrollHeight,
-        scrollTop: viewport.scrollTop,
-      };
       followLatestRef.current = false;
     }
     try {
-      await read('older', storeRef.current.olderCursor);
+      setError(undefined);
+      await read('older');
     } catch (reason) {
-      olderAnchorRef.current = undefined;
+      setOlderAnchor(undefined);
       setError(reason instanceof Error ? reason.message : 'Could not load older history.');
     } finally {
       loadingOlderRef.current = false;
@@ -1128,6 +1177,19 @@ function ConversationChatPanelForPane({
         </span>
         <span>{items.length} items</span>
       </div>
+      {readinessMessage ? (
+        <div
+          className="rounded-base border-2 border-border bg-secondary-background p-3 text-sm"
+          data-slot="chat-readiness"
+        >
+          <p>{readinessMessage}</p>
+          {onOpenTerminal ? (
+            <Button className="mt-2" type="button" variant="neutral" onClick={onOpenTerminal}>
+              Open Terminal
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {store.resetRequired ? (
         <div className="rounded-base border-2 border-border bg-secondary-background p-2 text-xs">
           Conversation changed. Reloading the current session…
@@ -1135,7 +1197,7 @@ function ConversationChatPanelForPane({
       ) : null}
       {error ? <div className="text-xs text-destructive">{error}</div> : null}
       <ScrollArea
-        className="min-h-0 flex-1"
+        className="min-h-0 flex-1 [overflow-anchor:none]"
         viewportRef={scrollViewportRef}
         onViewportScroll={handleViewportScroll}
       >
@@ -1176,13 +1238,18 @@ function ConversationChatPanelForPane({
                     pending.status === 'failed' ? 'text-destructive' : 'text-main',
                   )}
                 >
-                  <span className="motion-safe:animate-pulse" aria-hidden="true">
+                  <span
+                    className={conversationReadable ? 'motion-safe:animate-pulse' : undefined}
+                    aria-hidden="true"
+                  >
                     ●
                   </span>
                   {pending.status === 'failed'
                     ? 'Failed'
                     : pending.status === 'syncing'
-                      ? 'Syncing'
+                      ? conversationReadable
+                        ? 'Syncing'
+                        : 'Sent · transcript unavailable'
                       : 'Queued'}
                 </span>
               </div>
@@ -1204,7 +1271,7 @@ function ConversationChatPanelForPane({
                   className="mt-2"
                   type="button"
                   variant="neutral"
-                  disabled={sending}
+                  disabled={sending || promptBlocked}
                   onClick={() => {
                     followLatestRef.current = true;
                     void send(pending);
@@ -1265,7 +1332,7 @@ function ConversationChatPanelForPane({
                 <Button
                   aria-label={`Remove ${attachment.name}`}
                   className="size-7"
-                  disabled={sending}
+                  disabled={sending || promptBlocked}
                   onClick={() => removeAttachment(attachment.id)}
                   size="icon"
                   variant="neutral"
@@ -1323,7 +1390,7 @@ function ConversationChatPanelForPane({
             aria-haspopup="listbox"
             aria-label="Chat prompt"
             value={draft}
-            disabled={sending}
+            disabled={sending || promptBlocked}
             onChange={(event) => {
               setDraft(event.target.value);
               setSlashMenuSelectedIndex(0);
@@ -1371,7 +1438,9 @@ function ConversationChatPanelForPane({
         <div className="flex justify-end">
           <Button
             type="submit"
-            disabled={sending || (draft.trim().length === 0 && attachments.length === 0)}
+            disabled={
+              sending || promptBlocked || (draft.trim().length === 0 && attachments.length === 0)
+            }
           >
             {sending ? 'Sending…' : 'Send'}
           </Button>

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -134,6 +134,45 @@ describe('ConversationChatPanel', () => {
     expect(screen.getByText('answer 2')).toBeInTheDocument();
     expect(screen.getByText('answer 3')).toBeInTheDocument();
   });
+  it('advances queued live reads before React commits their pages', async () => {
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([item(1)], 'cursor-1'))
+      .mockResolvedValueOnce(page([], 'cursor-2'))
+      .mockResolvedValueOnce(page([], 'cursor-3'));
+    let onEvent: ((event: { event: string; data: Record<string, unknown> }) => void) | undefined;
+    window.herdr = {
+      conversation: {
+        read,
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+      },
+      onSessionEvent: vi.fn((callback) => {
+        onEvent = callback;
+        return () => undefined;
+      }),
+    } as unknown as Window['herdr'];
+    render(<ConversationChatPanel pane={pane('w1:p1')} />);
+    await screen.findByText('answer 1');
+    await act(async () => {
+      for (const revision of [2, 3]) {
+        onEvent?.({
+          event: 'agent.conversation_changed',
+          data: {
+            pane_id: 'w1:p1',
+            workspace_id: 'w1',
+            session: { id: 'session-1' },
+            reader_generation: 'generation-1',
+            revision,
+            reset_required: false,
+          },
+        });
+      }
+    });
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenNthCalledWith(3, expect.objectContaining({ cursor: 'cursor-2' }));
+  });
+
   it('retries a failed newer drain even when metadata revision is unchanged', async () => {
     vi.useFakeTimers();
     try {
@@ -690,7 +729,11 @@ describe('ConversationChatPanel onboarding', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Claude Code' })).toBeInTheDocument();
-    expect(screen.getByText('/code/new-workspace')).toBeInTheDocument();
+    expect(
+      within(document.querySelector('[data-slot="provider-welcome"]') as HTMLElement).getByText(
+        '/code/new-workspace',
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText('Provider default')).toBeInTheDocument();
     expect(read).not.toHaveBeenCalled();
 
@@ -708,6 +751,93 @@ describe('ConversationChatPanel onboarding', () => {
       }),
     );
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [true, false, 'Agent is starting. Chat will be ready when launch completes.'],
+    [false, false, 'The agent is not ready for prompts. Open Terminal to finish startup.'],
+  ])(
+    'blocks first prompts until startup is ready (%s, %s)',
+    async (launchPending, interactiveReady, message) => {
+      const prompt = vi.fn(async () => ({}));
+      window.herdr = {
+        conversation: {
+          read: vi.fn(),
+          prompt,
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+        },
+        onSessionEvent: vi.fn(() => () => undefined),
+      } as unknown as Window['herdr'];
+      const initialPane = pane('w1:p1', {
+        conversation_capability: { availability: 'unavailable', reason: 'no_session' },
+      });
+      const openTerminal = vi.fn();
+      const view = render(
+        <ConversationChatPanel
+          pane={initialPane}
+          agentReadiness={{ launch_pending: launchPending, interactive_ready: interactiveReady }}
+          onOpenTerminal={openTerminal}
+        />,
+      );
+      const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+      expect(input).toBeDisabled();
+      expect(screen.getByText(message)).toBeInTheDocument();
+      fireEvent.change(input, { target: { value: 'first prompt' } });
+      fireEvent.submit(input.closest('form') as HTMLFormElement);
+      expect(prompt).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
+      expect(openTerminal).toHaveBeenCalledOnce();
+
+      view.rerender(
+        <ConversationChatPanel
+          pane={initialPane}
+          agentReadiness={{ launch_pending: false, interactive_ready: true }}
+        />,
+      );
+      expect(input).toBeEnabled();
+      fireEvent.submit(input.closest('form') as HTMLFormElement);
+      await waitFor(() => expect(prompt).toHaveBeenCalledOnce());
+      expect(await screen.findByText('Sent · transcript unavailable')).toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    },
+  );
+
+  it('keeps a ready first prompt usable while explaining the missing transcript', async () => {
+    const prompt = vi.fn(async () => ({}));
+    window.herdr = {
+      conversation: {
+        read: vi.fn(),
+        prompt,
+        subscribe: vi.fn(async () => undefined),
+        unsubscribe: vi.fn(async () => undefined),
+      },
+      onSessionEvent: vi.fn(() => () => undefined),
+    } as unknown as Window['herdr'];
+    render(
+      <ConversationChatPanel
+        pane={pane('w1:p1', {
+          conversation_capability: { availability: 'unavailable', reason: 'transcript_missing' },
+        })}
+        agentReadiness={{ launch_pending: false, interactive_ready: true }}
+      />,
+    );
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    expect(input).toBeEnabled();
+    expect(
+      screen.getByText(
+        'No conversation transcript yet. Your first prompt will start the conversation.',
+      ),
+    ).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'create transcript' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('Sent · transcript unavailable')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it.each([
@@ -748,7 +878,11 @@ describe('ConversationChatPanel onboarding', () => {
 
     expect(await screen.findByLabelText('Drover')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: label })).toBeInTheDocument();
-    expect(screen.getByText(`/code/${agent}`)).toBeInTheDocument();
+    expect(
+      within(document.querySelector('[data-slot="provider-welcome"]') as HTMLElement).getByText(
+        `/code/${agent}`,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('hides Claude local commands and uses their selected model in the welcome', async () => {
@@ -806,7 +940,11 @@ describe('ConversationChatPanel onboarding', () => {
 
     expect(await screen.findByRole('heading', { name: 'Claude Code' })).toBeInTheDocument();
     expect(screen.getByText('Fable 5')).toBeInTheDocument();
-    expect(screen.getByText('/code/claude-project')).toBeInTheDocument();
+    expect(
+      within(document.querySelector('[data-slot="provider-welcome"]') as HTMLElement).getByText(
+        '/code/claude-project',
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/command-name/)).not.toBeInTheDocument();
     expect(screen.queryByText(/local-command-stdout/)).not.toBeInTheDocument();
   });

@@ -129,7 +129,13 @@ import {
   type PluginActionInfo,
 } from '@/shared/desktop-api';
 import type { HerdrEventConnectionState } from '@/shared/events';
-import type { EngineBootstrap, PaneInfo, PaneLayoutSnapshot, WorkspaceInfo } from '@/shared/herdr';
+import type {
+  AgentInfo,
+  EngineBootstrap,
+  PaneInfo,
+  PaneLayoutSnapshot,
+  WorkspaceInfo,
+} from '@/shared/herdr';
 import {
   DEFAULT_DESKTOP_PREFERENCES,
   DEFAULT_REMOTE_ENGINE_PREFERENCE,
@@ -776,6 +782,7 @@ function PersistentTerminalSurface({ pane, visible }: { pane: PaneInfo; visible:
 }
 
 function PaneStage({
+  agents,
   pane,
   panes,
   layout,
@@ -792,6 +799,7 @@ function PaneStage({
   viewByPane,
   onViewChange,
 }: {
+  agents: AgentInfo[];
   pane?: PaneInfo;
   panes: PaneInfo[];
   layout?: PaneLayoutSnapshot;
@@ -1007,6 +1015,7 @@ function PaneStage({
                   style={{ display: view === 'chat' ? 'contents' : 'none' }}
                 >
                   <ConversationChatPanel
+                    agentReadiness={agents.find((agent) => agent.pane_id === item.pane_id)}
                     onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
                     pane={item}
                     visible={view === 'chat'}
@@ -1655,6 +1664,7 @@ function ConnectedShell({
               </div>
             </div>
             <PaneStage
+              agents={agents}
               busy={busy}
               layout={layout}
               onViewChange={(paneId, view) =>
