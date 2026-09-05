@@ -1533,8 +1533,12 @@ function ConversationChatPanelForPane({
             className={cn('min-h-20 resize-y')}
           />
         </div>
-        <div className="flex justify-end">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <ConversationStatusStrip pane={pane} />
+          </div>
           <Button
+            className="shrink-0"
             type="submit"
             disabled={
               sending || promptBlocked || (draft.trim().length === 0 && attachments.length === 0)
@@ -1543,7 +1547,6 @@ function ConversationChatPanelForPane({
             {sending ? 'Sending…' : 'Send'}
           </Button>
         </div>
-        <ConversationStatusStrip pane={pane} />
       </form>
       <span className="sr-only">Current turn: {itemText(items)}</span>
     </div>
