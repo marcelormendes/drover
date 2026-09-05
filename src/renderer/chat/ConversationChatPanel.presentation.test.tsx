@@ -1078,7 +1078,9 @@ describe('ConversationChatPanel approval and delivery states', () => {
       vi.restoreAllMocks();
     }
   });
-  it('settles a fast reply without pane working events and keeps a new follow-up active', async () => {
+  it('settles a fast reply without pane working events and starts a fresh follow-up timer', async () => {
+    let now = 1_800_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     const user: ConversationItem = {
       id: 'durable',
       sequence: 1,
@@ -1112,10 +1114,11 @@ describe('ConversationChatPanel approval and delivery states', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(await screen.findByText('Fast answer')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    now += 120_000;
     fireEvent.change(input, { target: { value: 'keep going' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
-    expect(screen.getByRole('status')).toHaveTextContent('Working');
+    expect(screen.getByRole('status')).toHaveTextContent('Working for 0S');
   });
 
   it('clears the optimistic Working timer when a resumed native session changes identity', async () => {

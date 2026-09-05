@@ -1015,6 +1015,18 @@ function ConversationChatPanelForPane({
   ]);
   const hasActiveWork = activeWork !== null;
   useEffect(() => {
+    if (
+      !hasActiveWork &&
+      !paneWorking &&
+      !sending &&
+      !store.pending.some((pending) => pending.status !== 'failed') &&
+      statusStartedMs !== undefined
+    ) {
+      workingStartedMsByPane.delete(pane.pane_id);
+      setStatusStartedMs(undefined);
+    }
+  }, [hasActiveWork, pane.pane_id, paneWorking, sending, statusStartedMs, store.pending]);
+  useEffect(() => {
     const canHydrate = visible && planHistorySupported && conversationReadable && hasActiveWork;
     const wasAllowed = planHydrationAllowedRef.current;
     if (!canHydrate) {
