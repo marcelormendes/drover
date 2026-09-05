@@ -697,6 +697,115 @@ describe('ConversationChatPanel', () => {
 });
 
 describe('ConversationChatPanel onboarding', () => {
+  it.each(['no_session', 'transcript_missing'] as const)(
+    'discovers the first transcript while the pane snapshot still says %s',
+    async (reason) => {
+      vi.useFakeTimers();
+      try {
+        const read = vi
+          .fn<Window['herdr']['conversation']['read']>()
+          .mockResolvedValue(pageEnd([item(1)]));
+        const metadata = vi
+          .fn<NonNullable<Window['herdr']['conversation']['metadata']>>()
+          .mockRejectedValueOnce(new Error('transcript not created yet'))
+          .mockResolvedValue(pageEnd([item(1)]));
+        window.herdr = {
+          conversation: {
+            read,
+            metadata,
+            prompt: vi.fn(),
+            subscribe: vi.fn(async () => undefined),
+            unsubscribe: vi.fn(async () => undefined),
+          },
+          onSessionEvent: vi.fn(() => () => undefined),
+        } as unknown as Window['herdr'];
+        const initialPane = pane('w1:p1', {
+          conversation_capability: { availability: 'unavailable', reason },
+        });
+        render(<ConversationChatPanel pane={initialPane} />);
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(metadata).toHaveBeenCalledTimes(1);
+        expect(read).not.toHaveBeenCalled();
+        expect(
+          screen.getByText(
+            'No conversation transcript yet. Your first prompt will start the conversation.',
+          ),
+        ).toBeInTheDocument();
+        await act(async () => {
+          vi.advanceTimersByTime(1_500);
+          await Promise.resolve();
+        });
+        expect(screen.getByText('answer 1')).toBeInTheDocument();
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(
+          screen.queryByText(
+            'No conversation transcript yet. Your first prompt will start the conversation.',
+          ),
+        ).not.toBeInTheDocument();
+        await act(async () => {
+          vi.advanceTimersByTime(1_500);
+          await Promise.resolve();
+        });
+        expect(read).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('probes missing transcripts only when visible and never probes unsupported providers', async () => {
+    vi.useFakeTimers();
+    try {
+      const read = vi
+        .fn<Window['herdr']['conversation']['read']>()
+        .mockResolvedValue(pageEnd([item(1)]));
+      const metadata = vi
+        .fn<NonNullable<Window['herdr']['conversation']['metadata']>>()
+        .mockResolvedValue(pageEnd([item(1)]));
+      window.herdr = {
+        conversation: {
+          read,
+          metadata,
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+        },
+        onSessionEvent: vi.fn(() => () => undefined),
+      } as unknown as Window['herdr'];
+      const initialPane = pane('w1:p1', {
+        conversation_capability: { availability: 'unavailable', reason: 'transcript_missing' },
+      });
+      const view = render(<ConversationChatPanel pane={initialPane} visible={false} />);
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+        await Promise.resolve();
+      });
+      expect(metadata).not.toHaveBeenCalled();
+      view.rerender(<ConversationChatPanel pane={initialPane} visible />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText('answer 1')).toBeInTheDocument();
+      expect(metadata).toHaveBeenCalledTimes(1);
+      view.rerender(
+        <ConversationChatPanel
+          pane={pane('w1:p1', {
+            conversation_capability: { availability: 'unsupported', reason: 'adapter_missing' },
+          })}
+        />,
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+        await Promise.resolve();
+      });
+      expect(metadata).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Structured Chat is unavailable for this pane.')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('shows a provider welcome and sends the first prompt before a session exists', async () => {
     const read = vi.fn<Window['herdr']['conversation']['read']>();
     const prompt = vi.fn(async () => ({}));

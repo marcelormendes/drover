@@ -265,7 +265,21 @@ function ConversationChatPanelForPane({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const [planHydrationRetry, setPlanHydrationRetry] = useState(0);
-  const capability = pane.conversation_capability;
+  const paneCapability = pane.conversation_capability;
+  const paneConversationReadable = paneCapability?.availability === 'supported';
+  const canProbeConversation =
+    paneConversationReadable || isPreSessionConversationCapability(paneCapability);
+  // A successful read is newer evidence than the pane snapshot that was
+  // captured before the provider created its first transcript.
+  const discoveredSessionMatches =
+    (!pane.conversation_session || pane.conversation_session.id === store.session?.id) &&
+    (!pane.agent || pane.agent.toLowerCase() === store.provider);
+  const capability =
+    isPreSessionConversationCapability(paneCapability) &&
+    discoveredSessionMatches &&
+    store.capability?.availability === 'supported'
+      ? store.capability
+      : paneCapability;
   const preSessionChat = isPreSessionConversationCapability(capability);
   const conversationReadable = capability?.availability === 'supported';
   const planHistorySupported = pane.agent?.toLowerCase() !== 'claude';
@@ -645,7 +659,12 @@ function ConversationChatPanelForPane({
       try {
         result = await metadata({ target: pane.pane_id });
       } catch {
-        await read('newer');
+        if (
+          !isPreSessionConversationCapability(paneRef.current.conversation_capability) ||
+          storeRef.current.capability?.availability === 'supported'
+        ) {
+          await read('newer');
+        }
         return;
       }
       const current = storeRef.current;
@@ -671,9 +690,9 @@ function ConversationChatPanelForPane({
     let cancelled = false;
     const initialCursor = storeRef.current.newerCursor;
     const initialDirection = initialCursor === undefined ? 'newest' : 'newer';
-    setLoading(conversationReadable && storeRef.current.items.length === 0);
+    setLoading(paneConversationReadable && storeRef.current.items.length === 0);
     setError(undefined);
-    if (conversationReadable) {
+    if (paneConversationReadable) {
       void read(initialDirection, initialCursor, epoch)
         .catch((reason: unknown) => {
           if (!cancelled) {
@@ -685,6 +704,12 @@ function ConversationChatPanelForPane({
             setLoading(false);
           }
         });
+    } else if (
+      canProbeConversation &&
+      visibleRef.current &&
+      typeof window.herdr.conversation.metadata === 'function'
+    ) {
+      void pollConversation().catch(() => undefined);
     }
     void window.herdr.conversation.subscribe(pane.pane_id).catch(() => undefined);
     const unsubscribe = window.herdr.onSessionEvent((event) => {
@@ -703,7 +728,8 @@ function ConversationChatPanelForPane({
     const livePoll = window.setInterval(() => {
       if (
         visibleRef.current &&
-        paneRef.current.conversation_capability?.availability === 'supported'
+        (paneRef.current.conversation_capability?.availability === 'supported' ||
+          isPreSessionConversationCapability(paneRef.current.conversation_capability))
       ) {
         void pollConversation().catch(() => undefined);
       }
@@ -720,14 +746,21 @@ function ConversationChatPanelForPane({
       unsubscribe();
       void window.herdr.conversation.unsubscribe(pane.pane_id).catch(() => undefined);
     };
-  }, [conversationReadable, pane.pane_id, pollConversation, read, updateStore]);
+  }, [
+    canProbeConversation,
+    paneConversationReadable,
+    pane.pane_id,
+    pollConversation,
+    read,
+    updateStore,
+  ]);
   useEffect(() => {
     const wasVisible = wasVisibleRef.current;
     wasVisibleRef.current = visible;
-    if (!wasVisible && visible && conversationReadable) {
+    if (!wasVisible && visible && canProbeConversation) {
       void pollConversation().catch(() => undefined);
     }
-  }, [conversationReadable, pollConversation, visible]);
+  }, [canProbeConversation, pollConversation, visible]);
 
   const send = async (retry?: { id: string; text: string }) => {
     const text = retry?.text ?? draft.trim();
@@ -796,8 +829,13 @@ function ConversationChatPanelForPane({
         attachmentNotice: undefined,
       });
       setAttachments([]);
-      if (paneRef.current.conversation_capability?.availability === 'supported') {
+      if (
+        paneRef.current.conversation_capability?.availability === 'supported' ||
+        storeRef.current.capability?.availability === 'supported'
+      ) {
         await read('newer', store.newerCursor);
+      } else if (typeof window.herdr.conversation.metadata === 'function') {
+        void pollConversation().catch(() => undefined);
       }
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'Could not send prompt.');
