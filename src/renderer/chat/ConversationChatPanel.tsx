@@ -1,4 +1,4 @@
-import { Command, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -48,7 +48,8 @@ import {
   isPreSessionConversationCapability,
 } from '@/shared/conversation';
 import type { HerdrEventEnvelope } from '@/shared/events';
-import type { PaneInfo } from '@/shared/herdr';
+import type { AgentInfo, PaneInfo } from '@/shared/herdr';
+import droverIcon from '../../../resources/icon-1024.png';
 
 interface ComposerState {
   draft: string;
@@ -105,6 +106,7 @@ export function pruneConversationChatState(activePaneIds: readonly string[]): vo
 
 interface ConversationChatPanelProps {
   pane: PaneInfo;
+  agentReadiness?: Pick<AgentInfo, 'launch_pending' | 'interactive_ready'>;
   onOpenTerminal?: () => void;
   visible?: boolean;
 }
@@ -124,6 +126,17 @@ function eventForPane(event: HerdrEventEnvelope, paneId: string) {
   }
   const changed = decodeConversationChangedEvent(event.data);
   return changed?.pane_id === paneId ? changed : null;
+}
+
+function conversationPaneIdentity(pane: PaneInfo): string {
+  return JSON.stringify([
+    pane.pane_id,
+    pane.agent,
+    pane.conversation_session?.id,
+    pane.agent_session?.source,
+    pane.agent_session?.kind,
+    pane.agent_session?.value,
+  ]);
 }
 
 const PROVIDER_NAME_BY_AGENT: Record<string, string> = {
@@ -202,13 +215,7 @@ function ProviderWelcome({ pane, items }: { pane: PaneInfo; items: readonly Conv
   return (
     <section className="grid min-h-full place-items-center px-4 py-8" data-slot="provider-welcome">
       <div className="w-full max-w-lg rounded-base border-2 border-border bg-secondary-background p-6 shadow-shadow">
-        <div
-          role="img"
-          aria-label="Drover"
-          className="mx-auto mb-4 grid size-16 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-shadow"
-        >
-          <Command aria-hidden="true" className="size-8 stroke-[3]" />
-        </div>
+        <img src={droverIcon} alt="Drover" className="mx-auto mb-4 size-16 object-contain" />
         <div className="text-center">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Drover
@@ -241,6 +248,7 @@ export function ConversationChatPanel(props: ConversationChatPanelProps) {
 
 function ConversationChatPanelForPane({
   pane,
+  agentReadiness,
   onOpenTerminal,
   visible = true,
 }: ConversationChatPanelProps) {
@@ -263,11 +271,42 @@ function ConversationChatPanelForPane({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const [planHydrationRetry, setPlanHydrationRetry] = useState(0);
-  const capability = pane.conversation_capability;
+  const paneIdentity = conversationPaneIdentity(pane);
+  const readCapabilityIdentityRef = useRef(savedStore ? paneIdentity : undefined);
+  const workingIdentityRef = useRef(paneIdentity);
+  const paneCapability = pane.conversation_capability;
+  const paneConversationReadable = paneCapability?.availability === 'supported';
+  const canProbeConversation =
+    paneConversationReadable || isPreSessionConversationCapability(paneCapability);
+  // A successful read is newer evidence than the pane snapshot that was
+  // captured before the provider created its first transcript.
+  const discoveredSessionMatches =
+    readCapabilityIdentityRef.current === paneIdentity &&
+    (!pane.conversation_session || pane.conversation_session.id === store.session?.id) &&
+    (!pane.agent || pane.agent.toLowerCase() === store.provider);
+  const capability =
+    isPreSessionConversationCapability(paneCapability) &&
+    discoveredSessionMatches &&
+    store.capability?.availability === 'supported'
+      ? store.capability
+      : paneCapability;
   const preSessionChat = isPreSessionConversationCapability(capability);
   const conversationReadable = capability?.availability === 'supported';
   const planHistorySupported = pane.agent?.toLowerCase() !== 'claude';
   const paneWorking = pane.agent_status === 'working';
+  const agentStarting = agentReadiness?.launch_pending === true;
+  const agentNeedsSetup =
+    !agentStarting && preSessionChat && agentReadiness?.interactive_ready === false && !paneWorking;
+  const promptBlocked = agentStarting || agentNeedsSetup;
+  const readinessMessage = agentStarting
+    ? 'Agent is starting. Chat will be ready when launch completes.'
+    : agentNeedsSetup
+      ? 'The agent is not ready for prompts. Open Terminal to finish startup.'
+      : preSessionChat
+        ? store.pending.some((pending) => pending.status === 'syncing')
+          ? 'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.'
+          : 'No conversation transcript yet. Your first prompt will start the conversation.'
+        : undefined;
   const [statusStartedMs, setStatusStartedMs] = useState<number | undefined>(() =>
     workingStartedMsByPane.get(pane.pane_id),
   );
@@ -297,9 +336,15 @@ function ConversationChatPanelForPane({
   const wasVisibleRef = useRef(visible);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
-  const olderAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(undefined);
+  const [olderAnchor, setOlderAnchor] = useState<{ scrollHeight: number; scrollTop: number }>();
   const slashMenuId = useId();
-  storeRef.current = store;
+  const updateStore = useCallback((update: (current: ConversationStore) => ConversationStore) => {
+    // Queued reads can settle before React commits. Advance their shared cursor
+    // immediately so the next request does not replay the page just received.
+    const next = update(storeRef.current);
+    storeRef.current = next;
+    setStore(next);
+  }, []);
   const composerStateRef = useRef<ComposerState>({
     draft,
     attachments,
@@ -348,6 +393,10 @@ function ConversationChatPanelForPane({
   }, [pane.pane_id, store.items, store.pending]);
 
   useEffect(() => {
+    if (workingIdentityRef.current !== paneIdentity) {
+      workingStartedMsByPane.delete(pane.pane_id);
+      workingIdentityRef.current = paneIdentity;
+    }
     if (!paneWorking) {
       workingStartedMsByPane.delete(pane.pane_id);
       setStatusStartedMs(undefined);
@@ -356,7 +405,7 @@ function ConversationChatPanelForPane({
     const startedMs = workingStartedMsByPane.get(pane.pane_id) ?? Date.now();
     workingStartedMsByPane.set(pane.pane_id, startedMs);
     setStatusStartedMs(startedMs);
-  }, [pane.pane_id, paneWorking]);
+  }, [pane.pane_id, paneIdentity, paneWorking]);
 
   const addAttachments = useCallback((files: File[]) => {
     if (files.length === 0) {
@@ -476,7 +525,9 @@ function ConversationChatPanelForPane({
     (direction: 'newest' | 'older' | 'newer', cursor?: string, epoch = requestEpochRef.current) => {
       const run = async () => {
         let requestedDirection = direction;
-        let nextCursor = cursor;
+        // Plan backfill and the history button share this queue. Resolve the
+        // history boundary when the request starts, after earlier reads apply.
+        let nextCursor = direction === 'older' ? storeRef.current.olderCursor : cursor;
         let lastResult: ConversationReadResult | undefined;
         for (;;) {
           if (epoch !== requestEpochRef.current) {
@@ -488,6 +539,9 @@ function ConversationChatPanelForPane({
                 ? storeRef.current.newerCursor
                 : storeRef.current.olderCursor;
           }
+          if (requestedDirection === 'older' && nextCursor === undefined) {
+            return lastResult;
+          }
           const effectiveDirection =
             nextCursor === undefined && requestedDirection !== 'newest'
               ? 'newest'
@@ -495,6 +549,7 @@ function ConversationChatPanelForPane({
           if (effectiveDirection !== 'older') {
             pendingPayloadDrainRef.current = true;
           }
+          const requestedPaneIdentity = conversationPaneIdentity(paneRef.current);
           const result = await window.herdr.conversation.read({
             target: pane.pane_id,
             direction: effectiveDirection,
@@ -502,8 +557,14 @@ function ConversationChatPanelForPane({
             ...(nextCursor === undefined ? {} : { cursor: nextCursor }),
           });
           lastResult = result;
-          if (epoch !== requestEpochRef.current) {
+          if (
+            epoch !== requestEpochRef.current ||
+            requestedPaneIdentity !== conversationPaneIdentity(paneRef.current)
+          ) {
             return result;
+          }
+          if (result.type === 'page') {
+            readCapabilityIdentityRef.current = requestedPaneIdentity;
           }
           if (result.type === 'reset_required') {
             planBoundaryKnownRef.current = false;
@@ -512,7 +573,18 @@ function ConversationChatPanelForPane({
           } else if (effectiveDirection === 'newest') {
             planBoundaryKnownRef.current = false;
           }
-          setStore((current) => applyConversationRead(current, result, effectiveDirection));
+          if (effectiveDirection === 'older' && result.type === 'page') {
+            const viewport = scrollViewportRef.current;
+            // Capture the current viewport only once the queued history read
+            // returns: live output or user scrolling may have moved it meanwhile.
+            if (viewport && !followLatestRef.current) {
+              setOlderAnchor({
+                scrollHeight: viewport.scrollHeight,
+                scrollTop: viewport.scrollTop,
+              });
+            }
+          }
+          updateStore((current) => applyConversationRead(current, result, effectiveDirection));
           if (result.type === 'reset_required' && effectiveDirection !== 'newest') {
             requestedDirection = 'newest';
             nextCursor = undefined;
@@ -546,7 +618,7 @@ function ConversationChatPanelForPane({
       );
       return queued;
     },
-    [pane.pane_id, wakePlanHydration],
+    [pane.pane_id, updateStore, wakePlanHydration],
   );
   const hydratePlanHistory = useCallback(async (): Promise<boolean> => {
     const epoch = requestEpochRef.current;
@@ -566,7 +638,7 @@ function ConversationChatPanelForPane({
       if (result?.type !== 'page') {
         return false;
       }
-      cursor = result.page.previous_cursor;
+      cursor = result.page.has_older ? result.page.previous_cursor : undefined;
       if (
         cursor !== undefined &&
         pagesRead % PLAN_HISTORY_REFRESH_INTERVAL === 0 &&
@@ -598,21 +670,35 @@ function ConversationChatPanelForPane({
       return;
     }
     pollInFlightRef.current = true;
+    const epoch = requestEpochRef.current;
     try {
       const metadata = window.herdr.conversation.metadata;
       if (typeof metadata !== 'function') {
-        await read('newer');
+        await read('newer', undefined, epoch);
         return;
       }
       let result: ConversationReadResult;
       try {
         result = await metadata({ target: pane.pane_id });
       } catch {
-        await read('newer');
+        if (epoch !== requestEpochRef.current) {
+          return;
+        }
+        if (
+          !isPreSessionConversationCapability(paneRef.current.conversation_capability) ||
+          (storeRef.current.capability?.availability === 'supported' &&
+            readCapabilityIdentityRef.current === conversationPaneIdentity(paneRef.current))
+        ) {
+          await read('newer', undefined, epoch);
+        }
+        return;
+      }
+      if (epoch !== requestEpochRef.current) {
         return;
       }
       const current = storeRef.current;
       const needsRefresh =
+        readCapabilityIdentityRef.current !== conversationPaneIdentity(paneRef.current) ||
         result.type === 'reset_required' ||
         pendingRefreshRevisionRef.current !== undefined ||
         pendingPayloadDrainRef.current ||
@@ -621,7 +707,7 @@ function ConversationChatPanelForPane({
         current.session?.id !== result.page.session.id ||
         result.page.revision !== current.revision;
       if (needsRefresh) {
-        await read(result.type === 'reset_required' ? 'newest' : 'newer');
+        await read(result.type === 'reset_required' ? 'newest' : 'newer', undefined, epoch);
       }
     } finally {
       pollInFlightRef.current = false;
@@ -632,11 +718,14 @@ function ConversationChatPanelForPane({
     const epoch = ++requestEpochRef.current;
     readQueueRef.current = Promise.resolve();
     let cancelled = false;
+    if (readCapabilityIdentityRef.current !== paneIdentity) {
+      updateStore(() => createConversationStore(pane.pane_id));
+    }
     const initialCursor = storeRef.current.newerCursor;
     const initialDirection = initialCursor === undefined ? 'newest' : 'newer';
-    setLoading(conversationReadable && storeRef.current.items.length === 0);
+    setLoading(paneConversationReadable && storeRef.current.items.length === 0);
     setError(undefined);
-    if (conversationReadable) {
+    if (paneConversationReadable) {
       void read(initialDirection, initialCursor, epoch)
         .catch((reason: unknown) => {
           if (!cancelled) {
@@ -648,6 +737,12 @@ function ConversationChatPanelForPane({
             setLoading(false);
           }
         });
+    } else if (
+      canProbeConversation &&
+      visibleRef.current &&
+      typeof window.herdr.conversation.metadata === 'function'
+    ) {
+      void pollConversation().catch(() => undefined);
     }
     void window.herdr.conversation.subscribe(pane.pane_id).catch(() => undefined);
     const unsubscribe = window.herdr.onSessionEvent((event) => {
@@ -655,7 +750,7 @@ function ConversationChatPanelForPane({
       if (!changed) {
         return;
       }
-      setStore((current) => applyConversationChanged(current, changed));
+      updateStore((current) => applyConversationChanged(current, changed));
       pendingRefreshRevisionRef.current = changed.reset_required
         ? 0
         : Math.max(pendingRefreshRevisionRef.current ?? 0, changed.revision);
@@ -666,7 +761,8 @@ function ConversationChatPanelForPane({
     const livePoll = window.setInterval(() => {
       if (
         visibleRef.current &&
-        paneRef.current.conversation_capability?.availability === 'supported'
+        (paneRef.current.conversation_capability?.availability === 'supported' ||
+          isPreSessionConversationCapability(paneRef.current.conversation_capability))
       ) {
         void pollConversation().catch(() => undefined);
       }
@@ -683,18 +779,26 @@ function ConversationChatPanelForPane({
       unsubscribe();
       void window.herdr.conversation.unsubscribe(pane.pane_id).catch(() => undefined);
     };
-  }, [conversationReadable, pane.pane_id, pollConversation, read]);
+  }, [
+    canProbeConversation,
+    paneConversationReadable,
+    pane.pane_id,
+    paneIdentity,
+    pollConversation,
+    read,
+    updateStore,
+  ]);
   useEffect(() => {
     const wasVisible = wasVisibleRef.current;
     wasVisibleRef.current = visible;
-    if (!wasVisible && visible && conversationReadable) {
+    if (!wasVisible && visible && canProbeConversation) {
       void pollConversation().catch(() => undefined);
     }
-  }, [conversationReadable, pollConversation, visible]);
+  }, [canProbeConversation, pollConversation, visible]);
 
   const send = async (retry?: { id: string; text: string }) => {
     const text = retry?.text ?? draft.trim();
-    if ((!text && attachments.length === 0) || sending) {
+    if ((!text && attachments.length === 0) || sending || promptBlocked) {
       return;
     }
     const submittedStartedMs = workingStartedMsByPane.get(pane.pane_id) ?? Date.now();
@@ -710,7 +814,7 @@ function ConversationChatPanelForPane({
     }));
     const pendingId = retry?.id ?? `pending:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     if (retry) {
-      setStore((current) => ({
+      updateStore((current) => ({
         ...current,
         pending: current.pending.map((pending) =>
           pending.id === pendingId ? { ...pending, status: 'queued' } : pending,
@@ -719,7 +823,7 @@ function ConversationChatPanelForPane({
     } else {
       // Optimistic echo: the engine queues the prompt before Pi persists it,
       // so show the message and image previews immediately as queued.
-      setStore((current) => ({
+      updateStore((current) => ({
         ...current,
         pending: [
           ...current.pending,
@@ -740,7 +844,7 @@ function ConversationChatPanelForPane({
         text,
         ...(staged.length === 0 ? {} : { attachments: staged.map((handle) => ({ handle })) }),
       });
-      setStore((current) => ({
+      updateStore((current) => ({
         ...current,
         pending: current.pending.map((pending) =>
           pending.id === pendingId ? { ...pending, status: 'syncing' } : pending,
@@ -759,13 +863,19 @@ function ConversationChatPanelForPane({
         attachmentNotice: undefined,
       });
       setAttachments([]);
-      if (paneRef.current.conversation_capability?.availability === 'supported') {
+      if (
+        paneRef.current.conversation_capability?.availability === 'supported' ||
+        (storeRef.current.capability?.availability === 'supported' &&
+          readCapabilityIdentityRef.current === conversationPaneIdentity(paneRef.current))
+      ) {
         await read('newer', store.newerCursor);
+      } else if (typeof window.herdr.conversation.metadata === 'function') {
+        void pollConversation().catch(() => undefined);
       }
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'Could not send prompt.');
       if (text) {
-        setStore((current) => ({
+        updateStore((current) => ({
           ...current,
           pending: current.pending.map((pending) =>
             pending.id === pendingId ? { ...pending, status: 'failed' } : pending,
@@ -790,6 +900,9 @@ function ConversationChatPanelForPane({
   // before its transcript exposes a started turn, so pane state fills only
   // that gap and never overrides a settled latest turn without new activity.
   const activeWork = useMemo(() => {
+    if (agentStarting || (!conversationReadable && !paneWorking)) {
+      return null;
+    }
     const plan = latestPlanUpdate(store.items);
     let latestState: Extract<ConversationItem, { type: 'turn_state' }> | undefined;
     let latestStateIndex = -1;
@@ -832,7 +945,11 @@ function ConversationChatPanelForPane({
       }
     }
     const pendingTurn = store.pending.some((pending) => pending.status !== 'failed');
-    if (pendingTurn || sending) {
+    if (
+      sending ||
+      store.pending.some((pending) => pending.status === 'queued') ||
+      (pendingTurn && paneWorking)
+    ) {
       return {
         startedMs: statusStartedMs,
         plan,
@@ -845,6 +962,7 @@ function ConversationChatPanelForPane({
       };
     }
     let activeTurnId: string | undefined;
+    let activeUserIndex = -1;
     for (let index = store.items.length - 1; index > latestStateIndex; index -= 1) {
       const item = store.items[index];
       if (
@@ -854,10 +972,24 @@ function ConversationChatPanelForPane({
         item.turn_id !== latestState?.turn_id
       ) {
         activeTurnId = item.turn_id;
+        activeUserIndex = index;
         break;
       }
     }
-    if (!paneWorking && (activeTurnId === undefined || statusStartedMs === undefined)) {
+    const activeTurnAnswered =
+      activeUserIndex >= 0 &&
+      store.items
+        .slice(activeUserIndex + 1)
+        .some(
+          (item) =>
+            item.type === 'assistant_message' &&
+            item.phase === 'final' &&
+            item.turn_id === activeTurnId,
+        );
+    if (
+      !paneWorking &&
+      (activeTurnAnswered || activeTurnId === undefined || statusStartedMs === undefined)
+    ) {
       return null;
     }
     if (latestState && !pendingTurn && !activeTurnId) {
@@ -867,8 +999,28 @@ function ConversationChatPanelForPane({
       startedMs: statusStartedMs,
       plan,
     };
-  }, [paneWorking, sending, statusStartedMs, store.items, store.pending]);
+  }, [
+    agentStarting,
+    conversationReadable,
+    paneWorking,
+    sending,
+    statusStartedMs,
+    store.items,
+    store.pending,
+  ]);
   const hasActiveWork = activeWork !== null;
+  useEffect(() => {
+    if (
+      !hasActiveWork &&
+      !paneWorking &&
+      !sending &&
+      !store.pending.some((pending) => pending.status !== 'failed') &&
+      statusStartedMs !== undefined
+    ) {
+      workingStartedMsByPane.delete(pane.pane_id);
+      setStatusStartedMs(undefined);
+    }
+  }, [hasActiveWork, pane.pane_id, paneWorking, sending, statusStartedMs, store.pending]);
   useEffect(() => {
     const canHydrate = visible && planHistorySupported && conversationReadable && hasActiveWork;
     const wasAllowed = planHydrationAllowedRef.current;
@@ -980,10 +1132,10 @@ function ConversationChatPanelForPane({
 
   useLayoutEffect(() => {
     const viewport = scrollViewportRef.current;
-    const anchor = olderAnchorRef.current;
+    const anchor = olderAnchor;
     if (viewport && anchor) {
       viewport.scrollTop = anchor.scrollTop + viewport.scrollHeight - anchor.scrollHeight;
-      olderAnchorRef.current = undefined;
+      setOlderAnchor(undefined);
       return;
     }
     if (!viewport || !followLatestRef.current || items.length + store.pending.length === 0) {
@@ -1000,7 +1152,7 @@ function ConversationChatPanelForPane({
     scrollToLatest();
     const frame = window.requestAnimationFrame(scrollToLatest);
     return () => window.cancelAnimationFrame(frame);
-  }, [items, store.pending]);
+  }, [olderAnchor, items, store.pending]);
 
   // Follow-latest scroll accompaniment: keep the observer attached for the life
   // of the content element instead of tearing it down and recreating it on every
@@ -1039,16 +1191,13 @@ function ConversationChatPanelForPane({
     setLoadingOlder(true);
     const viewport = scrollViewportRef.current;
     if (viewport) {
-      olderAnchorRef.current = {
-        scrollHeight: viewport.scrollHeight,
-        scrollTop: viewport.scrollTop,
-      };
       followLatestRef.current = false;
     }
     try {
-      await read('older', storeRef.current.olderCursor);
+      setError(undefined);
+      await read('older');
     } catch (reason) {
-      olderAnchorRef.current = undefined;
+      setOlderAnchor(undefined);
       setError(reason instanceof Error ? reason.message : 'Could not load older history.');
     } finally {
       loadingOlderRef.current = false;
@@ -1128,6 +1277,19 @@ function ConversationChatPanelForPane({
         </span>
         <span>{items.length} items</span>
       </div>
+      {readinessMessage ? (
+        <div
+          className="rounded-base border-2 border-border bg-secondary-background p-3 text-sm"
+          data-slot="chat-readiness"
+        >
+          <p>{readinessMessage}</p>
+          {onOpenTerminal ? (
+            <Button className="mt-2" type="button" variant="neutral" onClick={onOpenTerminal}>
+              Open Terminal
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {store.resetRequired ? (
         <div className="rounded-base border-2 border-border bg-secondary-background p-2 text-xs">
           Conversation changed. Reloading the current session…
@@ -1135,7 +1297,7 @@ function ConversationChatPanelForPane({
       ) : null}
       {error ? <div className="text-xs text-destructive">{error}</div> : null}
       <ScrollArea
-        className="min-h-0 flex-1"
+        className="min-h-0 flex-1 [overflow-anchor:none]"
         viewportRef={scrollViewportRef}
         onViewportScroll={handleViewportScroll}
       >
@@ -1176,13 +1338,18 @@ function ConversationChatPanelForPane({
                     pending.status === 'failed' ? 'text-destructive' : 'text-main',
                   )}
                 >
-                  <span className="motion-safe:animate-pulse" aria-hidden="true">
+                  <span
+                    className={conversationReadable ? 'motion-safe:animate-pulse' : undefined}
+                    aria-hidden="true"
+                  >
                     ●
                   </span>
                   {pending.status === 'failed'
                     ? 'Failed'
                     : pending.status === 'syncing'
-                      ? 'Syncing'
+                      ? conversationReadable
+                        ? 'Syncing'
+                        : 'Sent · transcript unavailable'
                       : 'Queued'}
                 </span>
               </div>
@@ -1204,7 +1371,7 @@ function ConversationChatPanelForPane({
                   className="mt-2"
                   type="button"
                   variant="neutral"
-                  disabled={sending}
+                  disabled={sending || promptBlocked}
                   onClick={() => {
                     followLatestRef.current = true;
                     void send(pending);
@@ -1265,7 +1432,7 @@ function ConversationChatPanelForPane({
                 <Button
                   aria-label={`Remove ${attachment.name}`}
                   className="size-7"
-                  disabled={sending}
+                  disabled={sending || promptBlocked}
                   onClick={() => removeAttachment(attachment.id)}
                   size="icon"
                   variant="neutral"
@@ -1323,7 +1490,7 @@ function ConversationChatPanelForPane({
             aria-haspopup="listbox"
             aria-label="Chat prompt"
             value={draft}
-            disabled={sending}
+            disabled={sending || promptBlocked}
             onChange={(event) => {
               setDraft(event.target.value);
               setSlashMenuSelectedIndex(0);
@@ -1371,7 +1538,9 @@ function ConversationChatPanelForPane({
         <div className="flex justify-end">
           <Button
             type="submit"
-            disabled={sending || (draft.trim().length === 0 && attachments.length === 0)}
+            disabled={
+              sending || promptBlocked || (draft.trim().length === 0 && attachments.length === 0)
+            }
           >
             {sending ? 'Sending…' : 'Send'}
           </Button>

@@ -1137,8 +1137,7 @@ describe('HerdrEngine.update', () => {
 
     expect(result).toMatchObject({
       updated: false,
-      message:
-        'No pinned Herdr engine release for linux-x64; install the official Herdr engine instead.',
+      message: `No pinned Herdr engine release for ${process.platform}-${process.arch}; install the official Herdr engine instead.`,
     });
     expect(installPinnedEngineBinary).not.toHaveBeenCalled();
   });

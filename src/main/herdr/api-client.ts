@@ -60,7 +60,7 @@ export class HerdrApiClient {
 
     return new Promise((resolve, reject) => {
       const socket = createConnection(socketPath);
-      let buffer = '';
+      const chunks: string[] = [];
       let settled = false;
 
       const finish = (callback: () => void) => {
@@ -82,15 +82,21 @@ export class HerdrApiClient {
       socket.once('connect', () => {
         socket.write(`${JSON.stringify({ id: requestId, method, params })}\n`);
       });
-      socket.on('data', (chunk) => {
-        buffer += chunk;
-        const newline = buffer.indexOf('\n');
-        if (newline === -1) {
+      socket.on('data', (chunk: string) => {
+        if (settled) {
           return;
         }
+        // Search each fragment once; rescanning the accumulated response makes
+        // large, fragmented conversation pages quadratic in their byte length.
+        const newline = chunk.indexOf('\n');
+        if (newline === -1) {
+          chunks.push(chunk);
+          return;
+        }
+        chunks.push(chunk.slice(0, newline));
 
         try {
-          const envelope = parseEnvelope(buffer.slice(0, newline), requestId);
+          const envelope = parseEnvelope(chunks.join(''), requestId);
           if ('error' in envelope) {
             finish(() => reject(new HerdrApiError(envelope.error.code, envelope.error.message)));
           } else {

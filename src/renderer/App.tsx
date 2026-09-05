@@ -7,7 +7,6 @@ import {
   ChevronUp,
   CircleAlert,
   CloudCog,
-  Command,
   Download,
   FolderGit2,
   GitBranch,
@@ -129,7 +128,13 @@ import {
   type PluginActionInfo,
 } from '@/shared/desktop-api';
 import type { HerdrEventConnectionState } from '@/shared/events';
-import type { EngineBootstrap, PaneInfo, PaneLayoutSnapshot, WorkspaceInfo } from '@/shared/herdr';
+import type {
+  AgentInfo,
+  EngineBootstrap,
+  PaneInfo,
+  PaneLayoutSnapshot,
+  WorkspaceInfo,
+} from '@/shared/herdr';
 import {
   DEFAULT_DESKTOP_PREFERENCES,
   DEFAULT_REMOTE_ENGINE_PREFERENCE,
@@ -137,6 +142,7 @@ import {
 } from '@/shared/preferences';
 import type { RemoteEngineStatus } from '@/shared/remote-engine';
 import packageMetadata from '../../package.json';
+import droverIcon from '../../resources/icon-1024.png';
 
 const INSTALL_URL = 'https://github.com/herdrdev/herdr#installation';
 const currentPluginPlatform = pluginPlatformFromNavigator(navigator.platform, navigator.userAgent);
@@ -153,12 +159,7 @@ type PaneView = 'chat' | 'terminal';
 
 function AppMark() {
   return (
-    <div
-      className="grid size-8 shrink-0 place-items-center rounded-base border-2 border-border bg-main text-main-foreground shadow-none"
-      data-slot="app-mark"
-    >
-      <Command aria-hidden="true" className="size-4 stroke-[3]" />
-    </div>
+    <img src={droverIcon} alt="" className="size-8 shrink-0 object-contain" data-slot="app-mark" />
   );
 }
 
@@ -776,6 +777,7 @@ function PersistentTerminalSurface({ pane, visible }: { pane: PaneInfo; visible:
 }
 
 function PaneStage({
+  agents,
   pane,
   panes,
   layout,
@@ -792,6 +794,7 @@ function PaneStage({
   viewByPane,
   onViewChange,
 }: {
+  agents: AgentInfo[];
   pane?: PaneInfo;
   panes: PaneInfo[];
   layout?: PaneLayoutSnapshot;
@@ -1007,6 +1010,7 @@ function PaneStage({
                   style={{ display: view === 'chat' ? 'contents' : 'none' }}
                 >
                   <ConversationChatPanel
+                    agentReadiness={agents.find((agent) => agent.pane_id === item.pane_id)}
                     onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
                     pane={item}
                     visible={view === 'chat'}
@@ -1655,6 +1659,7 @@ function ConnectedShell({
               </div>
             </div>
             <PaneStage
+              agents={agents}
               busy={busy}
               layout={layout}
               onViewChange={(paneId, view) =>

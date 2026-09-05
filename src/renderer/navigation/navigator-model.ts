@@ -31,8 +31,7 @@ function count(total: number, noun: string): string {
   return `${total} ${noun}${total === 1 ? '' : 's'}`;
 }
 
-function queryMatches(query: string, values: Array<string | undefined>): boolean {
-  const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+function queryMatches(words: string[], values: Array<string | undefined>): boolean {
   if (words.length === 0) {
     return true;
   }
@@ -49,6 +48,19 @@ export function buildNavigatorRows(
   options: { query: string; filter: NavigatorFilter },
 ): NavigatorRow[] {
   const rows: NavigatorRow[] = [];
+  const queryWords = options.query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  const tabsByWorkspace = new Map<string, SessionSnapshot['tabs']>();
+  const panesByTab = new Map<string, SessionSnapshot['panes']>();
+  for (const tab of snapshot.tabs) {
+    const siblings = tabsByWorkspace.get(tab.workspace_id);
+    if (siblings) siblings.push(tab);
+    else tabsByWorkspace.set(tab.workspace_id, [tab]);
+  }
+  for (const pane of snapshot.panes) {
+    const siblings = panesByTab.get(pane.tab_id);
+    if (siblings) siblings.push(pane);
+    else panesByTab.set(pane.tab_id, [pane]);
+  }
   const workspaces = [...snapshot.workspaces].sort((left, right) =>
     compareNumberThenId(left, right, left.workspace_id, right.workspace_id),
   );
@@ -66,7 +78,7 @@ export function buildNavigatorRows(
       matched: false,
       workspaceId: workspace.workspace_id,
     };
-    const workspaceQueryMatches = queryMatches(options.query, [
+    const workspaceQueryMatches = queryMatches(queryWords, [
       workspace.workspace_id,
       workspace.label,
       ...Object.values(workspace.tokens),
@@ -75,9 +87,9 @@ export function buildNavigatorRows(
       workspaceQueryMatches && statusMatches(workspaceRow.status, options.filter);
 
     const workspaceDescendants: NavigatorRow[] = [];
-    const tabs = snapshot.tabs
-      .filter((tab) => tab.workspace_id === workspace.workspace_id)
-      .sort((left, right) => compareNumberThenId(left, right, left.tab_id, right.tab_id));
+    const tabs = (tabsByWorkspace.get(workspace.workspace_id) ?? []).sort((left, right) =>
+      compareNumberThenId(left, right, left.tab_id, right.tab_id),
+    );
 
     for (const tab of tabs) {
       const tabRow: NavigatorRow = {
@@ -93,11 +105,10 @@ export function buildNavigatorRows(
         workspaceId: workspace.workspace_id,
         tabId: tab.tab_id,
       };
-      const tabQueryMatches = queryMatches(options.query, [tab.tab_id, tab.label]);
+      const tabQueryMatches = queryMatches(queryWords, [tab.tab_id, tab.label]);
       tabRow.matched = tabQueryMatches && statusMatches(tabRow.status, options.filter);
 
-      const paneRows = snapshot.panes
-        .filter((pane) => pane.tab_id === tab.tab_id)
+      const paneRows = (panesByTab.get(tab.tab_id) ?? [])
         .sort((left, right) => left.pane_id.localeCompare(right.pane_id))
         .map<NavigatorRow>((pane) => {
           const label =
@@ -126,7 +137,7 @@ export function buildNavigatorRows(
             workspaceId: workspace.workspace_id,
             tabId: tab.tab_id,
           };
-          const paneQueryMatches = queryMatches(options.query, [
+          const paneQueryMatches = queryMatches(queryWords, [
             pane.pane_id,
             label,
             meta,

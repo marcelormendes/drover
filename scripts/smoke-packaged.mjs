@@ -24,13 +24,16 @@ child.stderr.on('data', (chunk) => {
   output += chunk.toString();
 });
 
+let timeout;
 const outcome = await Promise.race([
   new Promise((resolve) => {
     child.once('exit', (code, signal) => resolve({ kind: 'exit', code, signal }));
     child.once('error', (error) => resolve({ kind: 'error', error }));
   }),
-  new Promise((resolve) => setTimeout(() => resolve({ kind: 'timeout' }), 10_000)),
-]);
+  new Promise((resolve) => {
+    timeout = setTimeout(() => resolve({ kind: 'timeout' }), 10_000);
+  }),
+]).finally(() => clearTimeout(timeout));
 
 if (outcome.kind === 'timeout') {
   child.kill('SIGTERM');

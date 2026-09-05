@@ -1078,6 +1078,87 @@ describe('ConversationChatPanel approval and delivery states', () => {
       vi.restoreAllMocks();
     }
   });
+  it('settles a fast reply without pane working events and starts a fresh follow-up timer', async () => {
+    let now = 1_800_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const user: ConversationItem = {
+      id: 'durable',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'user_message',
+      text: 'answer quickly',
+    };
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([]))
+      .mockResolvedValueOnce(page([user, assistant(2, 'final', 'Fast answer')]))
+      .mockResolvedValue(
+        page([
+          user,
+          assistant(2, 'final', 'Fast answer'),
+          {
+            ...user,
+            id: 'follow-up',
+            sequence: 3,
+            turn_id: 'turn-2',
+            text: 'keep going',
+          },
+        ]),
+      );
+    setup(page([]), { read });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'answer quickly' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('Fast answer')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    now += 120_000;
+    fireEvent.change(input, { target: { value: 'keep going' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole('status')).toHaveTextContent('Working for 0S');
+  });
+
+  it('clears the optimistic Working timer when a resumed native session changes identity', async () => {
+    const user: ConversationItem = {
+      id: 'durable',
+      sequence: 1,
+      provider: 'pi',
+      session_id: 'session-1',
+      turn_id: 'turn-1',
+      type: 'user_message',
+      text: 'start now',
+    };
+    const read = vi
+      .fn<Window['herdr']['conversation']['read']>()
+      .mockResolvedValueOnce(page([]))
+      .mockResolvedValue(page([user]));
+    const { view } = setup(page([]), { read });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'start now' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('status')).toHaveTextContent('Working');
+    view.rerender(
+      <ConversationChatPanel
+        pane={{
+          ...pane,
+          agent_session: {
+            agent: 'pi',
+            source: 'herdr:pi',
+            kind: 'session_id',
+            value: 'resumed-session',
+          },
+        }}
+      />,
+    );
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('keeps a failed optimistic message retryable without restoring the draft', async () => {
     const prompt = vi
       .fn<Window['herdr']['conversation']['prompt']>()
@@ -1213,7 +1294,6 @@ describe('ConversationChatPanel scroll following', () => {
   });
 
   it('preserves the viewport anchor when older history is prepended', async () => {
-    let scrollHeight = 1_000;
     const older = assistant(1, 'commentary', 'older item');
     const setupResult = setup(
       page([assistant(2, 'final', 'current item')], { previousCursor: 'older-1' }),
@@ -1225,16 +1305,42 @@ describe('ConversationChatPanel scroll following', () => {
     });
     Object.defineProperties(viewport, {
       clientHeight: { configurable: true, value: 200 },
-      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollHeight: {
+        configurable: true,
+        get: () => (screen.queryByText('older item') ? 1_600 : 1_000),
+      },
     });
     viewport.scrollTop = 100;
-    setupResult.read.mockImplementationOnce(async () => {
-      scrollHeight = 1_600;
-      return page([older], { previousCursor: 'older-0' });
-    });
+    let finishOlder: ((result: ConversationReadResult) => void) | undefined;
+    setupResult.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOlder = resolve;
+        }),
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Load older history' }));
+    await waitFor(() => expect(setupResult.read).toHaveBeenCalledTimes(2));
+    // Scrolling during the request must not snap back to the click-time position.
+    viewport.scrollTop = 200;
+    fireEvent.scroll(viewport);
+    await act(async () => finishOlder?.(page([older], { previousCursor: 'older-0' })));
     await screen.findByText('older item');
-    await waitFor(() => expect(viewport.scrollTop).toBe(700));
+    await waitFor(() => expect(viewport.scrollTop).toBe(800));
+  });
+
+  it('removes Load older when the terminal page carries an unused cursor', async () => {
+    const setupResult = setup(
+      page([assistant(2, 'final', 'current')], { previousCursor: 'history-1' }),
+    );
+    const terminal = page([assistant(1, 'commentary', 'oldest')], {
+      previousCursor: 'terminal-cursor',
+    });
+    if (terminal.type === 'page') terminal.page.has_older = false;
+    const button = await screen.findByRole('button', { name: 'Load older history' });
+    setupResult.read.mockResolvedValueOnce(terminal);
+    fireEvent.click(button);
+    await screen.findByText('oldest');
+    expect(screen.queryByRole('button', { name: /older history/ })).not.toBeInTheDocument();
   });
 });

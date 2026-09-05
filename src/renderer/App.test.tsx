@@ -8,9 +8,11 @@ vi.mock('@/renderer/chat/ConversationChatPanel', async () => {
   return {
     ConversationChatPanel: ({
       pane,
+      agentReadiness,
       onOpenTerminal,
     }: {
       pane: { display_agent?: string; pane_id: string };
+      agentReadiness?: { launch_pending: boolean; interactive_ready: boolean };
       onOpenTerminal?: () => void;
     }) => {
       const [draft, setDraft] = useState(() => drafts.get(pane.pane_id) ?? '');
@@ -19,7 +21,11 @@ vi.mock('@/renderer/chat/ConversationChatPanel', async () => {
         void window.herdr.conversation.read({ target: pane.pane_id, direction: 'newest' });
       }, [pane.pane_id]);
       return (
-        <div data-testid={`chat-${pane.pane_id}`}>
+        <div
+          data-testid={`chat-${pane.pane_id}`}
+          data-launch-pending={agentReadiness?.launch_pending}
+          data-interactive-ready={agentReadiness?.interactive_ready}
+        >
           Chat with {pane.display_agent}
           <span>{draft}</span>
           <button
@@ -324,11 +330,6 @@ describe('App', () => {
     // Agents live under spaces in one rail, matching the Herdr TUI.
     const rail = screen.getByText('spaces').closest('aside');
     expect(screen.getByText('agents').closest('aside')).toBe(rail);
-    expect(container.querySelector('[data-slot="app-mark"]')).toHaveClass(
-      'shrink-0',
-      'shadow-none',
-      'text-main-foreground',
-    );
 
     const tabActions = container.querySelector('[data-slot="tab-actions"]');
     expect(tabActions).toHaveClass('ml-2', 'flex', 'items-center', 'gap-1');
@@ -340,7 +341,11 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(await screen.findByTestId('chat-w1:p1')).toBeInTheDocument();
+    expect(await screen.findByTestId('chat-w1:p1')).toHaveAttribute(
+      'data-interactive-ready',
+      'true',
+    );
+    expect(screen.getByTestId('chat-w1:p1')).toHaveAttribute('data-launch-pending', 'false');
     expect(screen.queryByTestId('terminal-w1:p1')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Chat view' })).toHaveClass('text-main-foreground');
     await user.click(screen.getByRole('button', { name: 'Terminal view' }));

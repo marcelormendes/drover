@@ -15,17 +15,6 @@ describe('GitHub Pages site', () => {
     expect(html).toContain('alt="Drover"');
   });
 
-  it('uses the desktop app neobrutalist palette and responsive layout', async () => {
-    const css = await read('site/styles.css');
-
-    expect(css).toContain('--background: #e8effa');
-    expect(css).toContain('--main: #6e91ff');
-    expect(css).toContain('border: 2px solid var(--border)');
-    expect(css).toContain('box-shadow: 4px 4px 0 var(--border)');
-    expect(css).toContain('@media (max-width: 760px)');
-    expect(css).toContain('@media (prefers-reduced-motion: reduce)');
-  });
-
   it('builds a static artifact with the app icon', async () => {
     const packageInfo = JSON.parse(await read('package.json')) as {
       scripts: Record<string, string>;

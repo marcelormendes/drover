@@ -1,7 +1,7 @@
 {
   "name": "drover",
   "productName": "Drover",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "A native workspace for Herdr-powered agents, terminals, worktrees, and live sessions.",
   "main": ".vite/build/main.js",
   "private": true,
@@ -18,6 +18,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "site:build": "node scripts/build-site.mjs",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "build:flatpak": "node scripts/build-flatpak.mjs",
     "check:latest": "npm outdated",
     "verify": "npm run typecheck && npm run lint && npm test && npm run site:build"

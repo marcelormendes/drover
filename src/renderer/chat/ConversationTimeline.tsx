@@ -70,7 +70,7 @@ export function ConversationTimeline({
           paneId={paneId}
           readerGeneration={readerGeneration}
           session={session}
-          onOpenTerminal={openTerminal}
+          onOpenTerminal={onOpenTerminal ? openTerminal : undefined}
           onRespond={respond}
         />
       ))}
@@ -140,10 +140,7 @@ const Turn = memo(function Turn({
   );
 
   return (
-    <section
-      className="space-y-3 [contain-intrinsic-size:auto_16rem] [content-visibility:auto]"
-      data-slot="conversation-turn"
-    >
+    <section className="space-y-3" data-slot="conversation-turn">
       {users.map((item) => (
         <UserMessage key={item.id} item={item} />
       ))}
