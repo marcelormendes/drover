@@ -272,6 +272,7 @@ describe('App', () => {
       },
       readPreferences: vi.fn(async () => DEFAULT_DESKTOP_PREFERENCES),
       writePreferences: vi.fn(async (preferences) => preferences),
+      chooseWorkspaceDirectory: vi.fn(async () => null),
       chooseHerdrBinary: vi.fn(async () => connected),
       resetHerdrBinary: vi.fn(async () => connected),
       engineUpdate: vi.fn(async () => ({
@@ -280,6 +281,7 @@ describe('App', () => {
         version: '0.8.0',
         message: 'Herdr engine is already up to date (v0.8.0).',
       })),
+      installDesktopUpdate: vi.fn(async () => undefined),
       checkDesktopUpdate: vi.fn(async () => ({
         currentVersion: packageMetadata.version,
         latestVersion: packageMetadata.version,
@@ -550,6 +552,48 @@ describe('App', () => {
       cwd: '/code/new-project',
       label: 'New project',
     });
+  });
+
+  it('uses a chosen local folder without submitting until Create is clicked', async () => {
+    vi.mocked(window.herdr.chooseWorkspaceDirectory).mockResolvedValue('/code/My project');
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New workspace' }));
+    await user.click(screen.getByRole('button', { name: 'Choose folder…' }));
+    expect(screen.getByLabelText('Working directory')).toHaveValue('/code/My project');
+    expect(window.herdr.command).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Create workspace' }));
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'create-workspace',
+      cwd: '/code/My project',
+      label: undefined,
+    });
+  });
+
+  it('preserves the entered path when the folder chooser is canceled or fails', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New workspace' }));
+    await user.type(screen.getByLabelText('Working directory'), '/code/existing');
+    await user.click(screen.getByRole('button', { name: 'Choose folder…' }));
+    expect(screen.getByLabelText('Working directory')).toHaveValue('/code/existing');
+    vi.mocked(window.herdr.chooseWorkspaceDirectory).mockRejectedValue(new Error('Unavailable'));
+    await user.click(screen.getByRole('button', { name: 'Choose folder…' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not open the folder chooser');
+    expect(screen.getByLabelText('Working directory')).toHaveValue('/code/existing');
+    expect(screen.getByRole('button', { name: 'Choose folder…' })).toBeEnabled();
+  });
+
+  it('keeps remote workspace paths manual', async () => {
+    vi.mocked(window.herdr.readPreferences).mockResolvedValue({
+      ...DEFAULT_DESKTOP_PREFERENCES,
+      remoteEngine: { enabled: true, host: 'remote-host', port: 22025 },
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'New workspace' }));
+    expect(screen.queryByRole('button', { name: 'Choose folder…' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Working directory')).toBeEnabled();
   });
 
   it('creates a worktree workspace from an ordinary active workspace', async () => {
@@ -926,7 +970,9 @@ describe('App', () => {
     });
 
     await user.click(screen.getByRole('button', { name: 'Pane actions' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Close pane' }));
+    expect(screen.queryByRole('menuitem', { name: 'Close pane' })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Close pane' }));
     await user.click(screen.getByRole('button', { name: 'Close pane' }));
 
     expect(window.herdr.command).toHaveBeenCalledWith({
@@ -1594,11 +1640,63 @@ describe('App', () => {
     expect(dialog).toHaveTextContent('Drover update available');
     expect(dialog).toHaveTextContent('v0.1.7 → v0.1.8');
 
-    await user.click(screen.getByRole('button', { name: 'Download' }));
+    await user.click(screen.getByRole('button', { name: 'Open release page' }));
     expect(window.herdr.openExternal).toHaveBeenCalledWith(
       'https://github.com/marcelormendes/drover/releases/latest',
     );
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('downloads an automatic update in the dialog without opening a browser', async () => {
+    vi.mocked(window.herdr.checkDesktopUpdate).mockResolvedValue({
+      currentVersion: '0.1.30',
+      latestVersion: '0.1.31',
+      updateAvailable: true,
+      releaseUrl: 'https://github.com/marcelormendes/drover/releases/latest',
+      automaticUpdateSupported: true,
+    });
+    let finish!: () => void;
+    vi.mocked(window.herdr.installDesktopUpdate).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Update Drover' }));
+    await user.click(screen.getByRole('button', { name: 'Update and restart' }));
+    expect(window.herdr.installDesktopUpdate).toHaveBeenCalledOnce();
+    expect(screen.getByRole('status')).toHaveTextContent('Downloading and installing update');
+    expect(screen.getByRole('button', { name: 'Updating…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Not now' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(window.herdr.openExternal).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(screen.getByRole('status')).toHaveTextContent('Restarting Drover');
+  });
+
+  it('keeps a failed automatic update in the dialog and permits retry', async () => {
+    vi.mocked(window.herdr.checkDesktopUpdate).mockResolvedValue({
+      currentVersion: '0.1.30',
+      latestVersion: '0.1.31',
+      updateAvailable: true,
+      releaseUrl: 'https://github.com/marcelormendes/drover/releases/latest',
+      automaticUpdateSupported: true,
+    });
+    vi.mocked(window.herdr.installDesktopUpdate).mockRejectedValueOnce(
+      new Error('Download failed'),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Update Drover' }));
+    await user.click(screen.getByRole('button', { name: 'Update and restart' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Download failed');
+    expect(screen.getByRole('button', { name: 'Not now' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Retry update' }));
+    expect(window.herdr.installDesktopUpdate).toHaveBeenCalledTimes(2);
+    expect(window.herdr.openExternal).not.toHaveBeenCalled();
   });
 
   it('reports when the desktop is already up to date', async () => {

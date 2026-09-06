@@ -126,3 +126,9 @@ Windows release automation will be added separately. Local builds without releas
 ## Relationship to Herdr
 
 Drover is an independent client project and is not affiliated with or endorsed by the upstream Herdr project. Herdr and its name belong to the Herdr project and contributors. This repository uses Herdr only to identify the compatible engine; it does not modify Herdr or persist a second source of runtime truth.
+
+### In-app desktop updates
+
+Signed macOS installations offer **Update and restart** from the **Update Drover** button. Drover downloads and verifies the release, installs it, and restarts; the Herdr server and its workspaces continue running. Download failures stay in the dialog with a retry action. Development builds and other installation formats show a manual update option.
+
+The first release containing the native updater requires a one-time manual installation. Subsequent macOS releases publish architecture-specific Squirrel JSON feeds alongside their signed ZIPs. The release workflow generates each feed with `scripts/create-update-feed.mjs` after signature validation, using version-pinned GitHub asset URLs. Automatic replacement must be smoke-tested between two signed packaged releases; a development build cannot verify this step.
