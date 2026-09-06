@@ -2,16 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import {
-  ArrowDownToLine,
-  ChevronDown,
-  ChevronUp,
-  ClipboardPaste,
-  Copy,
-  RefreshCw,
-  Search,
-  X,
-} from 'lucide-react';
+import { ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { decodeTerminalBytes } from '@/renderer/terminal/terminal-codec';
 import { installTerminalImeMiddleInsertionFix } from '@/renderer/terminal/terminal-ime';
+import { installTerminalRenderer } from '@/renderer/terminal/terminal-renderer';
 import type { PaneInfo } from '@/shared/herdr';
 
 interface TerminalPanelProps {
@@ -61,13 +53,13 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   const stableTimerRef = useRef<number | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [hasSelection, setHasSelection] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState('');
 
   const closeSearch = () => {
     searchAddonRef.current?.clearDecorations();
     setSearchQuery('');
     setSearchOpen(false);
+    terminalRef.current?.focus();
   };
 
   const copySelection = useCallback(async () => {
@@ -132,9 +124,12 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       allowProposedApi: false,
       cursorBlink: true,
       cursorStyle: 'block',
-      fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-      fontSize: 13,
-      lineHeight: 1.2,
+      fontFamily:
+        '"SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace',
+      fontSize: 14,
+      fontWeight: 300,
+      fontWeightBold: 500,
+      macOptionClickForcesSelection: true,
       screenReaderMode: false,
       scrollback: 10_000,
       theme: {
@@ -217,6 +212,11 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       })
       .catch(() => undefined);
     terminal.open(container);
+    const renderer = installTerminalRenderer(terminal, () => {
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        fitAddon.fit();
+      }
+    });
     const imeMiddleInsertionFix = installTerminalImeMiddleInsertionFix(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
       if (
@@ -328,7 +328,6 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         attachWhenSized();
       }
     });
-    const selection = terminal.onSelectionChange(() => setHasSelection(terminal.hasSelection()));
     const stopSessionEvents = window.herdr.onSessionEvent((event) => {
       if (event.event === 'desktop.engine_changed') {
         restart();
@@ -367,7 +366,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       imeMiddleInsertionFix.dispose();
       input.dispose();
       resize.dispose();
-      selection.dispose();
+      renderer.dispose();
       terminal.dispose();
       if (terminalRef.current === terminal) {
         terminalRef.current = null;
@@ -395,145 +394,69 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         }}
         ref={containerRef}
       />
-      <div className="absolute right-3 top-3 flex items-center gap-2 opacity-50 transition-opacity focus-within:opacity-100 hover:opacity-100">
-        {onScrollRequest ? (
-          <>
-            <Button
-              aria-label="Scroll terminal one page up"
-              className="size-8"
-              onClick={() =>
-                scrollRequestRef.current?.({
-                  paneId: pane.pane_id,
-                  direction: 'up',
-                  unit: 'page',
-                  amount: 1,
-                })
+      {searchOpen ? (
+        <div className="absolute right-3 top-3 flex items-center gap-1 rounded-base border-2 border-border bg-secondary-background p-1 shadow-shadow">
+          <Input
+            aria-label="Search terminal text"
+            autoFocus
+            className="h-8 w-52 bg-background text-foreground"
+            onChange={(event) => {
+              const query = event.target.value;
+              setSearchQuery(query);
+              if (query) {
+                searchAddonRef.current?.findNext(query, { incremental: true });
+              } else {
+                searchAddonRef.current?.clearDecorations();
               }
-              size="icon"
-              variant="neutral"
-            >
-              <ChevronUp aria-hidden="true" />
-            </Button>
-            <Button
-              aria-label="Scroll terminal one page down"
-              className="size-8"
-              onClick={() =>
-                scrollRequestRef.current?.({
-                  paneId: pane.pane_id,
-                  direction: 'down',
-                  unit: 'page',
-                  amount: 1,
-                })
-              }
-              size="icon"
-              variant="neutral"
-            >
-              <ChevronDown aria-hidden="true" />
-            </Button>
-          </>
-        ) : null}
-        <Button
-          aria-label="Scroll terminal to bottom"
-          className="size-8"
-          onClick={() => terminalRef.current?.scrollToBottom()}
-          size="icon"
-          variant="neutral"
-        >
-          <ArrowDownToLine aria-hidden="true" />
-        </Button>
-        <Button
-          aria-label="Copy terminal selection"
-          className="size-8"
-          disabled={!hasSelection}
-          onClick={() => void copySelection()}
-          size="icon"
-          variant="neutral"
-        >
-          <Copy aria-hidden="true" />
-        </Button>
-        <Button
-          aria-label="Paste terminal clipboard"
-          className="size-8"
-          onClick={() => void pasteClipboard()}
-          size="icon"
-          variant="neutral"
-        >
-          <ClipboardPaste aria-hidden="true" />
-        </Button>
-        {searchOpen ? (
-          <div className="flex items-center gap-1 rounded-base border-2 border-border bg-secondary-background p-1 shadow-shadow">
-            <Input
-              aria-label="Search terminal text"
-              autoFocus
-              className="h-8 w-52 bg-background text-foreground"
-              onChange={(event) => {
-                const query = event.target.value;
-                setSearchQuery(query);
-                if (query) {
-                  searchAddonRef.current?.findNext(query, { incremental: true });
-                } else {
-                  searchAddonRef.current?.clearDecorations();
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.preventDefault();
-                  closeSearch();
-                  return;
-                }
-                if (event.key !== 'Enter' || !searchQuery) {
-                  return;
-                }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
                 event.preventDefault();
-                if (event.shiftKey) {
-                  searchAddonRef.current?.findPrevious(searchQuery);
-                } else {
-                  searchAddonRef.current?.findNext(searchQuery);
-                }
-              }}
-              type="search"
-              value={searchQuery}
-            />
-            <Button
-              aria-label="Previous search result"
-              className="size-8"
-              onClick={() => searchQuery && searchAddonRef.current?.findPrevious(searchQuery)}
-              size="icon"
-              variant="neutral"
-            >
-              <ChevronUp aria-hidden="true" />
-            </Button>
-            <Button
-              aria-label="Next search result"
-              className="size-8"
-              onClick={() => searchQuery && searchAddonRef.current?.findNext(searchQuery)}
-              size="icon"
-              variant="neutral"
-            >
-              <ChevronDown aria-hidden="true" />
-            </Button>
-            <Button
-              aria-label="Close terminal search"
-              className="size-8"
-              onClick={closeSearch}
-              size="icon"
-              variant="neutral"
-            >
-              <X aria-hidden="true" />
-            </Button>
-          </div>
-        ) : (
+                closeSearch();
+                return;
+              }
+              if (event.key !== 'Enter' || !searchQuery) {
+                return;
+              }
+              event.preventDefault();
+              if (event.shiftKey) {
+                searchAddonRef.current?.findPrevious(searchQuery);
+              } else {
+                searchAddonRef.current?.findNext(searchQuery);
+              }
+            }}
+            type="search"
+            value={searchQuery}
+          />
           <Button
-            aria-label="Search terminal"
+            aria-label="Previous search result"
             className="size-8"
-            onClick={() => setSearchOpen(true)}
+            onClick={() => searchQuery && searchAddonRef.current?.findPrevious(searchQuery)}
             size="icon"
             variant="neutral"
           >
-            <Search aria-hidden="true" />
+            <ChevronUp aria-hidden="true" />
           </Button>
-        )}
-      </div>
+          <Button
+            aria-label="Next search result"
+            className="size-8"
+            onClick={() => searchQuery && searchAddonRef.current?.findNext(searchQuery)}
+            size="icon"
+            variant="neutral"
+          >
+            <ChevronDown aria-hidden="true" />
+          </Button>
+          <Button
+            aria-label="Close terminal search"
+            className="size-8"
+            onClick={closeSearch}
+            size="icon"
+            variant="neutral"
+          >
+            <X aria-hidden="true" />
+          </Button>
+        </div>
+      ) : null}
       {copyFeedback ? (
         <div className="sr-only" role="status">
           {copyFeedback}
