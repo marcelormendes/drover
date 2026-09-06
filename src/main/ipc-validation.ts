@@ -704,13 +704,15 @@ export function parseHerdrQuery(value: unknown): HerdrQuery {
         typeof value.paneId === 'string' &&
         PANE_ID.test(value.paneId) &&
         (value.lines === undefined || (positiveInteger(value.lines) && value.lines <= 10_000)) &&
-        (value.ansi === undefined || typeof value.ansi === 'boolean')
+        (value.ansi === undefined || typeof value.ansi === 'boolean') &&
+        (value.source === undefined || value.source === 'visible')
       ) {
         return {
           type: value.type,
           paneId: value.paneId,
           ...(value.lines === undefined ? {} : { lines: value.lines }),
           ...(value.ansi === undefined ? {} : { ansi: value.ansi }),
+          ...(value.source === undefined ? {} : { source: value.source }),
         };
       }
       break;

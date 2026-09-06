@@ -813,6 +813,105 @@ function PersistentTerminalSurface({ pane, visible }: { pane: PaneInfo; visible:
   );
 }
 
+function PaneConversationSurface({
+  pane,
+  agentReadiness,
+  chatEnabled,
+  view,
+  onOpenTerminal,
+}: {
+  pane: PaneInfo;
+  agentReadiness?: AgentInfo;
+  chatEnabled: boolean;
+  view: PaneView;
+  onOpenTerminal: () => void;
+}) {
+  const identity = `${pane.pane_id}:${pane.terminal_id}:${pane.agent}:${pane.agent_session?.value ?? ''}:${pane.conversation_session?.id ?? ''}`;
+  const [readyIdentity, setReadyIdentity] = useState<string>();
+  const onConversationReady = useCallback(
+    (ready: boolean) => {
+      setReadyIdentity(ready ? identity : undefined);
+    },
+    [identity],
+  );
+  const preSession =
+    chatEnabled &&
+    readyIdentity !== identity &&
+    isPreSessionConversationCapability(pane.conversation_capability);
+  const [setupScreen, setSetupScreen] = useState<string>();
+  useEffect(() => {
+    setSetupScreen(undefined);
+    if (!preSession || view !== 'chat') return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const inspect = async () => {
+      try {
+        const output = await window.herdr.query({
+          type: 'read-pane-output',
+          paneId: pane.pane_id,
+          source: 'visible',
+          lines: 80,
+        });
+        if (!cancelled && output.type === 'pane-output' && output.paneId === pane.pane_id) {
+          // This only reveals the live input surface. Never replay choices from
+          // terminal text: provider prompts can change between read and response.
+          const needsSetup =
+            /(?:^|\n)\s*(?:[⏺●]\s*)?(?:Login expired|Not logged in|Select login method|Please (?:run \/login|log in|sign in))\b/im.test(
+              output.text,
+            ) ||
+            /Opening browser to sign in/i.test(output.text) ||
+            (/trust this folder/i.test(output.text) && /Enter to confirm/i.test(output.text));
+          setSetupScreen(needsSetup ? identity : undefined);
+        }
+      } catch {
+        // The usual readiness signal remains available when pane reads fail.
+      } finally {
+        if (!cancelled) timer = setTimeout(() => void inspect(), 1500);
+      }
+    };
+    void inspect();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [identity, pane.pane_id, preSession, view]);
+  const setup =
+    view === 'chat' &&
+    preSession &&
+    (agentReadiness?.launch_pending === true ||
+      agentReadiness?.interactive_ready === false ||
+      setupScreen === identity);
+  const conversationVisible = view === 'chat' && !setup;
+  return (
+    <>
+      {chatEnabled ? (
+        <div
+          aria-hidden={!conversationVisible || undefined}
+          style={{ display: conversationVisible ? 'contents' : 'none' }}
+        >
+          <ConversationChatPanel
+            agentReadiness={agentReadiness}
+            onConversationReady={onConversationReady}
+            onOpenTerminal={onOpenTerminal}
+            pane={pane}
+            visible={view === 'chat'}
+          />
+        </div>
+      ) : null}
+      {setup ? (
+        <div className="shrink-0 border-b-2 border-border p-3" data-slot="provider-setup">
+          <h2 className="text-sm font-heading">Agent setup</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Complete any trust, sign-in, or other setup prompts below. Chat will appear when your
+            agent is ready.
+          </p>
+        </div>
+      ) : null}
+      <PersistentTerminalSurface pane={pane} visible={view === 'terminal' || setup} />
+    </>
+  );
+}
+
 function PaneStage({
   agents,
   pane,
@@ -896,9 +995,8 @@ function PaneStage({
               (chatCapability.availability === 'unsupported'
                 ? 'Chat is not currently supported for this provider. Use Terminal instead.'
                 : 'Start or resume this agent to use Chat.'));
-        const automaticView = item.agent_has_arguments === false ? 'chat' : 'terminal';
-        const view =
-          hasAgent && chatEnabled ? viewByPane[item.pane_id] || automaticView : 'terminal';
+        const view = hasAgent && chatEnabled ? viewByPane[item.pane_id] || 'chat' : 'terminal';
+        const agentReadiness = agents.find((agent) => agent.pane_id === item.pane_id);
         return (
           <div
             aria-hidden={hiddenByZoom || undefined}
@@ -1048,20 +1146,13 @@ function PaneStage({
                   </div>
                 ) : null}
               </div>
-              {hasAgent && chatEnabled ? (
-                <div
-                  aria-hidden={view !== 'chat' || undefined}
-                  style={{ display: view === 'chat' ? 'contents' : 'none' }}
-                >
-                  <ConversationChatPanel
-                    agentReadiness={agents.find((agent) => agent.pane_id === item.pane_id)}
-                    onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
-                    pane={item}
-                    visible={view === 'chat'}
-                  />
-                </div>
-              ) : null}
-              <PersistentTerminalSurface pane={item} visible={view === 'terminal'} />
+              <PaneConversationSurface
+                pane={item}
+                agentReadiness={agentReadiness}
+                chatEnabled={hasAgent && chatEnabled}
+                view={view}
+                onOpenTerminal={() => onViewChange(item.pane_id, 'terminal')}
+              />
             </Card>
           </div>
         );

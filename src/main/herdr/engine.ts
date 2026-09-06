@@ -239,7 +239,13 @@ function commandRequest(command: HerdrCommand): {
           pane_id: command.paneId,
           name: command.name,
           kind: command.kind,
-          args: command.args || [],
+          // A config override keeps Codex from reusing an unrelated local
+          // app-server whose hook environment lacks this pane's Herdr identity.
+          // Keep user overrides last so explicit launch preferences still win.
+          args:
+            command.kind === 'codex'
+              ? ['-c', 'features.hooks=true', ...(command.args || [])]
+              : command.args || [],
           timeout_ms: command.timeoutMs || 30_000,
         },
       };
@@ -531,7 +537,7 @@ function queryRequest(query: HerdrQuery): {
         method: 'pane.read',
         params: {
           pane_id: query.paneId,
-          source: 'recent_unwrapped',
+          source: query.source ?? 'recent_unwrapped',
           format: query.ansi ? 'ansi' : 'text',
           strip_ansi: !query.ansi,
           ...(query.lines === undefined ? {} : { lines: query.lines }),

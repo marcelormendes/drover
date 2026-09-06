@@ -313,7 +313,7 @@ describe('HerdrEngine.execute', () => {
         pane_id: 'w1:p1',
         name: 'reviewer',
         kind: 'codex',
-        args: [],
+        args: ['-c', 'features.hooks=true'],
         timeout_ms: 30_000,
       },
     },
@@ -331,10 +331,44 @@ describe('HerdrEngine.execute', () => {
         pane_id: 'w1:p1',
         name: 'reviewer',
         kind: 'codex',
-        args: ['--full-auto'],
+        args: ['-c', 'features.hooks=true', '--full-auto'],
         timeout_ms: 45_000,
       },
     },
+    {
+      command: {
+        type: 'start-agent',
+        paneId: 'w1:p1',
+        name: 'reviewer',
+        kind: 'codex',
+        args: ['-c', 'features.hooks=false', 'resume', 'session-id'],
+      },
+      method: 'agent.start',
+      params: {
+        pane_id: 'w1:p1',
+        name: 'reviewer',
+        kind: 'codex',
+        args: ['-c', 'features.hooks=true', '-c', 'features.hooks=false', 'resume', 'session-id'],
+        timeout_ms: 30_000,
+      },
+    },
+    ...(['claude', 'pi', 'omp'] as const).map((kind) => ({
+      command: {
+        type: 'start-agent' as const,
+        paneId: 'w1:p1',
+        name: 'reviewer',
+        kind,
+        args: ['--help'],
+      },
+      method: 'agent.start',
+      params: {
+        pane_id: 'w1:p1',
+        name: 'reviewer',
+        kind,
+        args: ['--help'],
+        timeout_ms: 30_000,
+      },
+    })),
     {
       command: { type: 'move-workspace', workspaceId: 'w2', insertIndex: 0 },
       method: 'workspace.move',
@@ -772,6 +806,31 @@ describe('HerdrEngine.conversationMetadata', () => {
 describe('HerdrEngine.query', () => {
   it.each([
     {
+      query: { type: 'read-pane-output', paneId: 'w1:p1', source: 'visible', lines: 80 } as const,
+      method: 'pane.read',
+      params: {
+        pane_id: 'w1:p1',
+        source: 'visible',
+        format: 'text',
+        strip_ansi: true,
+        lines: 80,
+      },
+      wireResult: {
+        type: 'pane_read',
+        read: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          tab_id: 'w1:t1',
+          source: 'visible',
+          format: 'text',
+          text: 'Login expired · Please run /login',
+          revision: 0,
+          truncated: false,
+        },
+      },
+      expectedType: 'pane-output',
+    },
+    {
       query: { type: 'read-pane-output', paneId: 'w1:p1', lines: 500 } as const,
       method: 'pane.read',
       params: {
@@ -935,6 +994,31 @@ describe('HerdrEngine.query', () => {
       expect(result.type).toBe(expectedType);
     },
   );
+
+  it('rejects scrollback returned for a visible-screen query', async () => {
+    const runner = createRunner(async () => ({
+      stdout: JSON.stringify(runningStatus),
+      stderr: '',
+    }));
+    const engine = new HerdrEngine(runner, { launch: vi.fn() }, async () => undefined, {
+      request: vi.fn(async () => ({
+        type: 'pane_read',
+        read: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          tab_id: 'w1:t1',
+          source: 'recent_unwrapped',
+          format: 'text',
+          text: 'Login expired',
+          revision: 0,
+          truncated: false,
+        },
+      })),
+    });
+    await expect(
+      engine.query({ type: 'read-pane-output', paneId: 'w1:p1', source: 'visible' }),
+    ).rejects.toThrow('Herdr returned an invalid pane output response.');
+  });
 
   it('rejects malformed feature query responses', async () => {
     const runner = createRunner(async () => ({

@@ -93,6 +93,16 @@ describe('IPC validation', () => {
       type: 'focus-pane',
       paneId: 'w2:pA',
     });
+    expect(
+      parseHerdrQuery({ type: 'read-pane-output', paneId: 'w1:p2', source: 'visible' }),
+    ).toEqual({
+      type: 'read-pane-output',
+      paneId: 'w1:p2',
+      source: 'visible',
+    });
+    expect(() =>
+      parseHerdrQuery({ type: 'read-pane-output', paneId: 'w1:p2', source: 'history' }),
+    ).toThrow();
     expect(parseHerdrQuery({ type: 'read-pane-output', paneId: 'wA:p11' })).toEqual({
       type: 'read-pane-output',
       paneId: 'wA:p11',

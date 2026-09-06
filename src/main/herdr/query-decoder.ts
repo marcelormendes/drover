@@ -391,7 +391,7 @@ export function decodeHerdrQueryResult(query: HerdrQuery, value: unknown): Herdr
         !isString(read.pane_id) ||
         !isString(read.workspace_id) ||
         !isString(read.tab_id) ||
-        read.source !== 'recent_unwrapped' ||
+        read.source !== (query.source ?? 'recent_unwrapped') ||
         (read.format !== 'text' && read.format !== 'ansi') ||
         !isString(read.text) ||
         typeof read.revision !== 'number' ||

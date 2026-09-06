@@ -266,7 +266,7 @@ export interface PluginInvocationContext {
 }
 
 export type HerdrQuery =
-  | { type: 'read-pane-output'; paneId: string; lines?: number; ansi?: boolean }
+  | { type: 'read-pane-output'; paneId: string; lines?: number; ansi?: boolean; source?: 'visible' }
   | { type: 'list-worktrees'; workspaceId?: string; cwd?: string }
   | { type: 'get-agent-manifests' }
   | { type: 'list-plugins'; pluginId?: string }
