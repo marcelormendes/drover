@@ -48,6 +48,8 @@ export interface DesktopUpdateInfo {
   updateAvailable: boolean;
   /** Release page the user can download the new build from. */
   releaseUrl: string;
+  automaticUpdateSupported?: boolean;
+  automaticUpdateUnavailableReason?: string;
 }
 
 /** Mirrors Herdr's per-image upload limit. */
@@ -469,10 +471,12 @@ export interface DroverApi {
   };
   readPreferences(): Promise<DesktopPreferences>;
   writePreferences(preferences: DesktopPreferences): Promise<DesktopPreferences>;
+  chooseWorkspaceDirectory(): Promise<string | null>;
   chooseHerdrBinary(): Promise<EngineBootstrap | null>;
   resetHerdrBinary(): Promise<EngineBootstrap>;
   engineUpdate(): Promise<EngineUpdateResult>;
   checkDesktopUpdate(): Promise<DesktopUpdateInfo>;
+  installDesktopUpdate(): Promise<void>;
   applyRemoteEngine(target: RemoteEngineTarget): Promise<RemoteEngineStatus>;
   remoteEngineStatus(): Promise<RemoteEngineStatus>;
   onDesktopAction(listener: (action: DesktopAction) => void): () => void;

@@ -3,10 +3,21 @@ import { access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron';
+import {
+  app,
+  autoUpdater,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  session,
+  shell,
+} from 'electron';
 import started from 'electron-squirrel-startup';
 import { APP_NAME, configureApplicationBranding } from '@/main/app-branding';
 import { applicationMenuTemplate } from '@/main/application-menu';
+import { DesktopInstaller, desktopUpdateUnavailableReason } from '@/main/desktop-installer';
 import { DesktopPreferencesStore } from '@/main/desktop-preferences';
 import { checkDesktopUpdate } from '@/main/desktop-update';
 import { hostPathFromSandboxPath, isFlatpakHost } from '@/main/flatpak';
@@ -157,6 +168,29 @@ const eventSubscription = new HerdrEventSubscription(
 // only re-open the event stream when the session actually changed, or the
 // pill flickers through connecting/disconnected on every refresh.
 const sessionTracker = new ConnectedSessionTracker(eventSubscription);
+const updateUnavailableReason = desktopUpdateUnavailableReason(
+  app.isPackaged,
+  process.platform,
+  process.arch,
+);
+const desktopInstaller = new DesktopInstaller(autoUpdater, {
+  currentVersion: app.getVersion(),
+  arch: process.arch,
+  unavailableReason: updateUnavailableReason,
+  check: () => checkDesktopUpdate(app.getVersion()),
+  onRestartError: (error) => {
+    // Native restart closes windows before attempting to relaunch. Restore the
+    // desktop if that attempt fails so the user is not left with an invisible app.
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+      dialog.showErrorBox(
+        'Drover could not restart',
+        `${error.message}\nQuit and reopen Drover to finish installing the downloaded update.`,
+      );
+    }
+  },
+});
+
 const demoMode = !app.isPackaged && process.env.DROVER_DEMO === '1';
 const smokeTestMode = process.env.DROVER_SMOKE_TEST === '1';
 const packagedRendererPath = path.join(
@@ -407,6 +441,23 @@ function registerIpcHandlers(): void {
     return enqueuePreferencesWrite(() => store.write(input));
   });
 
+  ipcMain.handle(IPC_CHANNELS.chooseWorkspaceDirectory, async (event) => {
+    assertTrustedSender(event.senderFrame?.url);
+    if (remoteTunnel.active) {
+      throw new Error('Folder selection is available only for local workspaces.');
+    }
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options: Electron.OpenDialogOptions = {
+      title: 'Choose a workspace folder',
+      buttonLabel: 'Choose folder',
+      properties: ['openDirectory'],
+    };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
   ipcMain.handle(IPC_CHANNELS.chooseBinary, async (event) => {
     assertTrustedSender(event.senderFrame?.url);
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -460,9 +511,18 @@ function registerIpcHandlers(): void {
     return { ...result, bootstrap: trackConnectedSession(result.bootstrap) };
   });
 
+  ipcMain.handle(IPC_CHANNELS.desktopUpdateInstall, async (event) => {
+    assertTrustedSender(event.senderFrame?.url);
+    await desktopInstaller.install();
+  });
+
   ipcMain.handle(IPC_CHANNELS.desktopUpdateCheck, async (event) => {
     assertTrustedSender(event.senderFrame?.url);
-    return checkDesktopUpdate(app.getVersion());
+    return {
+      ...(await checkDesktopUpdate(app.getVersion())),
+      automaticUpdateSupported: !updateUnavailableReason,
+      automaticUpdateUnavailableReason: updateUnavailableReason,
+    };
   });
 
   ipcMain.handle(IPC_CHANNELS.remoteEngineApply, async (event, candidate: unknown) => {
@@ -677,7 +737,9 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+function closeDesktopConnections(): void {
   eventSubscription.close();
   terminalControllers.closeAll();
-});
+}
+
+app.on('before-quit', closeDesktopConnections);

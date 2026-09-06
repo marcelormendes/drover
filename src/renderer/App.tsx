@@ -9,6 +9,7 @@ import {
   CloudCog,
   Download,
   FolderGit2,
+  FolderOpen,
   GitBranch,
   Loader2,
   Maximize2,
@@ -391,14 +392,31 @@ function OnboardingScreen({
 
 function CreateWorkspaceDialog({
   busy,
+  local,
   onCreate,
 }: {
   busy: boolean;
+  local: boolean;
   onCreate: (cwd?: string, label?: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [cwd, setCwd] = useState('');
   const [label, setLabel] = useState('');
+  const [choosing, setChoosing] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
+
+  const chooseFolder = async () => {
+    setChoosing(true);
+    setFolderError(null);
+    try {
+      const selected = await window.herdr.chooseWorkspaceDirectory();
+      if (selected !== null) setCwd(selected);
+    } catch {
+      setFolderError('Could not open the folder chooser. Try again or enter a path.');
+    } finally {
+      setChoosing(false);
+    }
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -425,13 +443,32 @@ function CreateWorkspaceDialog({
         <form className="space-y-5" onSubmit={submit}>
           <div className="space-y-2">
             <Label htmlFor="workspace-cwd">Working directory</Label>
-            <Input
-              autoFocus
-              id="workspace-cwd"
-              onChange={(event) => setCwd(event.target.value)}
-              placeholder="/path/to/project"
-              value={cwd}
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                autoFocus
+                className="min-w-0 flex-1"
+                id="workspace-cwd"
+                onChange={(event) => setCwd(event.target.value)}
+                placeholder="/path/to/project"
+                value={cwd}
+              />
+              {local ? (
+                <Button
+                  disabled={busy || choosing}
+                  onClick={chooseFolder}
+                  type="button"
+                  variant="neutral"
+                >
+                  <FolderOpen aria-hidden="true" />
+                  Choose folder…
+                </Button>
+              ) : null}
+            </div>
+            {folderError ? (
+              <p role="alert" className="text-sm">
+                {folderError}
+              </p>
+            ) : null}
           </div>
           <div className="space-y-2">
             <Label htmlFor="workspace-label">Workspace label</Label>
@@ -443,7 +480,7 @@ function CreateWorkspaceDialog({
             />
           </div>
           <DialogFooter>
-            <Button disabled={busy} type="submit">
+            <Button disabled={busy || choosing} type="submit">
               Create workspace
             </Button>
           </DialogFooter>
@@ -975,10 +1012,6 @@ function PaneStage({
                         <DropdownMenuItem onSelect={() => onRename(item)}>
                           <Pencil aria-hidden="true" /> Rename pane
                         </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onSelect={() => onClose(item)}>
-                          <Trash2 aria-hidden="true" /> Close pane
-                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                     <Button
@@ -1000,6 +1033,17 @@ function PaneStage({
                       variant="neutral"
                     >
                       <PanelBottom aria-hidden="true" />
+                    </Button>
+                    <Button
+                      aria-label="Close pane"
+                      title="Close pane"
+                      className="size-7"
+                      disabled={busy}
+                      onClick={() => onClose(item)}
+                      size="icon"
+                      variant="neutral"
+                    >
+                      <Trash2 aria-hidden="true" />
                     </Button>
                   </div>
                 ) : null}
@@ -1130,36 +1174,72 @@ function DesktopUpdateDialog({
   info: DesktopUpdateInfo | null;
   onClose: () => void;
 }) {
+  const [installing, setInstalling] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!info) setError(null);
+  }, [info]);
+
+  const install = async () => {
+    setInstalling(true);
+    setError(null);
+    try {
+      await window.herdr.installDesktopUpdate();
+      setRestarting(true);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not install the update. Try again.');
+      setInstalling(false);
+    }
+  };
+
   return (
     <AlertDialog
       onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
+        if (!open && !installing) onClose();
       }}
       open={Boolean(info?.updateAvailable)}
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Drover update available</AlertDialogTitle>
+          <AlertDialogTitle>
+            {installing ? 'Updating Drover' : 'Drover update available'}
+          </AlertDialogTitle>
           <AlertDialogDescription>
             A newer version of Drover is ready: v{info?.currentVersion} → v{info?.latestVersion}.
-            Open the release page to download it and replace this app.
+            {info?.automaticUpdateSupported
+              ? ' Drover will download the update and restart automatically. Your Herdr workspaces keep running.'
+              : ` ${info?.automaticUpdateUnavailableReason || 'Download the release to update this installation.'}`}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {installing ? (
+          <p role="status" className="flex items-center gap-2 text-sm">
+            <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+            {restarting ? 'Restarting Drover…' : 'Downloading and installing update…'}
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="text-sm">
+            {error}
+          </p>
+        ) : null}
         <AlertDialogFooter>
-          <AlertDialogCancel>Not now</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={() => {
-              const url = info?.releaseUrl;
-              if (url) {
-                void window.herdr.openExternal(url);
-              }
-              onClose();
-            }}
-          >
-            Download
-          </AlertDialogAction>
+          <AlertDialogCancel disabled={installing}>Not now</AlertDialogCancel>
+          {info?.automaticUpdateSupported ? (
+            <Button disabled={installing} onClick={install}>
+              {installing ? 'Updating…' : error ? 'Retry update' : 'Update and restart'}
+            </Button>
+          ) : (
+            <AlertDialogAction
+              onClick={() => {
+                if (info?.releaseUrl) void window.herdr.openExternal(info.releaseUrl);
+                onClose();
+              }}
+            >
+              Open release page
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -1282,6 +1362,7 @@ function ConnectedShell({
               <p>Create the first workspace here. Herdr will own its terminal and session state.</p>
               <CreateWorkspaceDialog
                 busy={busy}
+                local={!preferences.remoteEngine.enabled}
                 onCreate={(cwd, label) => onCommand({ type: 'create-workspace', cwd, label })}
               />
             </CardContent>
@@ -1389,6 +1470,7 @@ function ConnectedShell({
             <div className="shrink-0 p-3 pt-2">
               <CreateWorkspaceDialog
                 busy={busy}
+                local={!preferences.remoteEngine.enabled}
                 onCreate={(cwd, label) => onCommand({ type: 'create-workspace', cwd, label })}
               />
             </div>

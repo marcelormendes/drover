@@ -132,6 +132,9 @@ export function createBrowserPreviewApi(): DroverApi {
       preferences = { ...next };
       return { ...preferences };
     },
+    chooseWorkspaceDirectory: async () => {
+      throw new Error('Native folder selection requires the desktop app.');
+    },
     chooseHerdrBinary: async () => structuredClone(connected),
     resetHerdrBinary: async () => structuredClone(connected),
     engineUpdate: async () => ({
@@ -140,6 +143,9 @@ export function createBrowserPreviewApi(): DroverApi {
       version: '0.8.0',
       message: 'Preview mode: the Herdr engine update is disabled.',
     }),
+    installDesktopUpdate: async () => {
+      throw new Error('Automatic updates require the installed desktop app.');
+    },
     checkDesktopUpdate: async () => ({
       currentVersion: '0.0.0-preview',
       latestVersion: null,

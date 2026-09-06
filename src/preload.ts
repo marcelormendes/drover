@@ -87,10 +87,14 @@ const api: DroverApi = {
     ipcRenderer.invoke(IPC_CHANNELS.readPreferences) as Promise<DesktopPreferences>,
   writePreferences: (preferences: DesktopPreferences) =>
     ipcRenderer.invoke(IPC_CHANNELS.writePreferences, preferences) as Promise<DesktopPreferences>,
+  chooseWorkspaceDirectory: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.chooseWorkspaceDirectory) as Promise<string | null>,
   chooseHerdrBinary: () =>
     ipcRenderer.invoke(IPC_CHANNELS.chooseBinary) as Promise<EngineBootstrap | null>,
   resetHerdrBinary: () => ipcRenderer.invoke(IPC_CHANNELS.resetBinary) as Promise<EngineBootstrap>,
   engineUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.engineUpdate) as Promise<EngineUpdateResult>,
+  installDesktopUpdate: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.desktopUpdateInstall) as Promise<void>,
   checkDesktopUpdate: () =>
     ipcRenderer.invoke(IPC_CHANNELS.desktopUpdateCheck) as Promise<DesktopUpdateInfo>,
   applyRemoteEngine: (target: RemoteEngineTarget) =>
