@@ -683,6 +683,147 @@ describe('ConversationChatPanel turn projection', () => {
     expect(document.querySelector('[data-slot="active-plan"]')).toBeNull();
   });
 
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])(
+    'ignores an orphaned retry lifecycle superseded by a newer user (answered=%s, late=%s)',
+    async (answered, late) => {
+      vi.spyOn(Date, 'now').mockReturnValue(500_000);
+      const currentUser: ConversationItem = {
+        id: 'current-user',
+        sequence: 4,
+        provider: 'pi',
+        session_id: 'session-1',
+        turn_id: 'current-turn',
+        timestamp_ms: 493_000,
+        type: 'user_message',
+        text: 'Next short message',
+      };
+      const history: ConversationItem[] = [
+        {
+          id: 'orphaned-retry',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'synthetic-retry',
+          type: 'turn_state',
+          state: 'started',
+          started_ms: 100_000,
+        },
+        { ...assistant(2, 'commentary', 'Old retry'), turn_id: 'synthetic-retry' },
+        { ...tool(3), turn_id: 'synthetic-retry', status: 'running' },
+        currentUser,
+        ...(answered
+          ? [{ ...assistant(5, 'final', 'Current answer'), turn_id: 'current-turn' }]
+          : []),
+      ];
+      if (late) {
+        // Live retry records can be inserted after a newer durable user.
+        history[0] = { ...history[0], sequence: 5 };
+        history[2] = { ...history[2], sequence: 6, timestamp_ms: 100_000 };
+        if (answered) history[4] = { ...history[4], sequence: 7 };
+      }
+      const { view } = setup(page(history));
+      view.rerender(<ConversationChatPanel pane={{ ...pane, agent_status: 'working' }} />);
+      await screen.findByText('Next short message');
+      if (answered) {
+        expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      } else {
+        expect(screen.getByRole('status')).toHaveTextContent('Working for 7S');
+      }
+    },
+  );
+
+  it.each(['running', undefined] as const)(
+    'keeps Working for a streamed final-phase answer without terminal state (%s)',
+    async (state) => {
+      const { view } = setup(
+        page([
+          {
+            id: 'stream-user',
+            sequence: 1,
+            provider: 'pi',
+            session_id: 'session-1',
+            turn_id: 'turn-1',
+            timestamp_ms: Date.now(),
+            type: 'user_message',
+            text: 'Stream this reply',
+          },
+          // Preserve the raw streaming shape observed before normalization.
+          { ...assistant(2, 'final', 'Still streaming'), state } as unknown as ConversationItem,
+        ]),
+      );
+      view.rerender(<ConversationChatPanel pane={{ ...pane, agent_status: 'working' }} />);
+      await screen.findByText('Still streaming');
+      expect(screen.getByRole('status')).toHaveTextContent('Working');
+    },
+  );
+
+  it('starts a newly queued prompt timer despite an orphaned earlier lifecycle', async () => {
+    let now = 100_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    setup(
+      page([
+        {
+          id: 'orphaned-retry',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'synthetic-retry',
+          type: 'turn_state',
+          state: 'started',
+          started_ms: 1_000,
+        },
+      ]),
+      { prompt: vi.fn(() => new Promise<never>(() => {})) },
+    );
+    expect(await screen.findByRole('status')).toHaveTextContent('Working for 1M 39S');
+    now = 500_000;
+    const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+    fireEvent.change(input, { target: { value: 'New prompt' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Working for 0S'), {
+      timeout: 2_000,
+    });
+  });
+
+  it('keeps a current turn lifecycle authoritative when its user item arrives later', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(500_000);
+    setup(
+      page([
+        {
+          id: 'current-start',
+          sequence: 1,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'current-turn',
+          type: 'turn_state',
+          state: 'started',
+          started_ms: 490_000,
+        },
+        {
+          id: 'current-user',
+          sequence: 2,
+          provider: 'pi',
+          session_id: 'session-1',
+          turn_id: 'current-turn',
+          timestamp_ms: 495_000,
+          type: 'user_message',
+          text: 'Current task',
+        },
+      ]),
+    );
+    expect(await screen.findByRole('status')).toHaveTextContent('Working for 10S');
+  });
+
+  it('keeps tool-only active work visible without a user boundary', async () => {
+    setup(page([{ ...tool(1), status: 'running' }]));
+    expect(await screen.findByRole('status')).toHaveTextContent('Working');
+  });
+
   it('settles Working when a settled turn still carries a stale running tool', async () => {
     setup(
       page([

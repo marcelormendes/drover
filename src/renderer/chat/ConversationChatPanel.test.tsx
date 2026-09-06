@@ -927,12 +927,9 @@ describe('ConversationChatPanel onboarding', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [true, false, 'Agent is starting. Chat will be ready when launch completes.'],
-    [false, false, 'The agent is not ready for prompts. Open Terminal to finish startup.'],
-  ])(
-    'blocks first prompts until startup is ready (%s, %s)',
-    async (launchPending, interactiveReady, message) => {
+  it.each([false, true])(
+    'blocks first prompts while a managed launch is pending (interactive_ready=%s)',
+    async (interactiveReady) => {
       const prompt = vi.fn(async () => ({}));
       window.herdr = {
         conversation: {
@@ -950,13 +947,15 @@ describe('ConversationChatPanel onboarding', () => {
       const view = render(
         <ConversationChatPanel
           pane={initialPane}
-          agentReadiness={{ launch_pending: launchPending, interactive_ready: interactiveReady }}
+          agentReadiness={{ launch_pending: true, interactive_ready: interactiveReady }}
           onOpenTerminal={openTerminal}
         />,
       );
       const input = screen.getByRole('textbox', { name: 'Chat prompt' });
       expect(input).toBeDisabled();
-      expect(screen.getByText(message)).toBeInTheDocument();
+      expect(
+        screen.getByText('Agent is starting. Chat will be ready when launch completes.'),
+      ).toBeInTheDocument();
       fireEvent.change(input, { target: { value: 'first prompt' } });
       fireEvent.submit(input.closest('form') as HTMLFormElement);
       expect(prompt).not.toHaveBeenCalled();
@@ -966,7 +965,7 @@ describe('ConversationChatPanel onboarding', () => {
       view.rerender(
         <ConversationChatPanel
           pane={initialPane}
-          agentReadiness={{ launch_pending: false, interactive_ready: true }}
+          agentReadiness={{ launch_pending: false, interactive_ready: false }}
         />,
       );
       expect(input).toBeEnabled();
@@ -977,8 +976,51 @@ describe('ConversationChatPanel onboarding', () => {
     },
   );
 
-  it('keeps a ready first prompt usable while explaining the missing transcript', async () => {
-    const prompt = vi.fn(async () => ({}));
+  it.each(['no_session', 'transcript_missing'] as const)(
+    'sends an unmanaged agent its first chat prompt with interactive_ready=false (%s)',
+    async (reason) => {
+      const prompt = vi.fn(async () => ({}));
+      window.herdr = {
+        conversation: {
+          read: vi.fn(),
+          prompt,
+          subscribe: vi.fn(async () => undefined),
+          unsubscribe: vi.fn(async () => undefined),
+        },
+        onSessionEvent: vi.fn(() => () => undefined),
+      } as unknown as Window['herdr'];
+      render(
+        <ConversationChatPanel
+          pane={pane('w1:p1', {
+            conversation_capability: { availability: 'unavailable', reason },
+          })}
+          agentReadiness={{ launch_pending: false, interactive_ready: false }}
+        />,
+      );
+      const input = screen.getByRole('textbox', { name: 'Chat prompt' });
+      expect(input).toBeEnabled();
+      expect(
+        screen.getByText(
+          'No conversation transcript yet. Your first prompt will start the conversation.',
+        ),
+      ).toBeInTheDocument();
+      fireEvent.change(input, { target: { value: 'create transcript' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await waitFor(() =>
+        expect(prompt).toHaveBeenCalledWith({ target: 'w1:p1', text: 'create transcript' }),
+      );
+      expect(await screen.findByText('Sent · transcript unavailable')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.',
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    },
+  );
+
+  it('shows an engine prompt rejection instead of reporting a missing transcript as success', async () => {
+    const prompt = vi.fn().mockRejectedValue(new Error('Agent is blocked awaiting permission.'));
     window.herdr = {
       conversation: {
         read: vi.fn(),
@@ -991,27 +1033,20 @@ describe('ConversationChatPanel onboarding', () => {
     render(
       <ConversationChatPanel
         pane={pane('w1:p1', {
+          agent_status: 'blocked',
           conversation_capability: { availability: 'unavailable', reason: 'transcript_missing' },
         })}
-        agentReadiness={{ launch_pending: false, interactive_ready: true }}
+        agentReadiness={{ launch_pending: false, interactive_ready: false }}
       />,
     );
     const input = screen.getByRole('textbox', { name: 'Chat prompt' });
-    expect(input).toBeEnabled();
-    expect(
-      screen.getByText(
-        'No conversation transcript yet. Your first prompt will start the conversation.',
-      ),
-    ).toBeInTheDocument();
-    fireEvent.change(input, { target: { value: 'create transcript' } });
+    fireEvent.change(input, { target: { value: 'continue' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(await screen.findByText('Sent · transcript unavailable')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+    expect(await screen.findByText('Agent is blocked awaiting permission.')).toBeInTheDocument();
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.queryByText('Sent · transcript unavailable')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
   });
 
   it.each([

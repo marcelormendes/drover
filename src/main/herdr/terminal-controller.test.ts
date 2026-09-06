@@ -148,6 +148,7 @@ describe('TerminalController', () => {
 
     child.stderr.write('herdr: terminal is already controlled\n');
     child.emit('exit', 1, null);
+    child.emit('close', 1, null);
 
     await vi.waitFor(() => {
       expect(events).toHaveBeenCalledWith({
@@ -163,6 +164,35 @@ describe('TerminalController', () => {
     });
   });
 
+  it.each(['before', 'after'] as const)(
+    'reports a protocol closure exactly once when stdout drains %s process exit',
+    async (order) => {
+      const child = fakeProcess();
+      const events = vi.fn();
+      const controller = new TerminalController(() => child, 'herdr');
+      controller.open({ paneId: 'w1:p3', cols: 80, rows: 24 }, events);
+      if (order === 'after') {
+        child.emit('exit', 0, null);
+      }
+      child.stdout.write(
+        `${JSON.stringify({
+          type: 'terminal.closed',
+          reason: 'Server restarted for update.',
+        })}\n`,
+      );
+      if (order === 'before') {
+        child.emit('exit', 0, null);
+      }
+      child.emit('close', 0, null);
+      await vi.waitFor(() => expect(events).toHaveBeenCalledTimes(1));
+      expect(events).toHaveBeenCalledWith({
+        type: 'terminal.closed',
+        paneId: 'w1:p3',
+        reason: 'Server restarted for update.',
+      });
+    },
+  );
+
   it('explains a clean exit as control moving to another client', async () => {
     const child = fakeProcess();
     const events = vi.fn();
@@ -170,6 +200,7 @@ describe('TerminalController', () => {
     controller.open({ paneId: 'w1:p3', cols: 80, rows: 24 }, events);
 
     child.emit('exit', 0, null);
+    child.emit('close', 0, null);
 
     await vi.waitFor(() => {
       expect(events).toHaveBeenCalledWith({
@@ -191,6 +222,7 @@ describe('TerminalController', () => {
 
     controller.kill();
     child.emit('exit', 0, null);
+    child.emit('close', 0, null);
 
     expect(writes).toEqual([]);
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
