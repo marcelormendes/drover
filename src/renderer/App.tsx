@@ -106,7 +106,7 @@ import {
   pluginPlatformFromNavigator,
 } from '@/renderer/plugins/plugin-platform';
 import { MobileSwitcher, type MobileSwitcherSection } from '@/renderer/responsive';
-import { SettingsDialog } from '@/renderer/settings/SettingsDialog';
+import { type IntegrationSummary, SettingsDialog } from '@/renderer/settings/SettingsDialog';
 import { StatusDot } from '@/renderer/status';
 import { TerminalPanel } from '@/renderer/terminal/TerminalPanel';
 import {
@@ -2108,6 +2108,23 @@ function AppContent() {
   const [pluginError, setPluginError] = useState<string>();
   const [manifestStatus, setManifestStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [manifests, setManifests] = useState<AgentManifestInfo[]>([]);
+  const [integrations, setIntegrations] = useState<IntegrationSummary[]>([]);
+  const [integrationStatus, setIntegrationStatus] = useState<'loading' | 'ready' | 'error'>(
+    'loading',
+  );
+  const [integrationError, setIntegrationError] = useState<string>();
+  const [integrationAction, setIntegrationAction] = useState<{
+    id: string;
+    operation: 'install' | 'uninstall';
+  }>();
+  const [integrationNotice, setIntegrationNotice] = useState<{
+    id: string;
+    message: string;
+    error?: boolean;
+  }>();
+  const integrationReadSequence = useRef(0);
+  const integrationActionPending = useRef(false);
+  const integrationSourceRef = useRef<string | undefined>(undefined);
   const [connectionState, setConnectionState] = useState<HerdrEventConnectionState>('connecting');
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdateInfo | null>(null);
   const [preferences, setPreferences] = useState<DesktopPreferences>(DEFAULT_DESKTOP_PREFERENCES);
@@ -2395,6 +2412,118 @@ function AppContent() {
     }
   }, []);
 
+  const loadIntegrations = useCallback(async () => {
+    const sequence = ++integrationReadSequence.current;
+    setIntegrationStatus('loading');
+    setIntegrationError(undefined);
+    setIntegrationNotice(undefined);
+    try {
+      const response = await window.herdr.query({ type: 'get-integration-status' });
+      if (response.type !== 'integration-status')
+        throw new Error('Herdr returned an unexpected integration status response.');
+      if (sequence !== integrationReadSequence.current) return;
+      setIntegrations(
+        response.integrations.map((item) => ({
+          id: item.id,
+          label:
+            (
+              { pi: 'Pi', omp: 'OMP', claude: 'Claude Code', codex: 'Codex' } as Record<
+                string,
+                string
+              >
+            )[item.id] ?? item.id,
+          status: item.status,
+          detail:
+            item.status === 'current'
+              ? `Connector${item.version ? ` ${item.version}` : ''} installed.`
+              : item.status === 'outdated'
+                ? 'Install the current connector to update or repair its configuration.'
+                : item.status === 'missing'
+                  ? 'Install the connector to enable Herdr updates from this CLI.'
+                  : 'This engine cannot report or manage this connector on this platform.',
+        })),
+      );
+      setIntegrationStatus('ready');
+      return response.integrations;
+    } catch (error) {
+      if (sequence !== integrationReadSequence.current) return;
+      setIntegrationStatus('error');
+      setIntegrationError(
+        error instanceof Error ? error.message : 'Could not check integration status.',
+      );
+    }
+  }, []);
+  const integrationBinary = result && 'status' in result ? result.status.client.binary : undefined;
+  const integrationVersion =
+    result && 'status' in result ? result.status.client.version : undefined;
+  const integrationSource = `${integrationBinary ?? ''}:${integrationVersion ?? ''}:${remoteStatus.state}:${remoteStatus.host}:${remoteStatus.port}`;
+  useEffect(() => {
+    if (integrationSourceRef.current !== integrationSource) {
+      integrationSourceRef.current = integrationSource;
+      setIntegrations([]);
+      setIntegrationNotice(undefined);
+    }
+    if (settingsOpen) void loadIntegrations();
+    return () => {
+      integrationReadSequence.current += 1;
+    };
+  }, [settingsOpen, integrationSource, loadIntegrations]);
+
+  const changeIntegration = useCallback(
+    async (id: string, operation: 'install' | 'uninstall') => {
+      if (
+        integrationActionPending.current ||
+        !INTEGRATION_TARGETS.includes(id as (typeof INTEGRATION_TARGETS)[number])
+      )
+        return;
+      integrationActionPending.current = true;
+      setIntegrationAction({ id, operation });
+      setIntegrationNotice(undefined);
+      try {
+        const target = id as (typeof INTEGRATION_TARGETS)[number];
+        const next = await runCommand(
+          operation === 'install'
+            ? { type: 'install-integration', target }
+            : { type: 'uninstall-integration', target },
+        );
+        if (next.state !== 'connected')
+          throw new Error(
+            next.state === 'error' || next.state === 'missing'
+              ? next.message
+              : 'Start a compatible Herdr engine to change integrations.',
+          );
+        const current = await loadIntegrations();
+        if (!current)
+          throw new Error(
+            'The operation completed, but its status could not be verified. Refresh integrations to check.',
+          );
+        const status = current.find((item) => item.id === id)?.status;
+        if (status !== (operation === 'install' ? 'current' : 'missing'))
+          throw new Error(
+            'Herdr completed the request, but the connector did not reach the expected status. Refresh or try again.',
+          );
+        setIntegrationNotice({
+          id,
+          message:
+            operation === 'install'
+              ? 'Connector installed successfully. Start a new agent session to load it.'
+              : 'Connector removed successfully.',
+        });
+      } catch (error) {
+        setIntegrationNotice({
+          id,
+          error: true,
+          message:
+            error instanceof Error ? error.message : 'The integration operation failed. Try again.',
+        });
+      } finally {
+        integrationActionPending.current = false;
+        setIntegrationAction(undefined);
+      }
+    },
+    [runCommand, loadIntegrations],
+  );
+
   const openSettings = useCallback(() => {
     setSettingsOpen(true);
     void loadManifests();
@@ -2675,23 +2804,17 @@ function AppContent() {
   const settings = (
     <SettingsDialog
       binary={binary}
-      busy={busy}
-      integrations={INTEGRATION_TARGETS.map((target) => ({
-        id: target,
-        label: target,
-        status: 'available' as const,
-        detail:
-          'Herdr can install or repair this integration. Structured status is not public yet.',
-      }))}
+      busy={busy || integrationAction !== undefined}
+      integrations={integrations}
+      integrationStatus={integrationStatus}
+      integrationError={integrationError}
+      integrationAction={integrationAction}
+      integrationNotice={integrationNotice}
+      onReloadIntegrations={() => void loadIntegrations()}
       manifestStatus={manifestStatus}
       manifests={manifests}
       onChooseBinary={() => void chooseBinary()}
-      onInstallIntegration={(target) =>
-        void runCommand({
-          type: 'install-integration',
-          target: target as (typeof INTEGRATION_TARGETS)[number],
-        })
-      }
+      onInstallIntegration={(target) => void changeIntegration(target, 'install')}
       onApplyRemoteEngine={(target) =>
         window.herdr.applyRemoteEngine(target).then((status) => {
           setRemoteStatus(status);
@@ -2706,12 +2829,7 @@ function AppContent() {
         void runCommand({ type: 'reload-agent-manifests' }).then(loadManifests)
       }
       onResetBinary={() => void resetBinary()}
-      onUninstallIntegration={(target) =>
-        void runCommand({
-          type: 'uninstall-integration',
-          target: target as (typeof INTEGRATION_TARGETS)[number],
-        })
-      }
+      onUninstallIntegration={(target) => void changeIntegration(target, 'uninstall')}
       open={settingsOpen}
       preferences={preferences}
       remoteStatus={remoteStatus}

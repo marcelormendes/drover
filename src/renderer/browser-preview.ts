@@ -105,6 +105,8 @@ export function createBrowserPreviewApi(): DroverApi {
         return { type: 'plugin-list', plugins: [] };
       case 'list-plugin-actions':
         return { type: 'plugin-action-list', actions: [] };
+      case 'get-integration-status':
+        return { type: 'integration-status', integrations: [] };
       case 'get-agent-manifests':
         return { type: 'agent-manifests', manifests: [] };
       case 'list-worktrees':

@@ -523,7 +523,7 @@ function paneMoveDestination(destination: PaneMoveDestination): Record<string, u
   }
 }
 
-function queryRequest(query: HerdrQuery): {
+function queryRequest(query: Exclude<HerdrQuery, { type: 'get-integration-status' }>): {
   method: string;
   params: Record<string, unknown>;
 } {
@@ -675,6 +675,12 @@ export class HerdrEngine {
   }
 
   async query(query: HerdrQuery): Promise<HerdrQueryResult> {
+    if (query.type === 'get-integration-status') {
+      // This CLI inspects local integration files and does not require a server.
+      // The main-process IPC handler must reject it when using a remote engine.
+      const { stdout } = await this.runner.run(['integration', 'status']);
+      return decodeHerdrQueryResult(query, stdout);
+    }
     const status = parseStatus((await this.runner.run(['status', '--json'])).stdout);
     if (!status.server.running) {
       throw new Error('Herdr server is not running.');

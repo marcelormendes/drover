@@ -730,6 +730,7 @@ export function parseHerdrQuery(value: unknown): HerdrQuery {
       }
       break;
     case 'get-agent-manifests':
+    case 'get-integration-status':
       return { type: value.type };
     case 'list-plugins':
     case 'list-plugin-actions':

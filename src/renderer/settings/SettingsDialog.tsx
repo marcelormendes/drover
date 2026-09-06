@@ -42,6 +42,11 @@ interface SettingsDialogProps {
   busy: boolean;
   preferences: DesktopPreferences;
   integrations: IntegrationSummary[];
+  integrationStatus?: 'loading' | 'ready' | 'error';
+  integrationError?: string;
+  integrationAction?: { id: string; operation: 'install' | 'uninstall' };
+  integrationNotice?: { id: string; message: string; error?: boolean };
+  onReloadIntegrations?: () => void;
   manifestStatus: 'loading' | 'ready' | 'error';
   manifests: AgentManifestInfo[];
   onOpenChange: (open: boolean) => void;
@@ -71,6 +76,11 @@ export function SettingsDialog({
   busy,
   preferences,
   integrations,
+  integrationStatus = 'ready',
+  integrationError,
+  integrationAction,
+  integrationNotice,
+  onReloadIntegrations,
   manifestStatus,
   manifests,
   onOpenChange,
@@ -215,6 +225,28 @@ export function SettingsDialog({
 
             <div className="sm:col-span-2">
               <SettingSection title="Integrations">
+                <p className="mb-3 text-sm opacity-70">
+                  Connect installed agent CLIs to Herdr for status and conversation updates.
+                  Installing a connector does not install the CLI or sign you in.
+                </p>
+                {onReloadIntegrations ? (
+                  <Button
+                    variant="neutral"
+                    size="sm"
+                    className="mb-3"
+                    disabled={busy || integrationStatus === 'loading'}
+                    onClick={onReloadIntegrations}
+                  >
+                    {integrationStatus === 'loading'
+                      ? 'Checking integrations…'
+                      : 'Refresh integrations'}
+                  </Button>
+                ) : null}
+                {integrationStatus === 'error' ? (
+                  <p role="alert" className="mb-3 text-sm">
+                    {integrationError || 'Could not check integration status. Try refreshing.'}
+                  </p>
+                ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">
                   {integrations.length ? (
                     integrations.map((integration) => (
@@ -225,39 +257,69 @@ export function SettingsDialog({
                         <div className="flex items-center gap-2">
                           <span className="font-heading">{integration.label}</span>
                           <Badge className="ml-auto" variant="neutral">
-                            {integration.status}
+                            {
+                              {
+                                current: 'Installed',
+                                outdated: 'Needs attention',
+                                missing: 'Not installed',
+                                available: 'Available',
+                                unavailable: 'Unavailable',
+                              }[integration.status]
+                            }
                           </Badge>
                         </div>
                         {integration.detail ? (
                           <p className="mt-2 text-xs opacity-70">{integration.detail}</p>
                         ) : null}
                         <div className="mt-3 flex gap-2">
-                          {integration.status !== 'current' ? (
+                          {integration.status !== 'unavailable' ? (
                             <Button
-                              aria-label={`Install ${integration.label} integration`}
-                              disabled={busy || integration.status === 'unavailable'}
+                              aria-label={`${integration.status === 'current' ? 'Repair' : integration.status === 'outdated' ? 'Update' : 'Install'} ${integration.label} integration`}
+                              disabled={busy || integrationStatus !== 'ready'}
                               onClick={() => onInstallIntegration(integration.id)}
                               size="sm"
                             >
-                              {integration.status === 'outdated' ? 'Update' : 'Install'}
+                              {integrationAction?.id === integration.id &&
+                              integrationAction.operation === 'install'
+                                ? 'Installing…'
+                                : integration.status === 'current'
+                                  ? 'Repair'
+                                  : integration.status === 'outdated'
+                                    ? 'Update'
+                                    : 'Install'}
                             </Button>
                           ) : null}
                           {integration.status === 'current' || integration.status === 'outdated' ? (
                             <Button
                               aria-label={`Uninstall ${integration.label} integration`}
-                              disabled={busy}
+                              disabled={busy || integrationStatus !== 'ready'}
                               onClick={() => onUninstallIntegration(integration.id)}
                               size="sm"
                               variant="neutral"
                             >
-                              Uninstall
+                              {integrationAction?.id === integration.id &&
+                              integrationAction.operation === 'uninstall'
+                                ? 'Removing…'
+                                : 'Uninstall'}
                             </Button>
                           ) : null}
                         </div>
+                        {integrationNotice?.id === integration.id ? (
+                          <p
+                            className="mt-3 text-sm"
+                            role={integrationNotice.error ? 'alert' : 'status'}
+                          >
+                            {integrationNotice.message}
+                          </p>
+                        ) : null}
                       </div>
                     ))
                   ) : (
-                    <p className="text-sm opacity-70">No integration status is available.</p>
+                    <p className="text-sm opacity-70">
+                      {integrationStatus === 'loading'
+                        ? 'Checking integration status…'
+                        : 'No integration status is available.'}
+                    </p>
                   )}
                 </div>
               </SettingSection>
@@ -348,7 +410,7 @@ export function SettingsDialog({
                   <Switch
                     aria-label="Use a remote Herdr engine"
                     checked={preferences.remoteEngine.enabled}
-                    disabled={applying}
+                    disabled={busy || applying}
                     id="remote-engine-switch"
                     onCheckedChange={(checked) => {
                       update('remoteEngine', {

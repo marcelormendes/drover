@@ -117,6 +117,9 @@ describe('IPC validation', () => {
     expect(parseHerdrQuery({ type: 'get-agent-manifests' })).toEqual({
       type: 'get-agent-manifests',
     });
+    expect(parseHerdrQuery({ type: 'get-integration-status' })).toEqual({
+      type: 'get-integration-status',
+    });
     expect(parseHerdrQuery({ type: 'list-plugins', pluginId: 'example.review' })).toEqual({
       type: 'list-plugins',
       pluginId: 'example.review',

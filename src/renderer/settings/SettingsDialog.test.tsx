@@ -67,6 +67,10 @@ describe('SettingsDialog', () => {
       sound: false,
     });
 
+    expect(screen.getByText('Installed')).toBeVisible();
+    expect(screen.getByText('Not installed')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Repair Codex integration' }));
+    expect(onInstallIntegration).toHaveBeenCalledWith('codex');
     await user.click(screen.getByRole('button', { name: 'Install Claude integration' }));
     expect(onInstallIntegration).toHaveBeenCalledWith('claude');
     await user.click(screen.getByRole('button', { name: 'Uninstall Codex integration' }));

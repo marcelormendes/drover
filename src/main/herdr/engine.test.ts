@@ -804,6 +804,39 @@ describe('HerdrEngine.conversationMetadata', () => {
 });
 
 describe('HerdrEngine.query', () => {
+  it('reads local integration status without a running server or socket request', async () => {
+    const runner = createRunner(async (args) => {
+      if (args.join(' ') !== 'integration status') throw new Error('Server is stopped');
+      return { stdout: 'codex: current (v9) (/tmp/codex.sh)\n', stderr: '' };
+    });
+    const requestClient = { request: vi.fn() };
+    const engine = new HerdrEngine(
+      runner,
+      { launch: vi.fn() },
+      async () => undefined,
+      requestClient,
+    );
+    const result = await engine.query({ type: 'get-integration-status' });
+    expect(runner.run).toHaveBeenCalledExactlyOnceWith(['integration', 'status']);
+    expect(requestClient.request).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      type: 'integration-status',
+      integrations: expect.arrayContaining([
+        { id: 'codex', status: 'current', version: 'v9', path: '/tmp/codex.sh' },
+      ]),
+    });
+  });
+
+  it('reports integration CLI failures instead of guessing installation state', async () => {
+    const runner = createRunner(async () => {
+      throw new Error('Herdr is unavailable');
+    });
+    const engine = new HerdrEngine(runner, { launch: vi.fn() });
+    await expect(engine.query({ type: 'get-integration-status' })).rejects.toThrow(
+      'Herdr is unavailable',
+    );
+  });
+
   it.each([
     {
       query: { type: 'read-pane-output', paneId: 'w1:p1', source: 'visible', lines: 80 } as const,

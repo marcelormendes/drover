@@ -238,6 +238,15 @@ export const INTEGRATION_TARGETS = [
 ] as const;
 
 export type IntegrationTarget = (typeof INTEGRATION_TARGETS)[number];
+
+export interface IntegrationStatusInfo {
+  id: IntegrationTarget;
+  status: 'current' | 'outdated' | 'missing' | 'unavailable';
+  version?: string;
+  expectedVersion?: string;
+  path?: string;
+  needsRepair?: boolean;
+}
 export type PluginPanePlacement = 'overlay' | 'popup' | 'split' | 'tab' | 'zoomed';
 export type PopupSize = number | `${number}%`;
 
@@ -269,6 +278,7 @@ export type HerdrQuery =
   | { type: 'read-pane-output'; paneId: string; lines?: number; ansi?: boolean; source?: 'visible' }
   | { type: 'list-worktrees'; workspaceId?: string; cwd?: string }
   | { type: 'get-agent-manifests' }
+  | { type: 'get-integration-status' }
   | { type: 'list-plugins'; pluginId?: string }
   | { type: 'list-plugin-actions'; pluginId?: string };
 
@@ -382,6 +392,7 @@ export interface PluginActionInfo {
 }
 
 export type HerdrQueryResult =
+  | { type: 'integration-status'; integrations: IntegrationStatusInfo[] }
   | {
       type: 'pane-output';
       paneId: string;

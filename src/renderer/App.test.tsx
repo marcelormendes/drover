@@ -1839,6 +1839,212 @@ describe('App', () => {
     expect(screen.getByRole('tab', { name: /Agents, 1 total/i })).toBeInTheDocument();
   });
 
+  it('loads real integration statuses before enabling connector actions and refreshes them', async () => {
+    const user = userEvent.setup();
+    type IntegrationResponse = Extract<HerdrQueryResult, { type: 'integration-status' }>;
+    let finishRead!: (value: IntegrationResponse) => void;
+    const read = vi.fn(
+      () =>
+        new Promise<IntegrationResponse>((resolve) => {
+          finishRead = resolve;
+        }),
+    );
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'get-integration-status' ? read() : { type: 'plugin-list', plugins: [] },
+    );
+    render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByText('Checking integration status…')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Checking integrations…' })).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: /(?:Install|Repair) .* integration/ }),
+    ).not.toBeInTheDocument();
+    await act(async () =>
+      finishRead({
+        type: 'integration-status',
+        integrations: [
+          { id: 'codex', status: 'current', version: '12' },
+          { id: 'pi', status: 'missing' },
+          { id: 'omp', status: 'outdated' },
+          { id: 'claude', status: 'unavailable' },
+        ],
+      }),
+    );
+    expect(screen.getByText('Installed')).toBeVisible();
+    expect(screen.getByText('Not installed')).toBeVisible();
+    expect(screen.getByText('Needs attention')).toBeVisible();
+    expect(screen.getByText('Unavailable')).toBeVisible();
+    expect(screen.getByText('Connector 12 installed.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Repair Codex integration' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Install Pi integration' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Update OMP integration' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Install Claude Code integration' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Refresh integrations' }));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Repair Codex integration' })).toBeDisabled();
+    await act(async () =>
+      finishRead({
+        type: 'integration-status',
+        integrations: [{ id: 'pi', status: 'current', version: '11' }],
+      }),
+    );
+    expect(screen.getByRole('button', { name: 'Repair Pi integration' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Repair Codex integration' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { initialStatus: 'missing', reload: 'reopening' },
+    { initialStatus: 'current', reload: 'refresh' },
+  ] as const)(
+    'verifies $initialStatus connector installation and clears stale success on $reload',
+    async ({ initialStatus, reload }) => {
+      const user = userEvent.setup();
+      let status: 'missing' | 'current' = initialStatus;
+      vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+        query.type === 'get-integration-status'
+          ? { type: 'integration-status', integrations: [{ id: 'codex', status }] }
+          : { type: 'plugin-list', plugins: [] },
+      );
+      let finishCommand!: (value: EngineBootstrap) => void;
+      vi.mocked(window.herdr.command).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishCommand = resolve;
+          }),
+      );
+      render(<App />);
+      await screen.findByRole('heading', { name: 'drover' });
+      await user.click(screen.getByRole('button', { name: 'Settings' }));
+      const install = await screen.findByRole('button', {
+        name: `${initialStatus === 'current' ? 'Repair' : 'Install'} Codex integration`,
+      });
+      act(() => {
+        fireEvent.click(install);
+        fireEvent.click(install);
+      });
+      expect(window.herdr.command).toHaveBeenCalledTimes(1);
+      expect(window.herdr.command).toHaveBeenCalledWith({
+        type: 'install-integration',
+        target: 'codex',
+      });
+      expect(install).toBeDisabled();
+      expect(install).toHaveTextContent('Installing…');
+      expect(screen.getByRole('button', { name: 'Refresh integrations' })).toBeDisabled();
+      expect(screen.getByRole('switch', { name: 'Use a remote Herdr engine' })).toBeDisabled();
+      expect(screen.queryByText(/Connector installed successfully/)).not.toBeInTheDocument();
+      status = 'current';
+      await act(async () => finishCommand(connected));
+      const success = 'Connector installed successfully. Start a new agent session to load it.';
+      expect(await screen.findByText(success)).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Repair Codex integration' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Uninstall Codex integration' })).toBeEnabled();
+      // Another client removes the connector after this successful operation.
+      status = 'missing';
+      if (reload === 'reopening') {
+        await user.click(screen.getByRole('button', { name: 'Close' }));
+        await user.click(screen.getByRole('button', { name: 'Settings' }));
+      } else {
+        await user.click(screen.getByRole('button', { name: 'Refresh integrations' }));
+      }
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Install Codex integration' })).toBeEnabled(),
+      );
+      expect(screen.getByText('Not installed')).toBeVisible();
+      expect(screen.queryByText(success)).not.toBeInTheDocument();
+    },
+  );
+
+  it('verifies connector removal before offering installation again', async () => {
+    const user = userEvent.setup();
+    let status: 'current' | 'missing' = 'current';
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'get-integration-status'
+        ? { type: 'integration-status', integrations: [{ id: 'pi', status }] }
+        : { type: 'plugin-list', plugins: [] },
+    );
+    vi.mocked(window.herdr.command).mockImplementation(async () => {
+      status = 'missing';
+      return connected;
+    });
+    render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Uninstall Pi integration' }));
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'uninstall-integration',
+      target: 'pi',
+    });
+    expect(await screen.findByText('Connector removed successfully.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Install Pi integration' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Uninstall Pi integration' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps a rejected connector operation retryable without showing success', async () => {
+    const user = userEvent.setup();
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'get-integration-status'
+        ? { type: 'integration-status', integrations: [{ id: 'codex', status: 'missing' }] }
+        : { type: 'plugin-list', plugins: [] },
+    );
+    vi.mocked(window.herdr.command).mockRejectedValue(
+      new Error('Connector directory is not writable.'),
+    );
+    render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Install Codex integration' }));
+    expect(await screen.findByText('Connector directory is not writable.')).toHaveAttribute(
+      'role',
+      'alert',
+    );
+    expect(screen.queryByText(/Connector installed successfully/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Install Codex integration' })).toBeEnabled();
+    expect(screen.getByText('Not installed')).toBeVisible();
+  });
+
+  it.each(['unreadable', 'unchanged'] as const)(
+    'does not claim installation success when verification is %s',
+    async (failure) => {
+      const user = userEvent.setup();
+      let verifying = false;
+      vi.mocked(window.herdr.query).mockImplementation(async (query) => {
+        if (query.type !== 'get-integration-status') return { type: 'plugin-list', plugins: [] };
+        if (verifying && failure === 'unreadable') throw new Error('Status lookup failed.');
+        return { type: 'integration-status', integrations: [{ id: 'omp', status: 'missing' }] };
+      });
+      vi.mocked(window.herdr.command).mockImplementation(async () => {
+        verifying = true;
+        return connected;
+      });
+      render(<App />);
+      await screen.findByRole('heading', { name: 'drover' });
+      await user.click(screen.getByRole('button', { name: 'Settings' }));
+      await user.click(await screen.findByRole('button', { name: 'Install OMP integration' }));
+      const message =
+        failure === 'unreadable'
+          ? 'The operation completed, but its status could not be verified. Refresh integrations to check.'
+          : 'Herdr completed the request, but the connector did not reach the expected status. Refresh or try again.';
+      expect(await screen.findByText(message)).toHaveAttribute('role', 'alert');
+      expect(screen.queryByText(/Connector installed successfully/)).not.toBeInTheDocument();
+      expect(screen.getByText('Not installed')).toBeVisible();
+      if (failure === 'unreadable') {
+        expect(screen.getByRole('button', { name: 'Install OMP integration' })).toBeDisabled();
+        verifying = false;
+        await user.click(screen.getByRole('button', { name: 'Refresh integrations' }));
+        await waitFor(() =>
+          expect(screen.getByRole('button', { name: 'Install OMP integration' })).toBeEnabled(),
+        );
+      }
+    },
+  );
+
   it('shows the active engine binary and can choose a new one without terminal setup', async () => {
     const user = userEvent.setup();
     render(<App />);
