@@ -1534,7 +1534,7 @@ function ConversationChatPanelForPane({
           />
         </div>
         <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 pl-[14px]">
             <ConversationStatusStrip pane={pane} />
           </div>
           <Button
