@@ -799,7 +799,7 @@ function ConversationChatPanelForPane({
     if ((!text && attachments.length === 0) || sending || promptBlocked) {
       return;
     }
-    const submittedStartedMs = workingStartedMsByPane.get(pane.pane_id) ?? Date.now();
+    const submittedStartedMs = Date.now();
     workingStartedMsByPane.set(pane.pane_id, submittedStartedMs);
     setStatusStartedMs(submittedStartedMs);
     setSending(true);
@@ -902,18 +902,63 @@ function ConversationChatPanelForPane({
       return null;
     }
     const plan = latestPlanUpdate(store.items);
+    let latestUserIndex = -1;
+    for (let index = store.items.length - 1; index >= 0; index -= 1) {
+      const item = store.items[index];
+      if (
+        item.type === 'user_message' &&
+        !isClaudeAdministrativeMessage(item) &&
+        !item.text.trimStart().startsWith('<task-notification>')
+      ) {
+        latestUserIndex = index;
+        break;
+      }
+    }
+    const latestUser = store.items[latestUserIndex];
+    // Retry hooks can leave an unmatched start behind. A newer user turn
+    // supersedes that history, but keeps lifecycle items for its own turn even
+    // when the durable user message was inserted after the live start event.
+    const belongsToCurrentActivity = (item: ConversationItem, index: number) => {
+      if (latestUserIndex < 0 || item.turn_id === latestUser?.turn_id) {
+        return true;
+      }
+      const activityTime =
+        item.type === 'turn_state' ? (item.started_ms ?? item.timestamp_ms) : item.timestamp_ms;
+      if (activityTime !== undefined && latestUser?.timestamp_ms !== undefined) {
+        return activityTime >= latestUser.timestamp_ms;
+      }
+      return index >= latestUserIndex;
+    };
+    const isSettledAnswer = (item: ConversationItem) =>
+      item.type === 'assistant_message' &&
+      item.phase === 'final' &&
+      (item.state === 'completed' ||
+        item.state === 'failed' ||
+        item.state === 'interrupted' ||
+        !paneWorking);
+    const pendingTurn = store.pending.some((pending) => pending.status !== 'failed');
+    if (
+      sending ||
+      store.pending.some((pending) => pending.status === 'queued') ||
+      (pendingTurn && paneWorking)
+    ) {
+      return { startedMs: statusStartedMs, plan };
+    }
     let latestState: Extract<ConversationItem, { type: 'turn_state' }> | undefined;
     let latestStateIndex = -1;
     for (let index = store.items.length - 1; index >= 0; index -= 1) {
       const item = store.items[index];
-      if (item.type === 'turn_state') {
+      if (item.type === 'turn_state' && belongsToCurrentActivity(item, index)) {
         latestState = item;
         latestStateIndex = index;
         break;
       }
     }
     const runningTool = store.items.some(
-      (item) => item.type === 'tool_activity' && item.status === 'running',
+      (item, index) =>
+        item.type === 'tool_activity' &&
+        item.status === 'running' &&
+        belongsToCurrentActivity(item, index),
     );
     // A provider can leave a tool in `running` when its terminal event is
     // missed, so a settled latest turn must not stay pinned on a stale tool.
@@ -926,11 +971,7 @@ function ConversationChatPanelForPane({
       let finalAnswerReceived = false;
       for (let index = latestStateIndex + 1; index < store.items.length; index += 1) {
         const item = store.items[index];
-        if (
-          item.type === 'assistant_message' &&
-          item.phase === 'final' &&
-          item.turn_id === latestState.turn_id
-        ) {
+        if (isSettledAnswer(item) && item.turn_id === latestState.turn_id) {
           finalAnswerReceived = true;
           break;
         }
@@ -941,17 +982,6 @@ function ConversationChatPanelForPane({
           plan,
         };
       }
-    }
-    const pendingTurn = store.pending.some((pending) => pending.status !== 'failed');
-    if (
-      sending ||
-      store.pending.some((pending) => pending.status === 'queued') ||
-      (pendingTurn && paneWorking)
-    ) {
-      return {
-        startedMs: statusStartedMs,
-        plan,
-      };
     }
     if (runningTool && !latestTurnSettled) {
       return {
@@ -978,12 +1008,10 @@ function ConversationChatPanelForPane({
       activeUserIndex >= 0 &&
       store.items
         .slice(activeUserIndex + 1)
-        .some(
-          (item) =>
-            item.type === 'assistant_message' &&
-            item.phase === 'final' &&
-            item.turn_id === activeTurnId,
-        );
+        .some((item) => isSettledAnswer(item) && item.turn_id === activeTurnId);
+    if (activeTurnAnswered) {
+      return null;
+    }
     if (
       !paneWorking &&
       (activeTurnAnswered || activeTurnId === undefined || statusStartedMs === undefined)
@@ -994,7 +1022,7 @@ function ConversationChatPanelForPane({
       return null;
     }
     return {
-      startedMs: statusStartedMs,
+      startedMs: latestUser?.timestamp_ms ?? statusStartedMs,
       plan,
     };
   }, [

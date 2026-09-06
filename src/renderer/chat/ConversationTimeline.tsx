@@ -94,17 +94,35 @@ export function formatDuration(milliseconds: number | undefined): string | null 
 }
 
 function projectTurns(items: readonly ConversationItem[]): TurnProjection[] {
-  const turns = new Map<string, TurnProjection>();
+  const turns: TurnProjection[] = [];
+  const currentByTurn = new Map<
+    string,
+    { turn: TurnProjection; hasUser: boolean; hasResponse: boolean }
+  >();
   for (const item of items) {
-    const id = item.turn_id ? `turn:${item.turn_id}` : `item:${item.id}`;
-    const turn = turns.get(id);
-    if (turn) {
-      turn.items.push(item);
-    } else {
-      turns.set(id, { id, items: [item] });
+    const providerTurn = item.turn_id ? `turn:${item.turn_id}` : `item:${item.id}`;
+    let current = currentByTurn.get(providerTurn);
+    // Some providers reuse a turn ID across several user/reply exchanges.
+    // Keep their work together without moving a later user ahead of a reply.
+    if (!current || (item.type === 'user_message' && current.hasResponse)) {
+      current = {
+        turn: { id: `${providerTurn}:item:${item.id}`, items: [] },
+        hasUser: false,
+        hasResponse: false,
+      };
+      currentByTurn.set(providerTurn, current);
+      turns.push(current.turn);
     }
+    if (item.type === 'user_message' && !current.hasUser) {
+      // Anchor to the user rather than a page-relative segment counter or a
+      // lifecycle record that may only appear after loading older history.
+      current.turn.id = `${providerTurn}:user:${item.id}`;
+      current.hasUser = true;
+    }
+    current.turn.items.push(item);
+    if (item.type !== 'user_message' && item.type !== 'turn_state') current.hasResponse = true;
   }
-  return [...turns.values()];
+  return turns;
 }
 
 const Turn = memo(function Turn({
@@ -515,17 +533,29 @@ const GroupedTools = memo(function GroupedTools({ items }: { items: ToolActivity
   );
 });
 
+function isCodexSessionContext(item: Extract<ConversationItem, { type: 'user_message' }>): boolean {
+  if (item.provider !== 'codex') return false;
+  const text = item.text.trim();
+  const instructions = /^# AGENTS\.md instructions\s+<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>/.exec(
+    text,
+  );
+  const remaining = instructions ? text.slice(instructions[0].length).trim() : text;
+  if (instructions && remaining.length === 0) return true;
+  const closing = '</environment_context>';
+  return (
+    remaining.startsWith('<environment_context>') &&
+    remaining.endsWith(closing) &&
+    remaining.indexOf(closing) === remaining.length - closing.length
+  );
+}
+
 const UserMessage = memo(function UserMessage({
   item,
 }: {
   item: Extract<ConversationItem, { type: 'user_message' }>;
 }) {
-  return (
-    <div
-      className="rounded-base border-2 border-border bg-main p-3 text-sm text-main-foreground"
-      data-slot="user-message"
-    >
-      <div className="mb-1 text-xs font-bold uppercase text-main-foreground/70">You</div>
+  const content = (
+    <>
       {item.text ? <p className="whitespace-pre-wrap break-words">{item.text}</p> : null}
       {item.attachments?.length ? (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -548,6 +578,26 @@ const UserMessage = memo(function UserMessage({
           )}
         </div>
       ) : null}
+    </>
+  );
+  if (isCodexSessionContext(item)) {
+    return (
+      <details
+        className="rounded-base border-2 border-border bg-secondary-background text-sm"
+        data-slot="session-context"
+      >
+        <summary className="cursor-pointer px-3 py-2 font-medium">Session context</summary>
+        <div className="border-t-2 border-border p-3 text-muted-foreground">{content}</div>
+      </details>
+    );
+  }
+  return (
+    <div
+      className="rounded-base border-2 border-border bg-main p-3 text-sm text-main-foreground"
+      data-slot="user-message"
+    >
+      <div className="mb-1 text-xs font-bold uppercase text-main-foreground/70">You</div>
+      {content}
     </div>
   );
 });

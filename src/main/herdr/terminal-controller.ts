@@ -12,7 +12,10 @@ export interface TerminalProcess {
   stdout: Readable;
   stderr: Readable;
   once(event: 'error', listener: (error: Error) => void): this;
-  once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  once(
+    event: 'exit' | 'close',
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): this;
   kill(signal?: NodeJS.Signals): boolean;
 }
 
@@ -112,6 +115,7 @@ export class TerminalController {
       windowsHide: true,
     });
     this.child = child;
+    let closureReported = false;
 
     lines(child.stdout, (line) => {
       if (generation !== this.generation) {
@@ -119,6 +123,12 @@ export class TerminalController {
       }
       const event = terminalFrame(line, request.paneId);
       if (event) {
+        if (event.type === 'terminal.closed') {
+          if (closureReported) {
+            return;
+          }
+          closureReported = true;
+        }
         onEvent(event);
       }
     });
@@ -132,11 +142,16 @@ export class TerminalController {
         onEvent({ type: 'terminal.error', paneId: request.paneId, message: error.message });
       }
     });
-    child.once('exit', (code, signal) => {
+    // Wait for stdout to drain so a final protocol closure keeps its reason.
+    child.once('close', (code, signal) => {
       if (generation !== this.generation) {
         return;
       }
       this.child = null;
+      if (closureReported) {
+        return;
+      }
+      closureReported = true;
       const reason = signal
         ? `Herdr terminal controller exited with ${signal}.`
         : code
