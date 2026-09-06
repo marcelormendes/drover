@@ -805,6 +805,9 @@ function PersistentTerminalSurface({ pane, visible }: { pane: PaneInfo; visible:
                 ? (pane.scroll?.viewport_rows || 24) * request.amount
                 : request.amount,
             source: request.unit === 'page' ? 'page_key' : 'wheel',
+            ...(request.column === undefined ? {} : { column: request.column }),
+            ...(request.row === undefined ? {} : { row: request.row }),
+            ...(request.modifiers === undefined ? {} : { modifiers: request.modifiers }),
           })
         }
         pane={pane}

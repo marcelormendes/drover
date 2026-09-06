@@ -84,6 +84,9 @@ vi.mock('@/renderer/terminal/TerminalPanel', () => ({
       direction: 'up' | 'down';
       unit: 'line' | 'page';
       amount: number;
+      column?: number;
+      row?: number;
+      modifiers?: number;
     }) => void;
   }) => (
     <div data-testid={`terminal-${pane.pane_id}`}>
@@ -100,6 +103,22 @@ vi.mock('@/renderer/terminal/TerminalPanel', () => ({
         type="button"
       >
         Test canonical scroll
+      </button>
+      <button
+        onClick={() =>
+          onScrollRequest?.({
+            paneId: pane.pane_id,
+            direction: 'down',
+            unit: 'line',
+            amount: 3,
+            column: 17,
+            row: 8,
+            modifiers: 5,
+          })
+        }
+        type="button"
+      >
+        Test pointer wheel
       </button>
     </div>
   ),
@@ -2367,6 +2386,22 @@ describe('App', () => {
       direction: 'up',
       lines: 24,
       source: 'page_key',
+    });
+  });
+
+  it('preserves pointer cell and modifier information for terminal wheel routing', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Terminal view' }));
+    await user.click(await screen.findByRole('button', { name: 'Test pointer wheel' }));
+    expect(window.herdr.terminal.scroll).toHaveBeenCalledWith({
+      paneId: 'w1:p1',
+      direction: 'down',
+      lines: 3,
+      source: 'wheel',
+      column: 17,
+      row: 8,
+      modifiers: 5,
     });
   });
 
