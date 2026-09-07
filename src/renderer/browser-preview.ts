@@ -99,12 +99,16 @@ export function createBrowserPreviewApi(): DroverApi {
 
   const query = async (request: HerdrQuery): Promise<HerdrQueryResult> => {
     switch (request.type) {
+      case 'search-pane-output':
+        throw new Error('Terminal history search requires a connected Herdr engine.');
       case 'read-pane-output':
         return structuredClone(readOutput(request.paneId));
       case 'list-plugins':
         return { type: 'plugin-list', plugins: [] };
       case 'list-plugin-actions':
         return { type: 'plugin-action-list', actions: [] };
+      case 'get-integration-status':
+        return { type: 'integration-status', integrations: [] };
       case 'get-agent-manifests':
         return { type: 'agent-manifests', manifests: [] };
       case 'list-worktrees':

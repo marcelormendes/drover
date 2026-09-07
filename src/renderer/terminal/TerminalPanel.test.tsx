@@ -13,11 +13,6 @@ const sessionEvents = vi.hoisted(() => ({
     | ((event: { event: string; data: Record<string, unknown> }) => void)
     | undefined,
 }));
-const searchAddon = vi.hoisted(() => ({
-  findNext: vi.fn(),
-  findPrevious: vi.fn(),
-  clearDecorations: vi.fn(),
-}));
 const terminalControl = vi.hoisted(() => ({
   cols: 80,
   customKeyHandler: undefined as ((event: KeyboardEvent) => boolean) | undefined,
@@ -30,12 +25,20 @@ const terminalControl = vi.hoisted(() => ({
       }
     | undefined,
   paste: vi.fn(),
+  open: vi.fn(),
+  focus: vi.fn(),
+  dispose: vi.fn(),
   selection: '',
-  selectionListener: undefined as (() => void) | undefined,
   write: vi.fn(),
   reset: vi.fn(),
   rows: 24,
-  scrollToBottom: vi.fn(),
+}));
+const rendererControl = vi.hoisted(() => ({ install: vi.fn(), dispose: vi.fn() }));
+vi.mock('@/renderer/terminal/terminal-renderer', () => ({
+  installTerminalRenderer: (...args: unknown[]) => {
+    rendererControl.install(...args);
+    return { dispose: rendererControl.dispose };
+  },
 }));
 const webLinks = vi.hoisted(() => ({
   activate: undefined as ((event: MouseEvent, uri: string) => void) | undefined,
@@ -43,14 +46,6 @@ const webLinks = vi.hoisted(() => ({
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
     fit() {}
-  },
-}));
-
-vi.mock('@xterm/addon-search', () => ({
-  SearchAddon: class {
-    findNext = searchAddon.findNext;
-    findPrevious = searchAddon.findPrevious;
-    clearDecorations = searchAddon.clearDecorations;
   },
 }));
 
@@ -79,11 +74,12 @@ vi.mock('@xterm/xterm', () => ({
     loadAddon(addon: unknown) {
       terminalControl.loadedAddons.push(addon);
     }
-    open() {}
+    open = terminalControl.open;
+    focus = terminalControl.focus;
     write = terminalControl.write;
     paste = terminalControl.paste;
     reset = terminalControl.reset;
-    dispose() {}
+    dispose = terminalControl.dispose;
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       terminalControl.customKeyHandler = handler;
     }
@@ -93,11 +89,6 @@ vi.mock('@xterm/xterm', () => ({
     getSelection() {
       return terminalControl.selection;
     }
-    onSelectionChange(listener: () => void) {
-      terminalControl.selectionListener = listener;
-      return { dispose() {} };
-    }
-    scrollToBottom = terminalControl.scrollToBottom;
     onData(listener: (value: string) => void) {
       terminalControl.dataListener = listener;
       return { dispose() {} };
@@ -109,6 +100,7 @@ vi.mock('@xterm/xterm', () => ({
 }));
 
 import { TerminalPanel } from '@/renderer/terminal/TerminalPanel';
+import type { HerdrQuery, HerdrQueryResult } from '@/shared/desktop-api';
 import type { PaneInfo } from '@/shared/herdr';
 
 vi.stubGlobal(
@@ -134,6 +126,34 @@ const pane: PaneInfo = {
   revision: 1,
 };
 
+function openTerminalSearch(modifiers: KeyboardEventInit = { metaKey: true }) {
+  let intercepted: boolean | undefined;
+  act(() => {
+    intercepted = terminalControl.customKeyHandler?.(
+      new KeyboardEvent('keydown', { key: 'f', ...modifiers }),
+    );
+  });
+  expect(intercepted).toBe(false);
+}
+
+function searchPage(
+  query: string,
+  matchIndex: number | null = 0,
+  matchCount = 3,
+): Extract<HerdrQueryResult, { type: 'pane-search' }> {
+  return {
+    type: 'pane-search',
+    paneId: pane.pane_id,
+    terminalId: pane.terminal_id,
+    query,
+    caseSensitive: false,
+    matchCount,
+    matchIndex,
+    cursor: matchIndex === null ? null : `cursor-${matchIndex}`,
+    preview: matchIndex === null ? null : `retained history: ${query}`,
+  };
+}
+
 describe('TerminalPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -144,14 +164,18 @@ describe('TerminalPanel', () => {
     terminalControl.options = undefined;
     terminalControl.selection = '';
     terminalControl.paste.mockReset();
-    terminalControl.selectionListener = undefined;
     terminalControl.reset.mockReset();
     terminalControl.rows = 24;
     terminalControl.write.mockReset();
     resizeObserver.listener = undefined;
     webLinks.activate = undefined;
-    terminalControl.scrollToBottom.mockReset();
     window.herdr = {
+      command: vi.fn(async () => ({ state: 'connected' })),
+      query: vi.fn(async (request: HerdrQuery) =>
+        request.type === 'search-pane-output'
+          ? searchPage(request.query)
+          : { type: 'plugin-list', plugins: [] },
+      ),
       terminal: {
         open: vi.fn(async () => undefined),
         input: vi.fn(async () => undefined),
@@ -174,7 +198,16 @@ describe('TerminalPanel', () => {
 
   it('matches the desktop dark theme in the terminal palette', () => {
     render(<TerminalPanel pane={pane} />);
-    expect(terminalControl.options?.screenReaderMode).toBe(false);
+    expect(terminalControl.options).toMatchObject({
+      screenReaderMode: false,
+      fontFamily:
+        '"SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace',
+      fontSize: 14,
+      fontWeight: 300,
+      fontWeightBold: 500,
+      macOptionClickForcesSelection: true,
+    });
+    expect(terminalControl.options).not.toHaveProperty('lineHeight');
 
     expect(terminalControl.options?.theme).toEqual({
       background: '#0f0f10',
@@ -185,10 +218,17 @@ describe('TerminalPanel', () => {
     });
   });
 
-  it('uses xterm DOM rendering without a GPU context', () => {
-    render(<TerminalPanel pane={pane} />);
-
-    expect(terminalControl.loadedAddons).toHaveLength(3);
+  it('installs the renderer after open and releases it before disposing the terminal', () => {
+    const view = render(<TerminalPanel pane={pane} />);
+    expect(rendererControl.install).toHaveBeenCalledOnce();
+    expect(terminalControl.open.mock.invocationCallOrder[0]).toBeLessThan(
+      rendererControl.install.mock.invocationCallOrder[0],
+    );
+    view.unmount();
+    expect(rendererControl.dispose).toHaveBeenCalledOnce();
+    expect(rendererControl.dispose.mock.invocationCallOrder[0]).toBeLessThan(
+      terminalControl.dispose.mock.invocationCallOrder[0],
+    );
   });
 
   it('contains xterm intrinsic dimensions within the pane', () => {
@@ -267,121 +307,204 @@ describe('TerminalPanel', () => {
     await waitFor(() => expect(window.herdr.terminal.open).toHaveBeenCalledTimes(4));
   });
 
-  it('opens an accessible terminal search bar', async () => {
-    const user = userEvent.setup();
+  it.each([{ metaKey: true }, { ctrlKey: true }])(
+    'opens accessible terminal search with %j + F',
+    (modifiers) => {
+      render(<TerminalPanel pane={pane} />);
+
+      openTerminalSearch(modifiers);
+
+      expect(screen.getByRole('searchbox', { name: 'Search terminal history' })).toHaveFocus();
+      expect(screen.getByRole('button', { name: 'Previous search result' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Next search result' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Close terminal search' })).toBeInTheDocument();
+      expect(screen.getByText('Search retained terminal history.')).toBeVisible();
+    },
+  );
+
+  it('debounces typing and displays the engine match count and retained-line preview', async () => {
     render(<TerminalPanel pane={pane} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-
-    expect(screen.getByRole('searchbox', { name: 'Search terminal text' })).toHaveFocus();
-    expect(screen.getByRole('button', { name: 'Previous search result' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Next search result' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Close terminal search' })).toBeInTheDocument();
-  });
-
-  it('searches terminal output incrementally as the query changes', async () => {
-    const user = userEvent.setup();
-    render(<TerminalPanel pane={pane} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-    await user.type(screen.getByRole('searchbox', { name: 'Search terminal text' }), 'error');
-
-    expect(searchAddon.findNext).toHaveBeenLastCalledWith(
-      'error',
-      expect.objectContaining({ incremental: true }),
+    openTerminalSearch();
+    const input = screen.getByRole('searchbox', { name: 'Search terminal history' });
+    fireEvent.change(input, { target: { value: 'ear' } });
+    fireEvent.change(input, { target: { value: 'earlier' } });
+    expect(window.herdr.query).not.toHaveBeenCalled();
+    expect(screen.getByRole('status', { name: 'Terminal search status' })).toHaveTextContent(
+      'Searching…',
+    );
+    expect(await screen.findByText('1 of 3 matches')).toBeVisible();
+    expect(window.herdr.query).toHaveBeenCalledExactlyOnceWith({
+      type: 'search-pane-output',
+      paneId: 'w1:p2',
+      terminalId: 'terminal-2',
+      query: 'earlier',
+      caseSensitive: false,
+      direction: 'first',
+    });
+    expect(screen.getByLabelText('Selected terminal match')).toHaveTextContent(
+      'retained history: earlier',
     );
   });
 
-  it('navigates terminal search results with explicit controls', async () => {
-    const user = userEvent.setup();
+  it('delegates wrapping and fresh next/previous searches using engine cursors', async () => {
+    vi.mocked(window.herdr.query)
+      .mockResolvedValueOnce(searchPage('find', 2))
+      .mockResolvedValueOnce(searchPage('find', 0))
+      .mockResolvedValueOnce(searchPage('find', 2));
     render(<TerminalPanel pane={pane} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-    await user.type(screen.getByRole('searchbox', { name: 'Search terminal text' }), 'warning');
-    searchAddon.findNext.mockClear();
-
-    await user.click(screen.getByRole('button', { name: 'Next search result' }));
-    await user.click(screen.getByRole('button', { name: 'Previous search result' }));
-
-    expect(searchAddon.findNext).toHaveBeenCalledWith('warning');
-    expect(searchAddon.findPrevious).toHaveBeenCalledWith('warning');
+    openTerminalSearch();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'find' } });
+    await screen.findByText('3 of 3 matches');
+    fireEvent.click(screen.getByRole('button', { name: 'Next search result' }));
+    await screen.findByText('1 of 3 matches');
+    expect(window.herdr.query).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ direction: 'next', cursor: 'cursor-2' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Previous search result' }));
+    await screen.findByText('3 of 3 matches');
+    expect(window.herdr.query).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ direction: 'previous', cursor: 'cursor-0' }),
+    );
   });
 
-  it('opens terminal search from the focused terminal keyboard', async () => {
+  it('uses Enter immediately and Shift+Enter for the previous match', async () => {
     render(<TerminalPanel pane={pane} />);
-
-    expect(terminalControl.customKeyHandler).toEqual(expect.any(Function));
-    act(() => {
-      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'f', metaKey: true }));
-    });
-
-    expect(screen.getByRole('searchbox', { name: 'Search terminal text' })).toHaveFocus();
+    openTerminalSearch();
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'find' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await screen.findByText('1 of 3 matches');
+    expect(window.herdr.query).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ direction: 'next' }),
+    );
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    await waitFor(() => expect(window.herdr.query).toHaveBeenCalledTimes(2));
+    expect(window.herdr.query).toHaveBeenLastCalledWith(
+      expect.objectContaining({ direction: 'previous', cursor: 'cursor-0' }),
+    );
   });
 
-  it('uses Enter and Shift+Enter to traverse terminal search results', async () => {
-    const user = userEvent.setup();
-    render(<TerminalPanel pane={pane} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-    const search = screen.getByRole('searchbox', { name: 'Search terminal text' });
-    await user.type(search, 'failure');
-    searchAddon.findNext.mockClear();
-    await user.type(search, '{Enter}');
-    await user.keyboard('{Shift>}{Enter}{/Shift}');
-
-    expect(searchAddon.findNext).toHaveBeenCalledWith('failure');
-    expect(searchAddon.findPrevious).toHaveBeenCalledWith('failure');
+  it('serializes searches, coalesces waiting queries, and discards stale results', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (result: HerdrQueryResult) => void;
+      vi.mocked(window.herdr.query).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      render(<TerminalPanel pane={pane} />);
+      openTerminalSearch();
+      const input = screen.getByRole('searchbox');
+      fireEvent.change(input, { target: { value: 'old' } });
+      await act(async () => vi.advanceTimersByTime(200));
+      fireEvent.change(input, { target: { value: 'middle' } });
+      await act(async () => vi.advanceTimersByTime(200));
+      fireEvent.change(input, { target: { value: 'latest' } });
+      await act(async () => vi.advanceTimersByTime(200));
+      expect(window.herdr.query).toHaveBeenCalledTimes(1);
+      await act(async () => finish(searchPage('old')));
+      expect(window.herdr.query).toHaveBeenCalledTimes(2);
+      expect(window.herdr.query).toHaveBeenLastCalledWith(
+        expect.objectContaining({ query: 'latest', direction: 'first' }),
+      );
+      expect(screen.getByLabelText('Selected terminal match')).toHaveTextContent(
+        'retained history: latest',
+      );
+      expect(screen.queryByText('retained history: old')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('clears search decorations and query when terminal search closes', async () => {
-    const user = userEvent.setup();
+  it.each(['close', 'replace'] as const)(
+    'discards an in-flight result on %s and resets query/cursor',
+    async (action) => {
+      let finish!: (result: HerdrQueryResult) => void;
+      vi.mocked(window.herdr.query).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const view = render(<TerminalPanel pane={pane} />);
+      openTerminalSearch();
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'old' } });
+      fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' });
+      await waitFor(() => expect(window.herdr.query).toHaveBeenCalledOnce());
+      if (action === 'close') {
+        fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' });
+        expect(terminalControl.focus).toHaveBeenCalledOnce();
+      } else view.rerender(<TerminalPanel pane={{ ...pane, terminal_id: 'replacement' }} />);
+      await act(async () => finish(searchPage('old')));
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+      openTerminalSearch();
+      expect(screen.getByRole('searchbox')).toHaveValue('');
+      expect(screen.queryByText('1 of 3 matches')).not.toBeInTheDocument();
+      if (action === 'replace') {
+        fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'new' } });
+        fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' });
+        await waitFor(() => expect(window.herdr.query).toHaveBeenCalledTimes(2));
+        expect(window.herdr.query).toHaveBeenLastCalledWith(
+          expect.objectContaining({ terminalId: 'replacement', query: 'new' }),
+        );
+        expect(vi.mocked(window.herdr.query).mock.calls[1][0]).not.toHaveProperty('cursor');
+      }
+    },
+  );
+
+  it('shows no matches and cancels a waiting search when cleared or closed', async () => {
+    vi.mocked(window.herdr.query).mockResolvedValue(searchPage('absent', null, 0));
     render(<TerminalPanel pane={pane} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-    await user.type(screen.getByRole('searchbox', { name: 'Search terminal text' }), 'done');
-    await user.click(screen.getByRole('button', { name: 'Close terminal search' }));
-
-    expect(searchAddon.clearDecorations).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-    expect(screen.getByRole('searchbox', { name: 'Search terminal text' })).toHaveValue('');
+    openTerminalSearch();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'absent' } });
+    expect(await screen.findByText('No matches')).toBeVisible();
+    expect(screen.queryByLabelText('Selected terminal match')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Next search result' })).toBeDisabled();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'cancelled' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Close terminal search' }));
+    expect(terminalControl.focus).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
   });
 
-  it('closes terminal search with Escape', async () => {
-    const user = userEvent.setup();
+  it.each([
+    ['unknown method pane.search', 'Update Herdr to search terminal history.'],
+    ['Connection timed out.', 'Connection timed out.'],
+  ])('shows a precise search error for %s', async (error, expected) => {
+    vi.mocked(window.herdr.query).mockRejectedValue(new Error(error));
     render(<TerminalPanel pane={pane} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search terminal' }));
-    await user.type(screen.getByRole('searchbox', { name: 'Search terminal text' }), 'closed');
-    await user.keyboard('{Escape}');
-
-    expect(
-      screen.queryByRole('searchbox', { name: 'Search terminal text' }),
-    ).not.toBeInTheDocument();
-    expect(searchAddon.clearDecorations).toHaveBeenCalledOnce();
+    openTerminalSearch();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'find' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(expected);
+    expect(screen.queryByText('No matches')).not.toBeInTheDocument();
   });
 
-  it('copies the explicit terminal selection through Electron clipboard IPC', async () => {
-    const user = userEvent.setup();
+  it('copies terminal selection through Electron clipboard IPC with Cmd+C', async () => {
     render(<TerminalPanel pane={pane} />);
     terminalControl.selection = 'selected output';
-    act(() => terminalControl.selectionListener?.());
 
-    await user.click(screen.getByRole('button', { name: 'Copy terminal selection' }));
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'c', metaKey: true }));
+    });
 
     expect(window.herdr.terminal.writeClipboard).toHaveBeenCalledWith('selected output');
-    expect(screen.getByRole('status')).toHaveTextContent('Selection copied');
+    expect(await screen.findByRole('status')).toHaveTextContent('Selection copied');
   });
 
   it('announces when copying the terminal selection fails', async () => {
-    const user = userEvent.setup();
     vi.mocked(window.herdr.terminal.writeClipboard).mockRejectedValueOnce(
       new Error('permission denied'),
     );
     render(<TerminalPanel pane={pane} />);
     terminalControl.selection = 'selected output';
-    act(() => terminalControl.selectionListener?.());
 
-    await user.click(screen.getByRole('button', { name: 'Copy terminal selection' }));
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'c', metaKey: true }));
+    });
 
     expect(await screen.findByRole('status')).toHaveTextContent('Could not copy selection');
   });
@@ -389,7 +512,6 @@ describe('TerminalPanel', () => {
   it('copies with the standard terminal shortcut when a selection exists', async () => {
     render(<TerminalPanel pane={pane} />);
     terminalControl.selection = 'selected output';
-    act(() => terminalControl.selectionListener?.());
 
     const intercepted = terminalControl.customKeyHandler?.(
       new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, shiftKey: true }),
@@ -412,28 +534,165 @@ describe('TerminalPanel', () => {
     expect(window.herdr.terminal.writeClipboard).not.toHaveBeenCalled();
   });
 
-  it('pastes through xterm so bracketed-paste handling reaches the pane', async () => {
-    const user = userEvent.setup();
-    vi.mocked(window.herdr.terminal.readClipboard).mockResolvedValueOnce('pasted command');
+  it('pastes literal multiline text through Herdr so the real PTY controls bracketing', async () => {
+    const text = 'printf first\nprintf second';
+    vi.mocked(window.herdr.terminal.readClipboard).mockResolvedValueOnce(text);
     render(<TerminalPanel pane={pane} />);
-
-    await user.click(screen.getByRole('button', { name: 'Paste terminal clipboard' }));
-
-    expect(terminalControl.paste).toHaveBeenCalledWith('pasted command');
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'v', metaKey: true }));
+    });
+    await waitFor(() =>
+      expect(window.herdr.command).toHaveBeenCalledExactlyOnceWith({
+        type: 'send-pane-input',
+        paneId: 'w1:p2',
+        text,
+      }),
+    );
+    expect(terminalControl.paste).not.toHaveBeenCalled();
+    expect(window.herdr.terminal.input).not.toHaveBeenCalled();
     expect(screen.getByRole('status')).toHaveTextContent('Clipboard pasted');
+  });
+
+  it('delivers an asynchronous clipboard paste before the immediately following Return', async () => {
+    let finishClipboard!: (text: string) => void;
+    let finishPaste!: () => void;
+    vi.mocked(window.herdr.terminal.readClipboard).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishClipboard = resolve;
+        }),
+    );
+    vi.mocked(window.herdr.command).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPaste = () => resolve({ state: 'connected' } as never);
+        }),
+    );
+    render(<TerminalPanel pane={pane} />);
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'v', metaKey: true }));
+      terminalControl.dataListener?.('\r');
+    });
+    expect(window.herdr.terminal.input).not.toHaveBeenCalled();
+    await act(async () => finishClipboard('COPY_PASTE_OK'));
+    expect(window.herdr.command).toHaveBeenCalledExactlyOnceWith({
+      type: 'send-pane-input',
+      paneId: 'w1:p2',
+      text: 'COPY_PASTE_OK',
+    });
+    expect(window.herdr.terminal.input).not.toHaveBeenCalled();
+    await act(async () => finishPaste());
+    expect(window.herdr.terminal.input).toHaveBeenCalledExactlyOnceWith({
+      paneId: 'w1:p2',
+      text: '\r',
+    });
+  });
+
+  it('preserves key order across multiple clipboard reads that finish out of order', async () => {
+    const reads: Array<(text: string) => void> = [];
+    const delivered: string[] = [];
+    vi.mocked(window.herdr.terminal.readClipboard).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          reads.push(resolve);
+        }),
+    );
+    vi.mocked(window.herdr.command).mockImplementation(async (command) => {
+      if (command.type === 'send-pane-input') delivered.push(command.text ?? '');
+      return { state: 'connected' } as never;
+    });
+    vi.mocked(window.herdr.terminal.input).mockImplementation(async ({ text }) => {
+      delivered.push(text);
+    });
+    render(<TerminalPanel pane={pane} />);
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'v', metaKey: true }));
+      terminalControl.dataListener?.('1');
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'v', metaKey: true }));
+      terminalControl.dataListener?.('2');
+    });
+    expect(reads).toHaveLength(2);
+    await act(async () => reads[1]('second'));
+    expect(delivered).toEqual([]);
+    await act(async () => reads[0]('first'));
+    expect(delivered).toEqual(['first', '1', 'second', '2']);
+  });
+
+  it('discards pending paste and deferred input when the terminal changes panes', async () => {
+    let finishClipboard!: (text: string) => void;
+    vi.mocked(window.herdr.terminal.readClipboard).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishClipboard = resolve;
+        }),
+    );
+    const view = render(<TerminalPanel pane={pane} />);
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'v', metaKey: true }));
+      terminalControl.dataListener?.('\r');
+    });
+    view.rerender(<TerminalPanel pane={{ ...pane, pane_id: 'w1:p3' }} />);
+    await act(async () => finishClipboard('old pane text'));
+    expect(window.herdr.command).not.toHaveBeenCalled();
+    expect(window.herdr.terminal.input).not.toHaveBeenCalled();
+    act(() => terminalControl.dataListener?.('new pane input'));
+    expect(window.herdr.terminal.input).toHaveBeenCalledExactlyOnceWith({
+      paneId: 'w1:p3',
+      text: 'new pane input',
+    });
+  });
+
+  it('reports a failed clipboard read and releases following input', async () => {
+    let failClipboard!: (reason: Error) => void;
+    vi.mocked(window.herdr.terminal.readClipboard).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          failClipboard = reject;
+        }),
+    );
+    render(<TerminalPanel pane={pane} />);
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'v', metaKey: true }));
+      terminalControl.dataListener?.('after failure');
+    });
+    await act(async () => failClipboard(new Error('clipboard unavailable')));
+    expect(screen.getByRole('status')).toHaveTextContent('Could not paste clipboard');
+    expect(window.herdr.command).not.toHaveBeenCalled();
+    expect(window.herdr.terminal.input).toHaveBeenCalledExactlyOnceWith({
+      paneId: 'w1:p2',
+      text: 'after failure',
+    });
+  });
+
+  it('does not announce success when the engine rejects a paste', async () => {
+    vi.mocked(window.herdr.terminal.readClipboard).mockResolvedValueOnce('clipboard');
+    vi.mocked(window.herdr.command).mockResolvedValueOnce({
+      state: 'error',
+      message: 'pane unavailable',
+    });
+    render(<TerminalPanel pane={pane} />);
+    act(() => {
+      terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key: 'v', metaKey: true }));
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent('Could not paste clipboard');
   });
 
   it('pastes with Ctrl+Shift+V', async () => {
     vi.mocked(window.herdr.terminal.readClipboard).mockResolvedValueOnce('shortcut paste');
     render(<TerminalPanel pane={pane} />);
-
     const intercepted = terminalControl.customKeyHandler?.(
       new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, shiftKey: true }),
     );
-
     expect(intercepted).toBe(false);
-    await waitFor(() => expect(terminalControl.paste).toHaveBeenCalledWith('shortcut paste'));
+    await waitFor(() =>
+      expect(window.herdr.command).toHaveBeenCalledWith({
+        type: 'send-pane-input',
+        paneId: 'w1:p2',
+        text: 'shortcut paste',
+      }),
+    );
   });
+
   it('allows window zoom in, zoom out, and reset zoom shortcuts through the custom key handler', () => {
     render(<TerminalPanel pane={pane} />);
 
@@ -478,13 +737,15 @@ describe('TerminalPanel', () => {
     expect(onOpenExternal).toHaveBeenCalledTimes(2);
   });
 
-  it('scrolls the terminal viewport to the latest output', async () => {
-    const user = userEvent.setup();
-    render(<TerminalPanel pane={pane} />);
+  it('keeps the terminal clear of permanent overlay controls', () => {
+    render(<TerminalPanel onScrollRequest={vi.fn()} pane={pane} />);
 
-    await user.click(screen.getByRole('button', { name: 'Scroll terminal to bottom' }));
-
-    expect(terminalControl.scrollToBottom).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+    openTerminalSearch();
+    expect(screen.getAllByRole('button')).toHaveLength(3);
+    fireEvent.click(screen.getByRole('button', { name: 'Close terminal search' }));
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
   it('coalesces high-frequency wheel events into one engine scroll per frame', async () => {
@@ -502,31 +763,104 @@ describe('TerminalPanel', () => {
         direction: 'up',
         unit: 'line',
         amount: 60,
+        modifiers: 0,
       }),
     );
     expect(onScrollRequest).toHaveBeenCalledOnce();
   });
 
-  it('emits engine-backed page scrolling from explicit controls', async () => {
-    const user = userEvent.setup();
+  it('forwards coalesced wheel coordinates and modifiers from the terminal screen', async () => {
     const onScrollRequest = vi.fn();
     render(<TerminalPanel onScrollRequest={onScrollRequest} pane={pane} />);
+    const terminal = screen.getByRole('region', { name: 'Terminal output w1:p2' });
+    const screenElement = document.createElement('div');
+    screenElement.className = 'xterm-screen';
+    terminal.append(screenElement);
+    vi.spyOn(screenElement, 'getBoundingClientRect').mockReturnValue({
+      left: 20,
+      top: 10,
+      width: 800,
+      height: 240,
+    } as DOMRect);
+    // happy-dom's WheelEvent omits inherited mouse fields; supply the native
+    // browser fields explicitly so this exercises React's wheel normalization.
+    const wheelAt = (clientX: number, clientY: number, shiftKey = false, altKey = false) => {
+      const event = new WheelEvent('wheel', { deltaY: 40, bubbles: true });
+      Object.defineProperties(event, {
+        clientX: { value: clientX },
+        clientY: { value: clientY },
+        shiftKey: { value: shiftKey },
+        altKey: { value: altKey },
+      });
+      fireEvent(terminal, event);
+    };
+    wheelAt(120, 20);
+    wheelAt(320, 60, true, true);
+    await waitFor(() =>
+      expect(onScrollRequest).toHaveBeenCalledExactlyOnceWith({
+        paneId: 'w1:p2',
+        direction: 'down',
+        unit: 'line',
+        amount: 2,
+        column: 30,
+        row: 5,
+        modifiers: 5,
+      }),
+    );
+  });
 
-    await user.click(screen.getByRole('button', { name: 'Scroll terminal one page up' }));
-    await user.click(screen.getByRole('button', { name: 'Scroll terminal one page down' }));
-
-    expect(onScrollRequest).toHaveBeenNthCalledWith(1, {
-      paneId: 'w1:p2',
-      direction: 'up',
-      unit: 'page',
-      amount: 1,
+  it('retains sub-line wheel motion across frames and resets it on pane replacement', () => {
+    const onScrollRequest = vi.fn();
+    const view = render(<TerminalPanel onScrollRequest={onScrollRequest} pane={pane} />);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
     });
-    expect(onScrollRequest).toHaveBeenNthCalledWith(2, {
+    const terminal = screen.getByRole('region', { name: 'Terminal output w1:p2' });
+    const flushFrame = () =>
+      act(() => {
+        for (const callback of frames.splice(0)) callback(0);
+      });
+    fireEvent.wheel(terminal, { deltaY: 10 });
+    flushFrame();
+    expect(onScrollRequest).not.toHaveBeenCalled();
+    fireEvent.wheel(terminal, { deltaY: 30 });
+    flushFrame();
+    expect(onScrollRequest).toHaveBeenCalledExactlyOnceWith({
       paneId: 'w1:p2',
       direction: 'down',
-      unit: 'page',
+      unit: 'line',
       amount: 1,
+      modifiers: 0,
     });
+    onScrollRequest.mockClear();
+    fireEvent.wheel(terminal, { deltaY: 20 });
+    flushFrame();
+    view.rerender(
+      <TerminalPanel onScrollRequest={onScrollRequest} pane={{ ...pane, pane_id: 'w1:p3' }} />,
+    );
+    fireEvent.wheel(screen.getByRole('region', { name: 'Terminal output w1:p3' }), { deltaY: 20 });
+    flushFrame();
+    expect(onScrollRequest).not.toHaveBeenCalled();
+  });
+
+  it('leaves modified PageUp and PageDown for xterm to encode', () => {
+    const onScrollRequest = vi.fn();
+    render(<TerminalPanel onScrollRequest={onScrollRequest} pane={pane} />);
+    for (const key of ['PageUp', 'PageDown']) {
+      for (const modifiers of [
+        { ctrlKey: true },
+        { shiftKey: true },
+        { altKey: true },
+        { metaKey: true },
+      ]) {
+        expect(
+          terminalControl.customKeyHandler?.(new KeyboardEvent('keydown', { key, ...modifiers })),
+        ).toBe(true);
+      }
+    }
+    expect(onScrollRequest).not.toHaveBeenCalled();
   });
 
   it('emits engine-backed page scrolling from the focused terminal keyboard', () => {

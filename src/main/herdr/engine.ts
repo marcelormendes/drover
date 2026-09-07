@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { hostInvocation, sandboxPathFromHostPath } from '@/main/flatpak';
-import { HerdrApiClient } from '@/main/herdr/api-client';
+import { HerdrApiClient, HerdrApiError } from '@/main/herdr/api-client';
 import {
   decodeAttachmentBeginResult,
   decodeAttachmentFinishedResult,
@@ -239,7 +239,13 @@ function commandRequest(command: HerdrCommand): {
           pane_id: command.paneId,
           name: command.name,
           kind: command.kind,
-          args: command.args || [],
+          // A config override keeps Codex from reusing an unrelated local
+          // app-server whose hook environment lacks this pane's Herdr identity.
+          // Keep user overrides last so explicit launch preferences still win.
+          args:
+            command.kind === 'codex'
+              ? ['-c', 'features.hooks=true', ...(command.args || [])]
+              : command.args || [],
           timeout_ms: command.timeoutMs || 30_000,
         },
       };
@@ -517,11 +523,23 @@ function paneMoveDestination(destination: PaneMoveDestination): Record<string, u
   }
 }
 
-function queryRequest(query: HerdrQuery): {
+function queryRequest(query: Exclude<HerdrQuery, { type: 'get-integration-status' }>): {
   method: string;
   params: Record<string, unknown>;
 } {
   switch (query.type) {
+    case 'search-pane-output':
+      return {
+        method: 'pane.search',
+        params: {
+          pane_id: query.paneId,
+          terminal_id: query.terminalId,
+          query: query.query,
+          case_sensitive: query.caseSensitive ?? false,
+          direction: query.direction,
+          ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+        },
+      };
     case 'read-pane-output':
       // The server's 'text' format always strips ANSI (strip_ansi is only
       // honored in 'ansi' format). The chat surface needs the CLI's own
@@ -531,7 +549,7 @@ function queryRequest(query: HerdrQuery): {
         method: 'pane.read',
         params: {
           pane_id: query.paneId,
-          source: 'recent_unwrapped',
+          source: query.source ?? 'recent_unwrapped',
           format: query.ansi ? 'ansi' : 'text',
           strip_ansi: !query.ansi,
           ...(query.lines === undefined ? {} : { lines: query.lines }),
@@ -669,6 +687,12 @@ export class HerdrEngine {
   }
 
   async query(query: HerdrQuery): Promise<HerdrQueryResult> {
+    if (query.type === 'get-integration-status') {
+      // This CLI inspects local integration files and does not require a server.
+      // The main-process IPC handler must reject it when using a remote engine.
+      const { stdout } = await this.runner.run(['integration', 'status']);
+      return decodeHerdrQueryResult(query, stdout);
+    }
     const status = parseStatus((await this.runner.run(['status', '--json'])).stdout);
     if (!status.server.running) {
       throw new Error('Herdr server is not running.');
@@ -677,11 +701,26 @@ export class HerdrEngine {
       throw new Error('Herdr server protocol is incompatible.');
     }
     const request = queryRequest(query);
-    const result = await this.requestClient.request(
-      status.server.socket,
-      request.method,
-      request.params,
-    );
+    let result: unknown;
+    try {
+      result = await this.requestClient.request(
+        status.server.socket,
+        request.method,
+        request.params,
+      );
+    } catch (error) {
+      if (
+        query.type === 'search-pane-output' &&
+        error instanceof HerdrApiError &&
+        ((error.code === 'invalid_request' &&
+          /unknown variant [`'"]pane\.search[`'"]/.test(error.message)) ||
+          error.code === 'unknown_method' ||
+          error.code === 'method_not_found')
+      ) {
+        throw new Error('Update Herdr and reconnect to search terminal history.');
+      }
+      throw error;
+    }
     return decodeHerdrQueryResult(query, result);
   }
 

@@ -1,24 +1,21 @@
 import { FitAddon } from '@xterm/addon-fit';
-import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import {
-  ArrowDownToLine,
-  ChevronDown,
-  ChevronUp,
-  ClipboardPaste,
-  Copy,
-  RefreshCw,
-  Search,
-  X,
-} from 'lucide-react';
+import { ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { decodeTerminalBytes } from '@/renderer/terminal/terminal-codec';
+import { useTerminalHistorySearch } from '@/renderer/terminal/terminal-history-search';
 import { installTerminalImeMiddleInsertionFix } from '@/renderer/terminal/terminal-ime';
+import { installTerminalRenderer } from '@/renderer/terminal/terminal-renderer';
+import {
+  createTerminalWheelAccumulator,
+  terminalWheelModifiers,
+  terminalWheelPosition,
+} from '@/renderer/terminal/terminal-scroll';
 import type { PaneInfo } from '@/shared/herdr';
 
 interface TerminalPanelProps {
@@ -32,6 +29,9 @@ export interface TerminalScrollRequest {
   direction: 'up' | 'down';
   unit: 'line' | 'page';
   amount: number;
+  column?: number;
+  row?: number;
+  modifiers?: number;
 }
 
 function isHttpUrl(candidate: string): boolean {
@@ -45,11 +45,11 @@ function isHttpUrl(candidate: string): boolean {
 
 export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const searchAddonRef = useRef<SearchAddon>(null);
   const terminalRef = useRef<Terminal>(null);
   const connectionRef = useRef<{ restart: () => void } | null>(null);
   const wheelFrameRef = useRef<number | null>(null);
-  const wheelLinesRef = useRef(0);
+  const [wheelAccumulator] = useState(createTerminalWheelAccumulator);
+  const wheelPositionRef = useRef<Pick<TerminalScrollRequest, 'column' | 'row' | 'modifiers'>>({});
   const openExternalRef = useRef(onOpenExternal);
   openExternalRef.current = onOpenExternal;
   const scrollRequestRef = useRef(onScrollRequest);
@@ -59,15 +59,13 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   const retryRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const stableTimerRef = useRef<number | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [hasSelection, setHasSelection] = useState(false);
+  const search = useTerminalHistorySearch(pane.pane_id, pane.terminal_id);
+  const openSearch = search.openSearch;
   const [copyFeedback, setCopyFeedback] = useState('');
 
   const closeSearch = () => {
-    searchAddonRef.current?.clearDecorations();
-    setSearchQuery('');
-    setSearchOpen(false);
+    search.closeSearch();
+    terminalRef.current?.focus();
   };
 
   const copySelection = useCallback(async () => {
@@ -83,33 +81,20 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     }
   }, []);
 
-  const pasteClipboard = useCallback(async () => {
-    try {
-      const text = await window.herdr.terminal.readClipboard();
-      if (text) {
-        terminalRef.current?.paste(text);
-      }
-      setCopyFeedback(text ? 'Clipboard pasted' : 'Clipboard is empty');
-    } catch {
-      setCopyFeedback('Could not paste clipboard');
-    }
-  }, []);
-
-  const queueWheelScroll = (deltaY: number, deltaMode: number, viewportRows: number) => {
-    const magnitude =
-      deltaMode === 1
-        ? Math.abs(deltaY)
-        : deltaMode === 2
-          ? Math.abs(deltaY) * viewportRows
-          : Math.abs(deltaY) / 40;
-    wheelLinesRef.current += (deltaY < 0 ? -1 : 1) * Math.max(1, Math.round(magnitude));
+  const queueWheelScroll = (
+    deltaY: number,
+    deltaMode: number,
+    viewportRows: number,
+    position: Pick<TerminalScrollRequest, 'column' | 'row' | 'modifiers'>,
+  ) => {
+    wheelAccumulator.add(deltaY, deltaMode, viewportRows);
+    wheelPositionRef.current = position;
     if (wheelFrameRef.current !== null) {
       return;
     }
     wheelFrameRef.current = window.requestAnimationFrame(() => {
       wheelFrameRef.current = null;
-      const lines = wheelLinesRef.current;
-      wheelLinesRef.current = 0;
+      const lines = wheelAccumulator.takeLines();
       if (lines === 0) {
         return;
       }
@@ -118,6 +103,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         direction: lines < 0 ? 'up' : 'down',
         unit: 'line',
         amount: Math.abs(lines),
+        ...wheelPositionRef.current,
       });
     });
   };
@@ -132,9 +118,12 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       allowProposedApi: false,
       cursorBlink: true,
       cursorStyle: 'block',
-      fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-      fontSize: 13,
-      lineHeight: 1.2,
+      fontFamily:
+        '"SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace',
+      fontSize: 14,
+      fontWeight: 300,
+      fontWeightBold: 500,
+      macOptionClickForcesSelection: true,
       screenReaderMode: false,
       scrollback: 10_000,
       theme: {
@@ -147,7 +136,6 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     });
     terminalRef.current = terminal;
     const fitAddon = new FitAddon();
-    const searchAddon = new SearchAddon();
     const webLinksAddon = new WebLinksAddon((event, uri) => {
       if ((event.metaKey || event.ctrlKey) && isHttpUrl(uri)) {
         event.preventDefault();
@@ -155,13 +143,64 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       }
     });
     terminal.loadAddon(fitAddon);
-    terminal.loadAddon(searchAddon);
     terminal.loadAddon(webLinksAddon);
-    searchAddonRef.current = searchAddon;
     let disposed = false;
     let attachmentRequested = false;
     let everAttached = false;
     let receivedFrame = false;
+
+    // Clipboard IPC is asynchronous. Keep subsequent input behind its paste so
+    // a quick Return cannot execute the old prompt before the clipboard arrives.
+    // This queue belongs to this terminal instance and is abandoned on teardown.
+    let inputQueue = Promise.resolve();
+    let queuedInputs = 0;
+    const sendInput = async (text: string) => {
+      if (!disposed && attachmentRequested) {
+        await window.herdr.terminal.input({ paneId: pane.pane_id, text });
+      }
+    };
+    const enqueueInput = (operation: () => Promise<void>) => {
+      queuedInputs += 1;
+      inputQueue = inputQueue
+        .then(async () => {
+          if (!disposed) await operation();
+        })
+        .catch(() => {
+          if (!disposed) setCopyFeedback('Could not send terminal input');
+        })
+        .finally(() => {
+          queuedInputs -= 1;
+        });
+    };
+    const pasteClipboard = () => {
+      // Capture each clipboard read immediately, but apply its result in key order.
+      const clipboard = window.herdr.terminal.readClipboard().then(
+        (text) => ({ text }),
+        () => ({ text: undefined }),
+      );
+      enqueueInput(async () => {
+        const { text } = await clipboard;
+        if (disposed) return;
+        if (text === undefined) {
+          setCopyFeedback('Could not paste clipboard');
+          return;
+        }
+        if (text) {
+          // Herdr owns the real PTY's bracketed-paste mode. The renderer receives
+          // viewport frames, so xterm.paste() cannot safely infer that mode.
+          const result = await window.herdr.command({
+            type: 'send-pane-input',
+            paneId: pane.pane_id,
+            text,
+          });
+          if (result.state !== 'connected') {
+            if (!disposed) setCopyFeedback('Could not paste clipboard');
+            return;
+          }
+        }
+        if (!disposed) setCopyFeedback(text ? 'Clipboard pasted' : 'Clipboard is empty');
+      });
+    };
 
     const clearConnectionTimers = () => {
       if (retryTimerRef.current !== null) {
@@ -217,11 +256,20 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       })
       .catch(() => undefined);
     terminal.open(container);
+    const renderer = installTerminalRenderer(terminal, () => {
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        fitAddon.fit();
+      }
+    });
     const imeMiddleInsertionFix = installTerminalImeMiddleInsertionFix(terminal);
     terminal.attachCustomKeyEventHandler((event) => {
       if (
         event.type === 'keydown' &&
         (event.key === 'PageUp' || event.key === 'PageDown') &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
         scrollRequestRef.current
       ) {
         scrollRequestRef.current({
@@ -238,7 +286,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         !event.altKey &&
         event.key.toLowerCase() === 'f'
       ) {
-        setSearchOpen(true);
+        openSearch();
         return false;
       }
       if (
@@ -317,8 +365,10 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       }
     });
     const input = terminal.onData((value) => {
-      if (attachmentRequested) {
-        void window.herdr.terminal.input({ paneId: pane.pane_id, text: value });
+      if (queuedInputs > 0) {
+        enqueueInput(() => sendInput(value));
+      } else {
+        void sendInput(value);
       }
     });
     const resize = terminal.onResize(({ cols, rows }) => {
@@ -328,7 +378,6 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         attachWhenSized();
       }
     });
-    const selection = terminal.onSelectionChange(() => setHasSelection(terminal.hasSelection()));
     const stopSessionEvents = window.herdr.onSessionEvent((event) => {
       if (event.event === 'desktop.engine_changed') {
         restart();
@@ -359,31 +408,29 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       if (wheelFrameRef.current !== null) {
         window.cancelAnimationFrame(wheelFrameRef.current);
         wheelFrameRef.current = null;
-        wheelLinesRef.current = 0;
       }
+      wheelAccumulator.reset();
+      wheelPositionRef.current = {};
       stopEvents();
       stopSessionEvents();
       clearConnectionTimers();
       imeMiddleInsertionFix.dispose();
       input.dispose();
       resize.dispose();
-      selection.dispose();
+      renderer.dispose();
       terminal.dispose();
       if (terminalRef.current === terminal) {
         terminalRef.current = null;
       }
-      if (searchAddonRef.current === searchAddon) {
-        searchAddonRef.current = null;
-      }
       void window.herdr.terminal.close(pane.pane_id);
     };
-  }, [copySelection, pane.pane_id, pasteClipboard]);
+  }, [copySelection, openSearch, pane.pane_id, wheelAccumulator]);
 
   return (
     <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0f0f10]">
       <section
         aria-label={`Terminal output ${pane.pane_id}`}
-        className="h-full w-full p-3"
+        className="isolate h-full w-full p-3"
         onWheelCapture={(event) => {
           const onScroll = scrollRequestRef.current;
           if (!onScroll || event.deltaY === 0) {
@@ -391,113 +438,53 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
           }
           event.preventDefault();
           event.stopPropagation();
-          queueWheelScroll(event.deltaY, event.deltaMode, terminalRef.current?.rows ?? 24);
+          const terminal = terminalRef.current;
+          const screen = containerRef.current?.querySelector('.xterm-screen');
+          const position =
+            terminal && screen
+              ? terminalWheelPosition(
+                  event.clientX,
+                  event.clientY,
+                  screen.getBoundingClientRect(),
+                  terminal.cols,
+                  terminal.rows,
+                )
+              : undefined;
+          queueWheelScroll(event.deltaY, event.deltaMode, terminal?.rows ?? 24, {
+            ...position,
+            modifiers: terminalWheelModifiers(event),
+          });
         }}
         ref={containerRef}
       />
-      <div className="absolute right-3 top-3 flex items-center gap-2 opacity-50 transition-opacity focus-within:opacity-100 hover:opacity-100">
-        {onScrollRequest ? (
-          <>
-            <Button
-              aria-label="Scroll terminal one page up"
-              className="size-8"
-              onClick={() =>
-                scrollRequestRef.current?.({
-                  paneId: pane.pane_id,
-                  direction: 'up',
-                  unit: 'page',
-                  amount: 1,
-                })
-              }
-              size="icon"
-              variant="neutral"
-            >
-              <ChevronUp aria-hidden="true" />
-            </Button>
-            <Button
-              aria-label="Scroll terminal one page down"
-              className="size-8"
-              onClick={() =>
-                scrollRequestRef.current?.({
-                  paneId: pane.pane_id,
-                  direction: 'down',
-                  unit: 'page',
-                  amount: 1,
-                })
-              }
-              size="icon"
-              variant="neutral"
-            >
-              <ChevronDown aria-hidden="true" />
-            </Button>
-          </>
-        ) : null}
-        <Button
-          aria-label="Scroll terminal to bottom"
-          className="size-8"
-          onClick={() => terminalRef.current?.scrollToBottom()}
-          size="icon"
-          variant="neutral"
-        >
-          <ArrowDownToLine aria-hidden="true" />
-        </Button>
-        <Button
-          aria-label="Copy terminal selection"
-          className="size-8"
-          disabled={!hasSelection}
-          onClick={() => void copySelection()}
-          size="icon"
-          variant="neutral"
-        >
-          <Copy aria-hidden="true" />
-        </Button>
-        <Button
-          aria-label="Paste terminal clipboard"
-          className="size-8"
-          onClick={() => void pasteClipboard()}
-          size="icon"
-          variant="neutral"
-        >
-          <ClipboardPaste aria-hidden="true" />
-        </Button>
-        {searchOpen ? (
-          <div className="flex items-center gap-1 rounded-base border-2 border-border bg-secondary-background p-1 shadow-shadow">
+      {search.open ? (
+        <div className="absolute right-3 top-3 space-y-1 rounded-base border-2 border-border bg-secondary-background p-1 shadow-shadow">
+          <div className="flex items-center gap-1">
             <Input
-              aria-label="Search terminal text"
+              aria-label="Search terminal history"
               autoFocus
               className="h-8 w-52 bg-background text-foreground"
-              onChange={(event) => {
-                const query = event.target.value;
-                setSearchQuery(query);
-                if (query) {
-                  searchAddonRef.current?.findNext(query, { incremental: true });
-                } else {
-                  searchAddonRef.current?.clearDecorations();
-                }
-              }}
+              onChange={(event) => search.changeQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Escape') {
                   event.preventDefault();
                   closeSearch();
                   return;
                 }
-                if (event.key !== 'Enter' || !searchQuery) {
+                if (event.nativeEvent.isComposing || event.key !== 'Enter' || !search.query) {
                   return;
                 }
                 event.preventDefault();
-                if (event.shiftKey) {
-                  searchAddonRef.current?.findPrevious(searchQuery);
-                } else {
-                  searchAddonRef.current?.findNext(searchQuery);
-                }
+                search.navigate(event.shiftKey ? 'previous' : 'next');
               }}
               type="search"
-              value={searchQuery}
+              value={search.query}
             />
             <Button
               aria-label="Previous search result"
               className="size-8"
-              onClick={() => searchQuery && searchAddonRef.current?.findPrevious(searchQuery)}
+              disabled={!search.query || search.phase === 'searching'}
+              onClick={() => search.navigate('previous')}
               size="icon"
               variant="neutral"
             >
@@ -506,7 +493,8 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
             <Button
               aria-label="Next search result"
               className="size-8"
-              onClick={() => searchQuery && searchAddonRef.current?.findNext(searchQuery)}
+              disabled={!search.query || search.phase === 'searching'}
+              onClick={() => search.navigate('next')}
               size="icon"
               variant="neutral"
             >
@@ -522,18 +510,32 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
               <X aria-hidden="true" />
             </Button>
           </div>
-        ) : (
-          <Button
-            aria-label="Search terminal"
-            className="size-8"
-            onClick={() => setSearchOpen(true)}
-            size="icon"
-            variant="neutral"
-          >
-            <Search aria-hidden="true" />
-          </Button>
-        )}
-      </div>
+          <p className="px-1 text-xs opacity-70" role="status" aria-label="Terminal search status">
+            {search.phase === 'searching'
+              ? 'Searching…'
+              : search.result
+                ? search.result.matchIndex === null
+                  ? 'No matches'
+                  : `${search.result.matchIndex + 1} of ${search.result.matchCount} matches`
+                : search.error
+                  ? null
+                  : 'Search retained terminal history.'}
+          </p>
+          {search.error ? (
+            <p className="px-1 text-xs text-destructive" role="alert">
+              {search.error}
+            </p>
+          ) : null}
+          {search.result?.preview ? (
+            <section
+              aria-label="Selected terminal match"
+              className="max-h-16 max-w-sm overflow-auto whitespace-pre-wrap break-words px-1 font-mono text-xs"
+            >
+              {search.result.preview}
+            </section>
+          ) : null}
+        </div>
+      ) : null}
       {copyFeedback ? (
         <div className="sr-only" role="status">
           {copyFeedback}

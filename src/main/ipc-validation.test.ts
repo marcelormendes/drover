@@ -14,6 +14,33 @@ import {
 } from '@/main/ipc-validation';
 
 describe('IPC validation', () => {
+  it('validates terminal history search identity and bounds before sending it to Herdr', () => {
+    const query = {
+      type: 'search-pane-output',
+      paneId: 'w1:p2',
+      terminalId: 'term_123',
+      query: 'café',
+      direction: 'next',
+      cursor: 'opaque',
+    };
+    expect(parseHerdrQuery({ ...query, extra: 'ignored' })).toEqual(query);
+    expect(parseHerdrQuery({ ...query, query: '' })).toMatchObject({ query: '' });
+    for (const patch of [
+      { paneId: '../socket' },
+      { terminalId: '' },
+      { terminalId: undefined },
+      { terminalId: 't'.repeat(257) },
+      { query: 'é'.repeat(2049) },
+      { query: null },
+      { direction: 'last' },
+      { direction: undefined },
+      { cursor: 'é'.repeat(8193) },
+      { caseSensitive: 'true' },
+    ]) {
+      expect(() => parseHerdrQuery({ ...query, ...patch })).toThrow('Invalid Herdr query');
+    }
+  });
+
   it('accepts the finite Herdr command contract', () => {
     expect(parseHerdrCommand({ type: 'focus-pane', paneId: 'w1:p2' })).toEqual({
       type: 'focus-pane',
@@ -93,6 +120,16 @@ describe('IPC validation', () => {
       type: 'focus-pane',
       paneId: 'w2:pA',
     });
+    expect(
+      parseHerdrQuery({ type: 'read-pane-output', paneId: 'w1:p2', source: 'visible' }),
+    ).toEqual({
+      type: 'read-pane-output',
+      paneId: 'w1:p2',
+      source: 'visible',
+    });
+    expect(() =>
+      parseHerdrQuery({ type: 'read-pane-output', paneId: 'w1:p2', source: 'history' }),
+    ).toThrow();
     expect(parseHerdrQuery({ type: 'read-pane-output', paneId: 'wA:p11' })).toEqual({
       type: 'read-pane-output',
       paneId: 'wA:p11',
@@ -106,6 +143,9 @@ describe('IPC validation', () => {
     });
     expect(parseHerdrQuery({ type: 'get-agent-manifests' })).toEqual({
       type: 'get-agent-manifests',
+    });
+    expect(parseHerdrQuery({ type: 'get-integration-status' })).toEqual({
+      type: 'get-integration-status',
     });
     expect(parseHerdrQuery({ type: 'list-plugins', pluginId: 'example.review' })).toEqual({
       type: 'list-plugins',

@@ -3,6 +3,8 @@ import type {
   HerdrQuery,
   HerdrQueryResult,
   InstalledPluginInfo,
+  IntegrationStatusInfo,
+  IntegrationTarget,
   PluginActionContext,
   PluginActionInfo,
   PluginCommandDefinition,
@@ -15,6 +17,7 @@ import type {
   WorktreeInfo,
   WorktreeSourceInfo,
 } from '@/shared/desktop-api';
+import { INTEGRATION_TARGETS } from '@/shared/desktop-api';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -380,8 +383,104 @@ function invalid(name: string): never {
   throw new Error(`Herdr returned an invalid ${name} response.`);
 }
 
+function decodeIntegrationStatus(value: unknown): HerdrQueryResult {
+  if (typeof value !== 'string' || value.length > 128 * 1024 || !value.trim()) {
+    return invalid('integration status');
+  }
+  const integrations = new Map<string, IntegrationStatusInfo>();
+  const seen = new Set<string>();
+  for (const line of value.trim().split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const match =
+      /^(?<id>[a-z][a-z0-9_-]*): (?:(?<missing>not installed)|current \((?<current>v\d+)\)|needs repair \((?<repair>v\d+)\)|outdated \((?<installed>v\d+|legacy) < (?<expected>v\d+)\)) \((?<path>.+)\)$/.exec(
+        line,
+      );
+    const fields = match?.groups;
+    if (!fields || /\p{Cc}/u.test(fields.path)) {
+      return invalid('integration status');
+    }
+    const id = fields.id === 'antigravity-cli' ? 'antigravity_cli' : fields.id;
+    const version = fields.current ?? fields.repair ?? fields.installed;
+    if (
+      seen.has(id) ||
+      [version, fields.expected].some(
+        (item) =>
+          item !== undefined &&
+          item !== 'legacy' &&
+          (!/^v(?:0|[1-9]\d*)$/.test(item) || Number(item.slice(1)) > 0xffff_ffff),
+      ) ||
+      (fields.installed !== undefined &&
+        fields.installed !== 'legacy' &&
+        Number(fields.installed.slice(1)) >= Number(fields.expected.slice(1)))
+    ) {
+      return invalid('integration status');
+    }
+    seen.add(id);
+    // New engine versions may report providers this desktop does not expose.
+    // Validate their row format without inventing an install action for them.
+    if (!INTEGRATION_TARGETS.includes(id as IntegrationTarget)) continue;
+    integrations.set(id, {
+      id: id as IntegrationTarget,
+      status: fields.missing ? 'missing' : fields.current ? 'current' : 'outdated',
+      path: fields.path,
+      ...(version === undefined ? {} : { version }),
+      ...(fields.expected === undefined ? {} : { expectedVersion: fields.expected }),
+      ...(fields.repair === undefined ? {} : { needsRepair: true }),
+    });
+  }
+  // The CLI omits unsupported providers and paths it cannot resolve. Absence
+  // must not imply that a provider is installed or safe to install.
+  return {
+    type: 'integration-status',
+    integrations: INTEGRATION_TARGETS.map(
+      (id) => integrations.get(id) ?? { id, status: 'unavailable' },
+    ),
+  };
+}
+
 export function decodeHerdrQueryResult(query: HerdrQuery, value: unknown): HerdrQueryResult {
   switch (query.type) {
+    case 'search-pane-output': {
+      if (!isRecord(value) || value.type !== 'pane_search' || !isRecord(value.search)) {
+        return invalid('terminal search');
+      }
+      const search = value.search;
+      if (
+        search.pane_id !== query.paneId ||
+        search.terminal_id !== query.terminalId ||
+        search.query !== query.query ||
+        search.case_sensitive !== (query.caseSensitive ?? false) ||
+        typeof search.match_count !== 'number' ||
+        !Number.isSafeInteger(search.match_count) ||
+        search.match_count < 0 ||
+        (search.match_count === 0
+          ? search.match_index !== null || search.cursor !== null || search.preview !== null
+          : typeof search.match_index !== 'number' ||
+            !Number.isSafeInteger(search.match_index) ||
+            search.match_index < 0 ||
+            search.match_index >= search.match_count ||
+            !isString(search.cursor) ||
+            !search.cursor ||
+            Buffer.byteLength(search.cursor, 'utf8') > 16_384 ||
+            !isString(search.preview) ||
+            Buffer.byteLength(search.preview, 'utf8') > 16_384)
+      ) {
+        return invalid('terminal search');
+      }
+      return {
+        type: 'pane-search',
+        paneId: query.paneId,
+        terminalId: query.terminalId,
+        query: query.query,
+        caseSensitive: query.caseSensitive ?? false,
+        matchCount: search.match_count,
+        matchIndex: search.match_index as number | null,
+        cursor: search.cursor as string | null,
+        preview: search.preview as string | null,
+      };
+    }
+    case 'get-integration-status':
+      return decodeIntegrationStatus(value);
     case 'read-pane-output': {
       if (!isRecord(value) || value.type !== 'pane_read' || !isRecord(value.read)) {
         return invalid('pane output');
@@ -391,7 +490,7 @@ export function decodeHerdrQueryResult(query: HerdrQuery, value: unknown): Herdr
         !isString(read.pane_id) ||
         !isString(read.workspace_id) ||
         !isString(read.tab_id) ||
-        read.source !== 'recent_unwrapped' ||
+        read.source !== (query.source ?? 'recent_unwrapped') ||
         (read.format !== 'text' && read.format !== 'ansi') ||
         !isString(read.text) ||
         typeof read.revision !== 'number' ||

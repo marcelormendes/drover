@@ -10,16 +10,21 @@ vi.mock('@/renderer/chat/ConversationChatPanel', async () => {
       pane,
       agentReadiness,
       onOpenTerminal,
+      onConversationReady,
     }: {
       pane: { display_agent?: string; pane_id: string };
       agentReadiness?: { launch_pending: boolean; interactive_ready: boolean };
       onOpenTerminal?: () => void;
+      onConversationReady?: (ready: boolean) => void;
     }) => {
       const [draft, setDraft] = useState(() => drafts.get(pane.pane_id) ?? '');
       const [promptOutcome, setPromptOutcome] = useState('pending');
       useEffect(() => {
         void window.herdr.conversation.read({ target: pane.pane_id, direction: 'newest' });
       }, [pane.pane_id]);
+      useEffect(() => {
+        onConversationReady?.(false);
+      }, [onConversationReady]);
       return (
         <div
           data-testid={`chat-${pane.pane_id}`}
@@ -27,6 +32,9 @@ vi.mock('@/renderer/chat/ConversationChatPanel', async () => {
           data-interactive-ready={agentReadiness?.interactive_ready}
         >
           Chat with {pane.display_agent}
+          <button type="button" onClick={() => onConversationReady?.(true)}>
+            Test conversation ready
+          </button>
           <span>{draft}</span>
           <button
             onClick={() => {
@@ -76,6 +84,9 @@ vi.mock('@/renderer/terminal/TerminalPanel', () => ({
       direction: 'up' | 'down';
       unit: 'line' | 'page';
       amount: number;
+      column?: number;
+      row?: number;
+      modifiers?: number;
     }) => void;
   }) => (
     <div data-testid={`terminal-${pane.pane_id}`}>
@@ -92,6 +103,22 @@ vi.mock('@/renderer/terminal/TerminalPanel', () => ({
         type="button"
       >
         Test canonical scroll
+      </button>
+      <button
+        onClick={() =>
+          onScrollRequest?.({
+            paneId: pane.pane_id,
+            direction: 'down',
+            unit: 'line',
+            amount: 3,
+            column: 17,
+            row: 8,
+            modifiers: 5,
+          })
+        }
+        type="button"
+      >
+        Test pointer wheel
       </button>
     </div>
   ),
@@ -387,7 +414,9 @@ describe('App', () => {
       snapshot: terminalFirstSnapshot,
     });
 
+    const user = userEvent.setup();
     render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Terminal view' }));
 
     expect(await screen.findByTestId('terminal-w1:p1')).toBeVisible();
     expect(screen.getByTestId('chat-w1:p1').parentElement).toHaveStyle({ display: 'none' });
@@ -462,6 +491,315 @@ describe('App', () => {
       expect(screen.queryByTestId('terminal-w1:p1')).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Chat view' })).toBeEnabled();
       expect(screen.getByRole('button', { name: 'Terminal view' })).toBeEnabled();
+    },
+  );
+
+  it.each([
+    { launch_pending: true, interactive_ready: true },
+    { launch_pending: false, interactive_ready: false },
+  ])('handles provider setup inside Chat with readiness %j', async (readiness) => {
+    const user = userEvent.setup();
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    const setupSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1'
+          ? {
+              ...pane,
+              conversation_session: undefined,
+              conversation_capability: {
+                availability: 'unavailable',
+                reason: 'transcript_missing',
+              },
+            }
+          : pane,
+      ),
+      agents: snapshot.agents.map((agent) => ({ ...agent, ...readiness })),
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({ ...connected, snapshot: setupSnapshot });
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Agent setup' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Chat view' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.queryByRole('button', { name: 'Test send chat' })).not.toBeInTheDocument();
+    const terminal = await screen.findByTestId('terminal-w1:p1');
+    expect(terminal).toBeVisible();
+    expect(screen.getAllByTestId('terminal-w1:p1')).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: 'Terminal view' }));
+    expect(screen.getByTestId('terminal-w1:p1')).toBe(terminal);
+    expect(screen.queryByRole('heading', { name: 'Agent setup' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Chat view' }));
+    expect(screen.getByTestId('terminal-w1:p1')).toBe(terminal);
+    expect(screen.getByRole('heading', { name: 'Agent setup' })).toBeVisible();
+
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({
+      ...connected,
+      snapshot: { ...setupSnapshot, agents: snapshot.agents },
+    });
+    act(() => sessionEvent?.({ event: 'pane.agent_status_changed', data: {} }));
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Agent setup' })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: 'Test send chat' })).toBeVisible();
+    expect(screen.getByTestId('terminal-w1:p1')).toBe(terminal);
+    expect(terminal).not.toBeVisible();
+  });
+
+  it('preserves explicit Terminal selection when provider setup completes', async () => {
+    const user = userEvent.setup();
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    const setupSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1'
+          ? {
+              ...pane,
+              conversation_capability: { availability: 'unavailable', reason: 'no_session' },
+            }
+          : pane,
+      ),
+      agents: snapshot.agents.map((agent) => ({ ...agent, launch_pending: true })),
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({ ...connected, snapshot: setupSnapshot });
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Agent setup' });
+    const terminal = await screen.findByTestId('terminal-w1:p1');
+    await user.click(screen.getByRole('button', { name: 'Terminal view' }));
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue(connected);
+    act(() => sessionEvent?.({ event: 'pane.agent_status_changed', data: {} }));
+    await waitFor(() => expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('button', { name: 'Terminal view' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByTestId('terminal-w1:p1')).toBe(terminal);
+    expect(terminal).toBeVisible();
+    expect(screen.getByTestId('chat-w1:p1')).not.toBeVisible();
+  });
+
+  it('reveals an idle provider login prompt from the visible screen and returns to Chat when cleared', async () => {
+    const loginSnapshot: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1'
+          ? {
+              ...pane,
+              agent: 'claude',
+              display_agent: 'Claude',
+              agent_status: 'idle',
+              conversation_capability: { availability: 'unavailable', reason: 'no_session' },
+            }
+          : pane,
+      ),
+      agents: snapshot.agents.map((agent) => ({
+        ...agent,
+        agent: 'claude',
+        agent_status: 'idle',
+        launch_pending: false,
+        interactive_ready: true,
+      })),
+    };
+    let text = 'Login expired · Please run /login';
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({ ...connected, snapshot: loginSnapshot });
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'read-pane-output'
+        ? {
+            type: 'pane-output',
+            paneId: query.paneId,
+            workspaceId: 'w1',
+            tabId: 'w1:t1',
+            text,
+            revision: 0,
+            truncated: false,
+          }
+        : { type: 'plugin-list', plugins: [] },
+    );
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Agent setup' })).toBeVisible();
+    expect(window.herdr.query).toHaveBeenCalledWith({
+      type: 'read-pane-output',
+      paneId: 'w1:p1',
+      source: 'visible',
+      lines: 80,
+    });
+    const terminal = await screen.findByTestId('terminal-w1:p1');
+    expect(terminal).toBeVisible();
+    expect(screen.getAllByTestId('terminal-w1:p1')).toHaveLength(1);
+    expect(screen.getByTestId('chat-w1:p1')).not.toBeVisible();
+    text = '❯ Send a message';
+    await waitFor(
+      () => expect(screen.queryByRole('heading', { name: 'Agent setup' })).not.toBeInTheDocument(),
+      { timeout: 2500 },
+    );
+    expect(screen.getByTestId('chat-w1:p1')).toBeVisible();
+    expect(screen.getByTestId('terminal-w1:p1')).toBe(terminal);
+    expect(terminal).not.toBeVisible();
+    expect(window.herdr.command).not.toHaveBeenCalled();
+    expect(window.herdr.terminal.input).not.toHaveBeenCalled();
+  });
+
+  it('shows independently discovered Chat despite a stale capability and resets discovery for a new terminal', async () => {
+    const initial: SessionSnapshot = {
+      ...snapshot,
+      panes: snapshot.panes.map((pane) =>
+        pane.pane_id === 'w1:p1'
+          ? {
+              ...pane,
+              conversation_capability: {
+                availability: 'unavailable',
+                reason: 'transcript_missing',
+              },
+            }
+          : pane,
+      ),
+      agents: snapshot.agents.map((agent) => ({ ...agent, interactive_ready: false })),
+    };
+    let sessionEvent:
+      | ((event: { event: string; data: Record<string, unknown> }) => void)
+      | undefined;
+    window.herdr.onSessionEvent = vi.fn((listener) => {
+      sessionEvent = listener;
+      return () => undefined;
+    });
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({ ...connected, snapshot: initial });
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'read-pane-output'
+        ? {
+            type: 'pane-output',
+            paneId: query.paneId,
+            workspaceId: 'w1',
+            tabId: 'w1:t1',
+            text: 'Login expired · Please run /login',
+            revision: 0,
+            truncated: false,
+          }
+        : { type: 'plugin-list', plugins: [] },
+    );
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Agent setup' });
+    const terminal = await screen.findByTestId('terminal-w1:p1');
+    fireEvent.click(screen.getByText('Test conversation ready'));
+    await waitFor(() => expect(screen.getByTestId('chat-w1:p1')).toBeVisible());
+    expect(screen.queryByRole('heading', { name: 'Agent setup' })).not.toBeInTheDocument();
+    expect(terminal).not.toBeVisible();
+    const reads = vi
+      .mocked(window.herdr.query)
+      .mock.calls.filter(([query]) => query.type === 'read-pane-output').length;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+    });
+    expect(
+      vi
+        .mocked(window.herdr.query)
+        .mock.calls.filter(([query]) => query.type === 'read-pane-output'),
+    ).toHaveLength(reads);
+
+    const replacement: SessionSnapshot = {
+      ...initial,
+      panes: initial.panes.map((pane) => ({ ...pane, terminal_id: `${pane.terminal_id}-new` })),
+      agents: initial.agents.map((agent) => ({
+        ...agent,
+        terminal_id: `${agent.terminal_id}-new`,
+      })),
+    };
+    vi.mocked(window.herdr.bootstrap).mockResolvedValue({ ...connected, snapshot: replacement });
+    act(() => sessionEvent?.({ event: 'pane.agent_status_changed', data: {} }));
+    expect(await screen.findByRole('heading', { name: 'Agent setup' })).toBeVisible();
+    expect(screen.getByTestId('chat-w1:p1')).not.toBeVisible();
+    expect(screen.getAllByTestId('terminal-w1:p1')).toHaveLength(1);
+  });
+
+  it.each(['pane', 'provider', 'supported'] as const)(
+    'ignores a delayed setup-screen result after %s changes',
+    async (change) => {
+      const initial: SessionSnapshot = {
+        ...snapshot,
+        panes: snapshot.panes.map((pane) =>
+          pane.pane_id === 'w1:p1'
+            ? {
+                ...pane,
+                agent: 'claude',
+                conversation_capability: { availability: 'unavailable', reason: 'no_session' },
+              }
+            : pane,
+        ),
+      };
+      let sessionEvent:
+        | ((event: { event: string; data: Record<string, unknown> }) => void)
+        | undefined;
+      let finishRead:
+        | ((result: Awaited<ReturnType<typeof window.herdr.query>>) => void)
+        | undefined;
+      vi.mocked(window.herdr.bootstrap).mockResolvedValue({ ...connected, snapshot: initial });
+      window.herdr.onSessionEvent = vi.fn((listener) => {
+        sessionEvent = listener;
+        return () => undefined;
+      });
+      vi.mocked(window.herdr.query).mockImplementation((query) =>
+        query.type === 'read-pane-output' && !finishRead
+          ? new Promise((resolve) => {
+              finishRead = resolve;
+            })
+          : Promise.resolve({ type: 'plugin-list', plugins: [] }),
+      );
+      render(<App />);
+      await waitFor(() => expect(finishRead).toBeDefined());
+      const nextPaneId = change === 'pane' ? 'w1:p2' : 'w1:p1';
+      const next: SessionSnapshot = {
+        ...initial,
+        focused_pane_id: nextPaneId,
+        panes: initial.panes.map((pane) =>
+          pane.pane_id === 'w1:p1'
+            ? {
+                ...pane,
+                pane_id: nextPaneId,
+                ...(change === 'provider' ? { agent: 'codex', display_agent: 'Codex' } : {}),
+                ...(change === 'supported'
+                  ? {
+                      conversation_capability: {
+                        availability: 'supported' as const,
+                        reason: 'ready' as const,
+                      },
+                    }
+                  : {}),
+              }
+            : pane,
+        ),
+        agents: initial.agents.map((agent) => ({ ...agent, pane_id: nextPaneId })),
+      };
+      vi.mocked(window.herdr.bootstrap).mockResolvedValue({ ...connected, snapshot: next });
+      act(() => sessionEvent?.({ event: 'pane.agent_status_changed', data: {} }));
+      await waitFor(() => expect(window.herdr.bootstrap).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        finishRead?.({
+          type: 'pane-output',
+          paneId: 'w1:p1',
+          workspaceId: 'w1',
+          tabId: 'w1:t1',
+          text: 'Login expired · Please run /login',
+          revision: 0,
+          truncated: false,
+        });
+      });
+      expect(screen.queryByRole('heading', { name: 'Agent setup' })).not.toBeInTheDocument();
+      expect(screen.getByTestId(`chat-${nextPaneId}`)).toBeVisible();
+      expect(screen.queryByTestId(`terminal-${nextPaneId}`)).not.toBeInTheDocument();
     },
   );
 
@@ -992,7 +1330,7 @@ describe('App', () => {
       caseName: 'with native arguments',
       argumentText: '--full-auto --model gpt-5',
       args: ['--full-auto', '--model', 'gpt-5'],
-      expectedView: 'terminal',
+      expectedView: 'chat',
     },
   ])(
     'opens $expectedView after launching a supported agent $caseName',
@@ -1105,7 +1443,7 @@ describe('App', () => {
 
   it.each([
     { agentHasArguments: false, expectedView: 'chat' },
-    { agentHasArguments: true, expectedView: 'terminal' },
+    { agentHasArguments: true, expectedView: 'chat' },
   ])(
     'opens $expectedView after engine-confirmed agent process metadata',
     async ({ agentHasArguments, expectedView }) => {
@@ -1187,7 +1525,8 @@ describe('App', () => {
     });
     render(<App />);
 
-    expect(await screen.findByTestId('terminal-w1:p1')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Terminal view' }));
+    expect(await screen.findByTestId('terminal-w1:p1')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Chat view' }));
     expect(screen.getByTestId('chat-w1:p1')).toBeInTheDocument();
 
@@ -1213,6 +1552,7 @@ describe('App', () => {
     });
     render(<App />);
 
+    await user.click(await screen.findByRole('button', { name: 'Terminal view' }));
     const terminal = await screen.findByTestId('terminal-w1:p1');
     const surface = terminal.parentElement;
     expect(surface).toHaveClass('flex', 'min-h-0', 'min-w-0', 'flex-1', 'overflow-hidden');
@@ -1517,6 +1857,212 @@ describe('App', () => {
     expect(screen.getByRole('region', { name: 'Mobile session switcher' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /Agents, 1 total/i })).toBeInTheDocument();
   });
+
+  it('loads real integration statuses before enabling connector actions and refreshes them', async () => {
+    const user = userEvent.setup();
+    type IntegrationResponse = Extract<HerdrQueryResult, { type: 'integration-status' }>;
+    let finishRead!: (value: IntegrationResponse) => void;
+    const read = vi.fn(
+      () =>
+        new Promise<IntegrationResponse>((resolve) => {
+          finishRead = resolve;
+        }),
+    );
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'get-integration-status' ? read() : { type: 'plugin-list', plugins: [] },
+    );
+    render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByText('Checking integration status…')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Checking integrations…' })).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: /(?:Install|Repair) .* integration/ }),
+    ).not.toBeInTheDocument();
+    await act(async () =>
+      finishRead({
+        type: 'integration-status',
+        integrations: [
+          { id: 'codex', status: 'current', version: '12' },
+          { id: 'pi', status: 'missing' },
+          { id: 'omp', status: 'outdated' },
+          { id: 'claude', status: 'unavailable' },
+        ],
+      }),
+    );
+    expect(screen.getByText('Installed')).toBeVisible();
+    expect(screen.getByText('Not installed')).toBeVisible();
+    expect(screen.getByText('Needs attention')).toBeVisible();
+    expect(screen.getByText('Unavailable')).toBeVisible();
+    expect(screen.getByText('Connector 12 installed.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Repair Codex integration' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Install Pi integration' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Update OMP integration' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Install Claude Code integration' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Refresh integrations' }));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Repair Codex integration' })).toBeDisabled();
+    await act(async () =>
+      finishRead({
+        type: 'integration-status',
+        integrations: [{ id: 'pi', status: 'current', version: '11' }],
+      }),
+    );
+    expect(screen.getByRole('button', { name: 'Repair Pi integration' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Repair Codex integration' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { initialStatus: 'missing', reload: 'reopening' },
+    { initialStatus: 'current', reload: 'refresh' },
+  ] as const)(
+    'verifies $initialStatus connector installation and clears stale success on $reload',
+    async ({ initialStatus, reload }) => {
+      const user = userEvent.setup();
+      let status: 'missing' | 'current' = initialStatus;
+      vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+        query.type === 'get-integration-status'
+          ? { type: 'integration-status', integrations: [{ id: 'codex', status }] }
+          : { type: 'plugin-list', plugins: [] },
+      );
+      let finishCommand!: (value: EngineBootstrap) => void;
+      vi.mocked(window.herdr.command).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishCommand = resolve;
+          }),
+      );
+      render(<App />);
+      await screen.findByRole('heading', { name: 'drover' });
+      await user.click(screen.getByRole('button', { name: 'Settings' }));
+      const install = await screen.findByRole('button', {
+        name: `${initialStatus === 'current' ? 'Repair' : 'Install'} Codex integration`,
+      });
+      act(() => {
+        fireEvent.click(install);
+        fireEvent.click(install);
+      });
+      expect(window.herdr.command).toHaveBeenCalledTimes(1);
+      expect(window.herdr.command).toHaveBeenCalledWith({
+        type: 'install-integration',
+        target: 'codex',
+      });
+      expect(install).toBeDisabled();
+      expect(install).toHaveTextContent('Installing…');
+      expect(screen.getByRole('button', { name: 'Refresh integrations' })).toBeDisabled();
+      expect(screen.getByRole('switch', { name: 'Use a remote Herdr engine' })).toBeDisabled();
+      expect(screen.queryByText(/Connector installed successfully/)).not.toBeInTheDocument();
+      status = 'current';
+      await act(async () => finishCommand(connected));
+      const success = 'Connector installed successfully. Start a new agent session to load it.';
+      expect(await screen.findByText(success)).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Repair Codex integration' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Uninstall Codex integration' })).toBeEnabled();
+      // Another client removes the connector after this successful operation.
+      status = 'missing';
+      if (reload === 'reopening') {
+        await user.click(screen.getByRole('button', { name: 'Close' }));
+        await user.click(screen.getByRole('button', { name: 'Settings' }));
+      } else {
+        await user.click(screen.getByRole('button', { name: 'Refresh integrations' }));
+      }
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Install Codex integration' })).toBeEnabled(),
+      );
+      expect(screen.getByText('Not installed')).toBeVisible();
+      expect(screen.queryByText(success)).not.toBeInTheDocument();
+    },
+  );
+
+  it('verifies connector removal before offering installation again', async () => {
+    const user = userEvent.setup();
+    let status: 'current' | 'missing' = 'current';
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'get-integration-status'
+        ? { type: 'integration-status', integrations: [{ id: 'pi', status }] }
+        : { type: 'plugin-list', plugins: [] },
+    );
+    vi.mocked(window.herdr.command).mockImplementation(async () => {
+      status = 'missing';
+      return connected;
+    });
+    render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Uninstall Pi integration' }));
+    expect(window.herdr.command).toHaveBeenCalledWith({
+      type: 'uninstall-integration',
+      target: 'pi',
+    });
+    expect(await screen.findByText('Connector removed successfully.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Install Pi integration' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Uninstall Pi integration' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps a rejected connector operation retryable without showing success', async () => {
+    const user = userEvent.setup();
+    vi.mocked(window.herdr.query).mockImplementation(async (query) =>
+      query.type === 'get-integration-status'
+        ? { type: 'integration-status', integrations: [{ id: 'codex', status: 'missing' }] }
+        : { type: 'plugin-list', plugins: [] },
+    );
+    vi.mocked(window.herdr.command).mockRejectedValue(
+      new Error('Connector directory is not writable.'),
+    );
+    render(<App />);
+    await screen.findByRole('heading', { name: 'drover' });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Install Codex integration' }));
+    expect(await screen.findByText('Connector directory is not writable.')).toHaveAttribute(
+      'role',
+      'alert',
+    );
+    expect(screen.queryByText(/Connector installed successfully/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Install Codex integration' })).toBeEnabled();
+    expect(screen.getByText('Not installed')).toBeVisible();
+  });
+
+  it.each(['unreadable', 'unchanged'] as const)(
+    'does not claim installation success when verification is %s',
+    async (failure) => {
+      const user = userEvent.setup();
+      let verifying = false;
+      vi.mocked(window.herdr.query).mockImplementation(async (query) => {
+        if (query.type !== 'get-integration-status') return { type: 'plugin-list', plugins: [] };
+        if (verifying && failure === 'unreadable') throw new Error('Status lookup failed.');
+        return { type: 'integration-status', integrations: [{ id: 'omp', status: 'missing' }] };
+      });
+      vi.mocked(window.herdr.command).mockImplementation(async () => {
+        verifying = true;
+        return connected;
+      });
+      render(<App />);
+      await screen.findByRole('heading', { name: 'drover' });
+      await user.click(screen.getByRole('button', { name: 'Settings' }));
+      await user.click(await screen.findByRole('button', { name: 'Install OMP integration' }));
+      const message =
+        failure === 'unreadable'
+          ? 'The operation completed, but its status could not be verified. Refresh integrations to check.'
+          : 'Herdr completed the request, but the connector did not reach the expected status. Refresh or try again.';
+      expect(await screen.findByText(message)).toHaveAttribute('role', 'alert');
+      expect(screen.queryByText(/Connector installed successfully/)).not.toBeInTheDocument();
+      expect(screen.getByText('Not installed')).toBeVisible();
+      if (failure === 'unreadable') {
+        expect(screen.getByRole('button', { name: 'Install OMP integration' })).toBeDisabled();
+        verifying = false;
+        await user.click(screen.getByRole('button', { name: 'Refresh integrations' }));
+        await waitFor(() =>
+          expect(screen.getByRole('button', { name: 'Install OMP integration' })).toBeEnabled(),
+        );
+      }
+    },
+  );
 
   it('shows the active engine binary and can choose a new one without terminal setup', async () => {
     const user = userEvent.setup();
@@ -1840,6 +2386,22 @@ describe('App', () => {
       direction: 'up',
       lines: 24,
       source: 'page_key',
+    });
+  });
+
+  it('preserves pointer cell and modifier information for terminal wheel routing', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Terminal view' }));
+    await user.click(await screen.findByRole('button', { name: 'Test pointer wheel' }));
+    expect(window.herdr.terminal.scroll).toHaveBeenCalledWith({
+      paneId: 'w1:p1',
+      direction: 'down',
+      lines: 3,
+      source: 'wheel',
+      column: 17,
+      row: 8,
+      modifiers: 5,
     });
   });
 

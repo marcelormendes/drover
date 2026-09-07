@@ -699,18 +699,47 @@ export function parseHerdrQuery(value: unknown): HerdrQuery {
     throw new Error('Invalid Herdr query.');
   }
   switch (value.type) {
+    case 'search-pane-output':
+      if (
+        typeof value.paneId === 'string' &&
+        PANE_ID.test(value.paneId) &&
+        typeof value.terminalId === 'string' &&
+        value.terminalId.length > 0 &&
+        value.terminalId.length <= 256 &&
+        typeof value.query === 'string' &&
+        Buffer.byteLength(value.query, 'utf8') <= 4096 &&
+        (value.caseSensitive === undefined || typeof value.caseSensitive === 'boolean') &&
+        (value.direction === 'first' ||
+          value.direction === 'next' ||
+          value.direction === 'previous') &&
+        (value.cursor === undefined ||
+          (typeof value.cursor === 'string' && Buffer.byteLength(value.cursor, 'utf8') <= 16_384))
+      ) {
+        return {
+          type: value.type,
+          paneId: value.paneId,
+          terminalId: value.terminalId,
+          query: value.query,
+          direction: value.direction,
+          ...(value.caseSensitive === undefined ? {} : { caseSensitive: value.caseSensitive }),
+          ...(value.cursor === undefined ? {} : { cursor: value.cursor }),
+        };
+      }
+      break;
     case 'read-pane-output':
       if (
         typeof value.paneId === 'string' &&
         PANE_ID.test(value.paneId) &&
         (value.lines === undefined || (positiveInteger(value.lines) && value.lines <= 10_000)) &&
-        (value.ansi === undefined || typeof value.ansi === 'boolean')
+        (value.ansi === undefined || typeof value.ansi === 'boolean') &&
+        (value.source === undefined || value.source === 'visible')
       ) {
         return {
           type: value.type,
           paneId: value.paneId,
           ...(value.lines === undefined ? {} : { lines: value.lines }),
           ...(value.ansi === undefined ? {} : { ansi: value.ansi }),
+          ...(value.source === undefined ? {} : { source: value.source }),
         };
       }
       break;
@@ -728,6 +757,7 @@ export function parseHerdrQuery(value: unknown): HerdrQuery {
       }
       break;
     case 'get-agent-manifests':
+    case 'get-integration-status':
       return { type: value.type };
     case 'list-plugins':
     case 'list-plugin-actions':

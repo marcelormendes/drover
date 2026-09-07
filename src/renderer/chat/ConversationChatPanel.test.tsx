@@ -722,28 +722,25 @@ describe('ConversationChatPanel onboarding', () => {
         const initialPane = pane('w1:p1', {
           conversation_capability: { availability: 'unavailable', reason },
         });
-        render(<ConversationChatPanel pane={initialPane} />);
+        const onConversationReady = vi.fn();
+        render(
+          <ConversationChatPanel pane={initialPane} onConversationReady={onConversationReady} />,
+        );
         await act(async () => {
           await Promise.resolve();
         });
         expect(metadata).toHaveBeenCalledTimes(1);
         expect(read).not.toHaveBeenCalled();
-        expect(
-          screen.getByText(
-            'No conversation transcript yet. Your first prompt will start the conversation.',
-          ),
-        ).toBeInTheDocument();
+        expect(onConversationReady).toHaveBeenLastCalledWith(false);
+        expect(document.querySelector('[data-slot="chat-readiness"]')).not.toBeInTheDocument();
         await act(async () => {
           vi.advanceTimersByTime(1_500);
           await Promise.resolve();
         });
         expect(screen.getByText('answer 1')).toBeInTheDocument();
         expect(read).toHaveBeenCalledTimes(1);
-        expect(
-          screen.queryByText(
-            'No conversation transcript yet. Your first prompt will start the conversation.',
-          ),
-        ).not.toBeInTheDocument();
+        expect(onConversationReady).toHaveBeenLastCalledWith(true);
+        expect(document.querySelector('[data-slot="chat-readiness"]')).not.toBeInTheDocument();
         await act(async () => {
           vi.advanceTimersByTime(1_500);
           await Promise.resolve();
@@ -783,15 +780,16 @@ describe('ConversationChatPanel onboarding', () => {
           value: 'old-session',
         },
       });
-      const view = render(<ConversationChatPanel pane={initialPane} />);
+      const onConversationReady = vi.fn();
+      const view = render(
+        <ConversationChatPanel pane={initialPane} onConversationReady={onConversationReady} />,
+      );
       expect(await screen.findByText('answer 1')).toBeInTheDocument();
-      expect(
-        screen.queryByText(
-          'No conversation transcript yet. Your first prompt will start the conversation.',
-        ),
-      ).not.toBeInTheDocument();
+      expect(onConversationReady).toHaveBeenLastCalledWith(true);
+      expect(document.querySelector('[data-slot="chat-readiness"]')).not.toBeInTheDocument();
       const replacement = (
         <ConversationChatPanel
+          onConversationReady={onConversationReady}
           pane={{
             ...initialPane,
             agent_session: {
@@ -810,13 +808,10 @@ describe('ConversationChatPanel onboarding', () => {
         view.rerender(replacement);
       }
       await waitFor(() => expect(metadata).toHaveBeenCalledTimes(2));
-      expect(
-        screen.getByText(
-          'No conversation transcript yet. Your first prompt will start the conversation.',
-        ),
-      ).toBeInTheDocument();
+      expect(document.querySelector('[data-slot="chat-readiness"]')).not.toBeInTheDocument();
       expect(read).toHaveBeenCalledTimes(1);
       expect(screen.queryByText('answer 1')).not.toBeInTheDocument();
+      expect(onConversationReady).toHaveBeenLastCalledWith(false);
     },
   );
 
@@ -952,15 +947,17 @@ describe('ConversationChatPanel onboarding', () => {
         />,
       );
       const input = screen.getByRole('textbox', { name: 'Chat prompt' });
-      expect(input).toBeDisabled();
+      expect(input).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Preparing…' })).toBeDisabled();
       expect(
-        screen.getByText('Agent is starting. Chat will be ready when launch completes.'),
+        screen.getByText('Preparing your agent. You can write a message while it starts.'),
       ).toBeInTheDocument();
       fireEvent.change(input, { target: { value: 'first prompt' } });
       fireEvent.submit(input.closest('form') as HTMLFormElement);
       expect(prompt).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Open Terminal' }));
-      expect(openTerminal).toHaveBeenCalledOnce();
+      expect(input).toHaveValue('first prompt');
+      expect(screen.queryByRole('button', { name: 'Open Terminal' })).not.toBeInTheDocument();
+      expect(openTerminal).not.toHaveBeenCalled();
 
       view.rerender(
         <ConversationChatPanel
@@ -969,9 +966,11 @@ describe('ConversationChatPanel onboarding', () => {
         />,
       );
       expect(input).toBeEnabled();
+      expect(input).toHaveValue('first prompt');
+      expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
       fireEvent.submit(input.closest('form') as HTMLFormElement);
       await waitFor(() => expect(prompt).toHaveBeenCalledOnce());
-      expect(await screen.findByText('Sent · transcript unavailable')).toBeInTheDocument();
+      expect(await screen.findByText('Sent · waiting for conversation')).toBeInTheDocument();
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
     },
   );
@@ -995,27 +994,24 @@ describe('ConversationChatPanel onboarding', () => {
             conversation_capability: { availability: 'unavailable', reason },
           })}
           agentReadiness={{ launch_pending: false, interactive_ready: false }}
+          onOpenTerminal={vi.fn()}
         />,
       );
       const input = screen.getByRole('textbox', { name: 'Chat prompt' });
       expect(input).toBeEnabled();
-      expect(
-        screen.getByText(
-          'No conversation transcript yet. Your first prompt will start the conversation.',
-        ),
-      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Open Terminal' })).not.toBeInTheDocument();
+      expect(document.querySelector('[data-slot="chat-readiness"]')).not.toBeInTheDocument();
       fireEvent.change(input, { target: { value: 'create transcript' } });
       fireEvent.keyDown(input, { key: 'Enter' });
       await waitFor(() =>
         expect(prompt).toHaveBeenCalledWith({ target: 'w1:p1', text: 'create transcript' }),
       );
-      expect(await screen.findByText('Sent · transcript unavailable')).toBeInTheDocument();
+      expect(await screen.findByText('Sent · waiting for conversation')).toBeInTheDocument();
       expect(
-        screen.getByText(
-          'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.',
-        ),
+        screen.getByText('Message sent. Waiting for the agent’s conversation to become available.'),
       ).toBeInTheDocument();
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Open Terminal' })).not.toBeInTheDocument();
     },
   );
 
@@ -1045,7 +1041,7 @@ describe('ConversationChatPanel onboarding', () => {
 
     expect(await screen.findByText('Agent is blocked awaiting permission.')).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
-    expect(screen.queryByText('Sent · transcript unavailable')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sent · waiting for conversation')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
   });
 

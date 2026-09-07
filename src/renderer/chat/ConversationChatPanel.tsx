@@ -108,6 +108,7 @@ interface ConversationChatPanelProps {
   pane: PaneInfo;
   agentReadiness?: Pick<AgentInfo, 'launch_pending' | 'interactive_ready'>;
   onOpenTerminal?: () => void;
+  onConversationReady?: (ready: boolean) => void;
   visible?: boolean;
 }
 function itemText(items: readonly ConversationItem[]): string {
@@ -222,7 +223,7 @@ function ProviderWelcome({ pane, items }: { pane: PaneInfo; items: readonly Conv
           </p>
           <h2 className="mt-1 text-xl font-heading">{provider || 'Agent'}</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Start the conversation here. Terminal remains available at any time.
+            Send a message below to work with your agent.
           </p>
         </div>
         <dl className="mt-6 grid gap-3 text-sm">
@@ -250,6 +251,7 @@ function ConversationChatPanelForPane({
   pane,
   agentReadiness,
   onOpenTerminal,
+  onConversationReady,
   visible = true,
 }: ConversationChatPanelProps) {
   const cachedStore = conversationStoreByPane.get(pane.pane_id);
@@ -292,6 +294,9 @@ function ConversationChatPanelForPane({
       : paneCapability;
   const preSessionChat = isPreSessionConversationCapability(capability);
   const conversationReadable = capability?.availability === 'supported';
+  useEffect(() => {
+    onConversationReady?.(conversationReadable);
+  }, [conversationReadable, onConversationReady]);
   const planHistorySupported = pane.agent?.toLowerCase() !== 'claude';
   const paneWorking = pane.agent_status === 'working';
   const agentStarting = agentReadiness?.launch_pending === true;
@@ -299,11 +304,9 @@ function ConversationChatPanelForPane({
   // prompts while it is false. The engine enforces runtime and permission checks.
   const promptBlocked = agentStarting;
   const readinessMessage = agentStarting
-    ? 'Agent is starting. Chat will be ready when launch completes.'
-    : preSessionChat
-      ? store.pending.some((pending) => pending.status === 'syncing')
-        ? 'Prompt sent, but no conversation transcript is available yet. Open Terminal to check the agent.'
-        : 'No conversation transcript yet. Your first prompt will start the conversation.'
+    ? 'Preparing your agent. You can write a message while it starts.'
+    : preSessionChat && store.pending.some((pending) => pending.status === 'syncing')
+      ? 'Message sent. Waiting for the agent’s conversation to become available.'
       : undefined;
   const [statusStartedMs, setStatusStartedMs] = useState<number | undefined>(() =>
     workingStartedMsByPane.get(pane.pane_id),
@@ -1309,11 +1312,6 @@ function ConversationChatPanelForPane({
           data-slot="chat-readiness"
         >
           <p>{readinessMessage}</p>
-          {onOpenTerminal ? (
-            <Button className="mt-2" type="button" variant="neutral" onClick={onOpenTerminal}>
-              Open Terminal
-            </Button>
-          ) : null}
         </div>
       ) : null}
       {store.resetRequired ? (
@@ -1375,7 +1373,7 @@ function ConversationChatPanelForPane({
                     : pending.status === 'syncing'
                       ? conversationReadable
                         ? 'Syncing'
-                        : 'Sent · transcript unavailable'
+                        : 'Sent · waiting for conversation'
                       : 'Queued'}
                 </span>
               </div>
@@ -1516,7 +1514,7 @@ function ConversationChatPanelForPane({
             aria-haspopup="listbox"
             aria-label="Chat prompt"
             value={draft}
-            disabled={sending || promptBlocked}
+            disabled={sending}
             onChange={(event) => {
               setDraft(event.target.value);
               setSlashMenuSelectedIndex(0);
@@ -1572,7 +1570,7 @@ function ConversationChatPanelForPane({
               sending || promptBlocked || (draft.trim().length === 0 && attachments.length === 0)
             }
           >
-            {sending ? 'Sending…' : 'Send'}
+            {sending ? 'Sending…' : agentStarting ? 'Preparing…' : 'Send'}
           </Button>
         </div>
       </form>

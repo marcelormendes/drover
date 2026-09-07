@@ -337,7 +337,13 @@ function registerIpcHandlers(): void {
     if (demoMode) {
       return demoQueryResult(parseHerdrQuery(candidate));
     }
-    return engine.query(parseHerdrQuery(candidate));
+    const query = parseHerdrQuery(candidate);
+    if (query.type === 'get-integration-status' && remoteTunnel.active) {
+      throw new Error(
+        'Integration status is not available for remote engines. Check integrations on the remote host.',
+      );
+    }
+    return engine.query(query);
   });
 
   ipcMain.handle(IPC_CHANNELS.conversationRead, async (event, candidate: unknown) => {

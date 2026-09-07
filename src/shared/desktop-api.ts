@@ -238,6 +238,15 @@ export const INTEGRATION_TARGETS = [
 ] as const;
 
 export type IntegrationTarget = (typeof INTEGRATION_TARGETS)[number];
+
+export interface IntegrationStatusInfo {
+  id: IntegrationTarget;
+  status: 'current' | 'outdated' | 'missing' | 'unavailable';
+  version?: string;
+  expectedVersion?: string;
+  path?: string;
+  needsRepair?: boolean;
+}
 export type PluginPanePlacement = 'overlay' | 'popup' | 'split' | 'tab' | 'zoomed';
 export type PopupSize = number | `${number}%`;
 
@@ -266,9 +275,19 @@ export interface PluginInvocationContext {
 }
 
 export type HerdrQuery =
-  | { type: 'read-pane-output'; paneId: string; lines?: number; ansi?: boolean }
+  | { type: 'read-pane-output'; paneId: string; lines?: number; ansi?: boolean; source?: 'visible' }
+  | {
+      type: 'search-pane-output';
+      paneId: string;
+      terminalId: string;
+      query: string;
+      caseSensitive?: boolean;
+      direction: 'first' | 'next' | 'previous';
+      cursor?: string;
+    }
   | { type: 'list-worktrees'; workspaceId?: string; cwd?: string }
   | { type: 'get-agent-manifests' }
+  | { type: 'get-integration-status' }
   | { type: 'list-plugins'; pluginId?: string }
   | { type: 'list-plugin-actions'; pluginId?: string };
 
@@ -382,6 +401,18 @@ export interface PluginActionInfo {
 }
 
 export type HerdrQueryResult =
+  | { type: 'integration-status'; integrations: IntegrationStatusInfo[] }
+  | {
+      type: 'pane-search';
+      paneId: string;
+      terminalId: string;
+      query: string;
+      caseSensitive: boolean;
+      matchCount: number;
+      matchIndex: number | null;
+      cursor: string | null;
+      preview: string | null;
+    }
   | {
       type: 'pane-output';
       paneId: string;

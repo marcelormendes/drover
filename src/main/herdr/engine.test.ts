@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FLATPAK_APP_ID } from '@/main/flatpak';
+import { HerdrApiError } from '@/main/herdr/api-client';
 import {
   type HerdrCommandRunner,
   HerdrEngine,
@@ -313,7 +314,7 @@ describe('HerdrEngine.execute', () => {
         pane_id: 'w1:p1',
         name: 'reviewer',
         kind: 'codex',
-        args: [],
+        args: ['-c', 'features.hooks=true'],
         timeout_ms: 30_000,
       },
     },
@@ -331,10 +332,44 @@ describe('HerdrEngine.execute', () => {
         pane_id: 'w1:p1',
         name: 'reviewer',
         kind: 'codex',
-        args: ['--full-auto'],
+        args: ['-c', 'features.hooks=true', '--full-auto'],
         timeout_ms: 45_000,
       },
     },
+    {
+      command: {
+        type: 'start-agent',
+        paneId: 'w1:p1',
+        name: 'reviewer',
+        kind: 'codex',
+        args: ['-c', 'features.hooks=false', 'resume', 'session-id'],
+      },
+      method: 'agent.start',
+      params: {
+        pane_id: 'w1:p1',
+        name: 'reviewer',
+        kind: 'codex',
+        args: ['-c', 'features.hooks=true', '-c', 'features.hooks=false', 'resume', 'session-id'],
+        timeout_ms: 30_000,
+      },
+    },
+    ...(['claude', 'pi', 'omp'] as const).map((kind) => ({
+      command: {
+        type: 'start-agent' as const,
+        paneId: 'w1:p1',
+        name: 'reviewer',
+        kind,
+        args: ['--help'],
+      },
+      method: 'agent.start',
+      params: {
+        pane_id: 'w1:p1',
+        name: 'reviewer',
+        kind,
+        args: ['--help'],
+        timeout_ms: 30_000,
+      },
+    })),
     {
       command: { type: 'move-workspace', workspaceId: 'w2', insertIndex: 0 },
       method: 'workspace.move',
@@ -770,7 +805,98 @@ describe('HerdrEngine.conversationMetadata', () => {
 });
 
 describe('HerdrEngine.query', () => {
+  it('reads local integration status without a running server or socket request', async () => {
+    const runner = createRunner(async (args) => {
+      if (args.join(' ') !== 'integration status') throw new Error('Server is stopped');
+      return { stdout: 'codex: current (v9) (/tmp/codex.sh)\n', stderr: '' };
+    });
+    const requestClient = { request: vi.fn() };
+    const engine = new HerdrEngine(
+      runner,
+      { launch: vi.fn() },
+      async () => undefined,
+      requestClient,
+    );
+    const result = await engine.query({ type: 'get-integration-status' });
+    expect(runner.run).toHaveBeenCalledExactlyOnceWith(['integration', 'status']);
+    expect(requestClient.request).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      type: 'integration-status',
+      integrations: expect.arrayContaining([
+        { id: 'codex', status: 'current', version: 'v9', path: '/tmp/codex.sh' },
+      ]),
+    });
+  });
+
+  it('reports integration CLI failures instead of guessing installation state', async () => {
+    const runner = createRunner(async () => {
+      throw new Error('Herdr is unavailable');
+    });
+    const engine = new HerdrEngine(runner, { launch: vi.fn() });
+    await expect(engine.query({ type: 'get-integration-status' })).rejects.toThrow(
+      'Herdr is unavailable',
+    );
+  });
+
   it.each([
+    {
+      query: {
+        type: 'search-pane-output',
+        paneId: 'w1:p1',
+        terminalId: 'term_123',
+        query: 'older café',
+        direction: 'previous',
+        cursor: 'opaque-cursor',
+      } as const,
+      method: 'pane.search',
+      params: {
+        pane_id: 'w1:p1',
+        terminal_id: 'term_123',
+        query: 'older café',
+        case_sensitive: false,
+        direction: 'previous',
+        cursor: 'opaque-cursor',
+      },
+      wireResult: {
+        type: 'pane_search',
+        search: {
+          pane_id: 'w1:p1',
+          terminal_id: 'term_123',
+          query: 'older café',
+          case_sensitive: false,
+          match_count: 3,
+          match_index: 2,
+          cursor: 'next-cursor',
+          preview: 'Context: older café output',
+        },
+      },
+      expectedType: 'pane-search',
+    },
+    {
+      query: { type: 'read-pane-output', paneId: 'w1:p1', source: 'visible', lines: 80 } as const,
+      method: 'pane.read',
+      params: {
+        pane_id: 'w1:p1',
+        source: 'visible',
+        format: 'text',
+        strip_ansi: true,
+        lines: 80,
+      },
+      wireResult: {
+        type: 'pane_read',
+        read: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          tab_id: 'w1:t1',
+          source: 'visible',
+          format: 'text',
+          text: 'Login expired · Please run /login',
+          revision: 0,
+          truncated: false,
+        },
+      },
+      expectedType: 'pane-output',
+    },
     {
       query: { type: 'read-pane-output', paneId: 'w1:p1', lines: 500 } as const,
       method: 'pane.read',
@@ -935,6 +1061,68 @@ describe('HerdrEngine.query', () => {
       expect(result.type).toBe(expectedType);
     },
   );
+
+  it('rejects scrollback returned for a visible-screen query', async () => {
+    const runner = createRunner(async () => ({
+      stdout: JSON.stringify(runningStatus),
+      stderr: '',
+    }));
+    const engine = new HerdrEngine(runner, { launch: vi.fn() }, async () => undefined, {
+      request: vi.fn(async () => ({
+        type: 'pane_read',
+        read: {
+          pane_id: 'w1:p1',
+          workspace_id: 'w1',
+          tab_id: 'w1:t1',
+          source: 'recent_unwrapped',
+          format: 'text',
+          text: 'Login expired',
+          revision: 0,
+          truncated: false,
+        },
+      })),
+    });
+    await expect(
+      engine.query({ type: 'read-pane-output', paneId: 'w1:p1', source: 'visible' }),
+    ).rejects.toThrow('Herdr returned an invalid pane output response.');
+  });
+
+  it.each([
+    {
+      error: new HerdrApiError(
+        'invalid_request',
+        'unknown variant `pane.search`, expected pane.read',
+      ),
+      expected: 'Update Herdr and reconnect to search terminal history.',
+    },
+    {
+      error: new HerdrApiError('invalid_request', 'query exceeds the search limit'),
+      expected: 'query exceeds the search limit',
+    },
+    {
+      error: new HerdrApiError('terminal_mismatch', 'The terminal has been replaced.'),
+      expected: 'The terminal has been replaced.',
+    },
+  ])('reports history search failure accurately: $expected', async ({ error, expected }) => {
+    const runner = createRunner(async () => ({
+      stdout: JSON.stringify(runningStatus),
+      stderr: '',
+    }));
+    const engine = new HerdrEngine(runner, { launch: vi.fn() }, async () => undefined, {
+      request: vi.fn(async () => {
+        throw error;
+      }),
+    });
+    await expect(
+      engine.query({
+        type: 'search-pane-output',
+        paneId: 'w1:p1',
+        terminalId: 'term_123',
+        query: 'needle',
+        direction: 'first',
+      }),
+    ).rejects.toThrow(expected);
+  });
 
   it('rejects malformed feature query responses', async () => {
     const runner = createRunner(async () => ({
