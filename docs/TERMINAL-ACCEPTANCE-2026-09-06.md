@@ -46,8 +46,8 @@ Engine: 17 terminal-attachment tests passed serially, clippy/formatting passed,
 and the debug build used for the live wheel retest succeeded. An initial parallel
 engine test run encountered a listener address collision; the serial run passed.
 
-Search covers the visible renderer buffer, not all canonical Herdr scrollback.
-Its label and hint now state that older output must first be scrolled into view.
-Full-history search needs an engine API with paging/stable positions. No claim is
-made for every terminal application, OS, image clipboard format, native IME,
-or a measured rendering speedup.
+At the time of this QA pass, search covered only the visible renderer buffer.
+That limitation was subsequently addressed by the companion engine search API;
+see [terminal history search verification](TERMINAL-HISTORY-SEARCH-2026-09-06.md).
+No claim is made for every terminal application, OS, image clipboard format,
+native IME, or a measured rendering speedup.

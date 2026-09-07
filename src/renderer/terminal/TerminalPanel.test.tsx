@@ -13,11 +13,6 @@ const sessionEvents = vi.hoisted(() => ({
     | ((event: { event: string; data: Record<string, unknown> }) => void)
     | undefined,
 }));
-const searchAddon = vi.hoisted(() => ({
-  findNext: vi.fn(),
-  findPrevious: vi.fn(),
-  clearDecorations: vi.fn(),
-}));
 const terminalControl = vi.hoisted(() => ({
   cols: 80,
   customKeyHandler: undefined as ((event: KeyboardEvent) => boolean) | undefined,
@@ -51,14 +46,6 @@ const webLinks = vi.hoisted(() => ({
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
     fit() {}
-  },
-}));
-
-vi.mock('@xterm/addon-search', () => ({
-  SearchAddon: class {
-    findNext = searchAddon.findNext;
-    findPrevious = searchAddon.findPrevious;
-    clearDecorations = searchAddon.clearDecorations;
   },
 }));
 
@@ -113,6 +100,7 @@ vi.mock('@xterm/xterm', () => ({
 }));
 
 import { TerminalPanel } from '@/renderer/terminal/TerminalPanel';
+import type { HerdrQuery, HerdrQueryResult } from '@/shared/desktop-api';
 import type { PaneInfo } from '@/shared/herdr';
 
 vi.stubGlobal(
@@ -148,6 +136,24 @@ function openTerminalSearch(modifiers: KeyboardEventInit = { metaKey: true }) {
   expect(intercepted).toBe(false);
 }
 
+function searchPage(
+  query: string,
+  matchIndex: number | null = 0,
+  matchCount = 3,
+): Extract<HerdrQueryResult, { type: 'pane-search' }> {
+  return {
+    type: 'pane-search',
+    paneId: pane.pane_id,
+    terminalId: pane.terminal_id,
+    query,
+    caseSensitive: false,
+    matchCount,
+    matchIndex,
+    cursor: matchIndex === null ? null : `cursor-${matchIndex}`,
+    preview: matchIndex === null ? null : `retained history: ${query}`,
+  };
+}
+
 describe('TerminalPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -165,6 +171,11 @@ describe('TerminalPanel', () => {
     webLinks.activate = undefined;
     window.herdr = {
       command: vi.fn(async () => ({ state: 'connected' })),
+      query: vi.fn(async (request: HerdrQuery) =>
+        request.type === 'search-pane-output'
+          ? searchPage(request.query)
+          : { type: 'plugin-list', plugins: [] },
+      ),
       terminal: {
         open: vi.fn(async () => undefined),
         input: vi.fn(async () => undefined),
@@ -303,96 +314,173 @@ describe('TerminalPanel', () => {
 
       openTerminalSearch(modifiers);
 
-      expect(screen.getByRole('searchbox', { name: 'Search visible terminal text' })).toHaveFocus();
+      expect(screen.getByRole('searchbox', { name: 'Search terminal history' })).toHaveFocus();
       expect(screen.getByRole('button', { name: 'Previous search result' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Next search result' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Close terminal search' })).toBeInTheDocument();
-      expect(screen.getByText('Scroll older output into view to search it.')).toBeVisible();
+      expect(screen.getByText('Search retained terminal history.')).toBeVisible();
     },
   );
 
-  it('searches terminal output incrementally as the query changes', async () => {
-    const user = userEvent.setup();
+  it('debounces typing and displays the engine match count and retained-line preview', async () => {
     render(<TerminalPanel pane={pane} />);
-
     openTerminalSearch();
-    await user.type(
-      screen.getByRole('searchbox', { name: 'Search visible terminal text' }),
-      'error',
+    const input = screen.getByRole('searchbox', { name: 'Search terminal history' });
+    fireEvent.change(input, { target: { value: 'ear' } });
+    fireEvent.change(input, { target: { value: 'earlier' } });
+    expect(window.herdr.query).not.toHaveBeenCalled();
+    expect(screen.getByRole('status', { name: 'Terminal search status' })).toHaveTextContent(
+      'Searching…',
     );
-
-    expect(searchAddon.findNext).toHaveBeenLastCalledWith(
-      'error',
-      expect.objectContaining({ incremental: true }),
+    expect(await screen.findByText('1 of 3 matches')).toBeVisible();
+    expect(window.herdr.query).toHaveBeenCalledExactlyOnceWith({
+      type: 'search-pane-output',
+      paneId: 'w1:p2',
+      terminalId: 'terminal-2',
+      query: 'earlier',
+      caseSensitive: false,
+      direction: 'first',
+    });
+    expect(screen.getByLabelText('Selected terminal match')).toHaveTextContent(
+      'retained history: earlier',
     );
   });
 
-  it('navigates terminal search results with explicit controls', async () => {
-    const user = userEvent.setup();
+  it('delegates wrapping and fresh next/previous searches using engine cursors', async () => {
+    vi.mocked(window.herdr.query)
+      .mockResolvedValueOnce(searchPage('find', 2))
+      .mockResolvedValueOnce(searchPage('find', 0))
+      .mockResolvedValueOnce(searchPage('find', 2));
     render(<TerminalPanel pane={pane} />);
-
     openTerminalSearch();
-    await user.type(
-      screen.getByRole('searchbox', { name: 'Search visible terminal text' }),
-      'warning',
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'find' } });
+    await screen.findByText('3 of 3 matches');
+    fireEvent.click(screen.getByRole('button', { name: 'Next search result' }));
+    await screen.findByText('1 of 3 matches');
+    expect(window.herdr.query).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ direction: 'next', cursor: 'cursor-2' }),
     );
-    searchAddon.findNext.mockClear();
-
-    await user.click(screen.getByRole('button', { name: 'Next search result' }));
-    await user.click(screen.getByRole('button', { name: 'Previous search result' }));
-
-    expect(searchAddon.findNext).toHaveBeenCalledWith('warning');
-    expect(searchAddon.findPrevious).toHaveBeenCalledWith('warning');
+    fireEvent.click(screen.getByRole('button', { name: 'Previous search result' }));
+    await screen.findByText('3 of 3 matches');
+    expect(window.herdr.query).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ direction: 'previous', cursor: 'cursor-0' }),
+    );
   });
 
-  it('uses Enter and Shift+Enter to traverse terminal search results', async () => {
-    const user = userEvent.setup();
+  it('uses Enter immediately and Shift+Enter for the previous match', async () => {
     render(<TerminalPanel pane={pane} />);
-
     openTerminalSearch();
-    const search = screen.getByRole('searchbox', { name: 'Search visible terminal text' });
-    await user.type(search, 'failure');
-    searchAddon.findNext.mockClear();
-    await user.type(search, '{Enter}');
-    await user.keyboard('{Shift>}{Enter}{/Shift}');
-
-    expect(searchAddon.findNext).toHaveBeenCalledWith('failure');
-    expect(searchAddon.findPrevious).toHaveBeenCalledWith('failure');
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'find' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await screen.findByText('1 of 3 matches');
+    expect(window.herdr.query).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ direction: 'next' }),
+    );
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    await waitFor(() => expect(window.herdr.query).toHaveBeenCalledTimes(2));
+    expect(window.herdr.query).toHaveBeenLastCalledWith(
+      expect.objectContaining({ direction: 'previous', cursor: 'cursor-0' }),
+    );
   });
 
-  it('clears search decorations and query when terminal search closes', async () => {
-    const user = userEvent.setup();
+  it('serializes searches, coalesces waiting queries, and discards stale results', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (result: HerdrQueryResult) => void;
+      vi.mocked(window.herdr.query).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      render(<TerminalPanel pane={pane} />);
+      openTerminalSearch();
+      const input = screen.getByRole('searchbox');
+      fireEvent.change(input, { target: { value: 'old' } });
+      await act(async () => vi.advanceTimersByTime(200));
+      fireEvent.change(input, { target: { value: 'middle' } });
+      await act(async () => vi.advanceTimersByTime(200));
+      fireEvent.change(input, { target: { value: 'latest' } });
+      await act(async () => vi.advanceTimersByTime(200));
+      expect(window.herdr.query).toHaveBeenCalledTimes(1);
+      await act(async () => finish(searchPage('old')));
+      expect(window.herdr.query).toHaveBeenCalledTimes(2);
+      expect(window.herdr.query).toHaveBeenLastCalledWith(
+        expect.objectContaining({ query: 'latest', direction: 'first' }),
+      );
+      expect(screen.getByLabelText('Selected terminal match')).toHaveTextContent(
+        'retained history: latest',
+      );
+      expect(screen.queryByText('retained history: old')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['close', 'replace'] as const)(
+    'discards an in-flight result on %s and resets query/cursor',
+    async (action) => {
+      let finish!: (result: HerdrQueryResult) => void;
+      vi.mocked(window.herdr.query).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const view = render(<TerminalPanel pane={pane} />);
+      openTerminalSearch();
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'old' } });
+      fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' });
+      await waitFor(() => expect(window.herdr.query).toHaveBeenCalledOnce());
+      if (action === 'close') {
+        fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' });
+        expect(terminalControl.focus).toHaveBeenCalledOnce();
+      } else view.rerender(<TerminalPanel pane={{ ...pane, terminal_id: 'replacement' }} />);
+      await act(async () => finish(searchPage('old')));
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+      openTerminalSearch();
+      expect(screen.getByRole('searchbox')).toHaveValue('');
+      expect(screen.queryByText('1 of 3 matches')).not.toBeInTheDocument();
+      if (action === 'replace') {
+        fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'new' } });
+        fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Enter' });
+        await waitFor(() => expect(window.herdr.query).toHaveBeenCalledTimes(2));
+        expect(window.herdr.query).toHaveBeenLastCalledWith(
+          expect.objectContaining({ terminalId: 'replacement', query: 'new' }),
+        );
+        expect(vi.mocked(window.herdr.query).mock.calls[1][0]).not.toHaveProperty('cursor');
+      }
+    },
+  );
+
+  it('shows no matches and cancels a waiting search when cleared or closed', async () => {
+    vi.mocked(window.herdr.query).mockResolvedValue(searchPage('absent', null, 0));
     render(<TerminalPanel pane={pane} />);
-
     openTerminalSearch();
-    await user.type(
-      screen.getByRole('searchbox', { name: 'Search visible terminal text' }),
-      'done',
-    );
-    await user.click(screen.getByRole('button', { name: 'Close terminal search' }));
-
-    expect(searchAddon.clearDecorations).toHaveBeenCalledOnce();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'absent' } });
+    expect(await screen.findByText('No matches')).toBeVisible();
+    expect(screen.queryByLabelText('Selected terminal match')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Next search result' })).toBeDisabled();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'cancelled' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Close terminal search' }));
     expect(terminalControl.focus).toHaveBeenCalledOnce();
-    openTerminalSearch();
-    expect(screen.getByRole('searchbox', { name: 'Search visible terminal text' })).toHaveValue('');
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
   });
 
-  it('closes terminal search with Escape', async () => {
-    const user = userEvent.setup();
+  it.each([
+    ['unknown method pane.search', 'Update Herdr to search terminal history.'],
+    ['Connection timed out.', 'Connection timed out.'],
+  ])('shows a precise search error for %s', async (error, expected) => {
+    vi.mocked(window.herdr.query).mockRejectedValue(new Error(error));
     render(<TerminalPanel pane={pane} />);
-
     openTerminalSearch();
-    await user.type(
-      screen.getByRole('searchbox', { name: 'Search visible terminal text' }),
-      'closed',
-    );
-    await user.keyboard('{Escape}');
-
-    expect(
-      screen.queryByRole('searchbox', { name: 'Search visible terminal text' }),
-    ).not.toBeInTheDocument();
-    expect(searchAddon.clearDecorations).toHaveBeenCalledOnce();
-    expect(terminalControl.focus).toHaveBeenCalledOnce();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'find' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(expected);
+    expect(screen.queryByText('No matches')).not.toBeInTheDocument();
   });
 
   it('copies terminal selection through Electron clipboard IPC with Cmd+C', async () => {

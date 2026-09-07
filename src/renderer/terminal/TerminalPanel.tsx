@@ -1,5 +1,4 @@
 import { FitAddon } from '@xterm/addon-fit';
-import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import { ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react';
@@ -9,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { decodeTerminalBytes } from '@/renderer/terminal/terminal-codec';
+import { useTerminalHistorySearch } from '@/renderer/terminal/terminal-history-search';
 import { installTerminalImeMiddleInsertionFix } from '@/renderer/terminal/terminal-ime';
 import { installTerminalRenderer } from '@/renderer/terminal/terminal-renderer';
 import {
@@ -45,7 +45,6 @@ function isHttpUrl(candidate: string): boolean {
 
 export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const searchAddonRef = useRef<SearchAddon>(null);
   const terminalRef = useRef<Terminal>(null);
   const connectionRef = useRef<{ restart: () => void } | null>(null);
   const wheelFrameRef = useRef<number | null>(null);
@@ -60,14 +59,12 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
   const retryRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const stableTimerRef = useRef<number | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const search = useTerminalHistorySearch(pane.pane_id, pane.terminal_id);
+  const openSearch = search.openSearch;
   const [copyFeedback, setCopyFeedback] = useState('');
 
   const closeSearch = () => {
-    searchAddonRef.current?.clearDecorations();
-    setSearchQuery('');
-    setSearchOpen(false);
+    search.closeSearch();
     terminalRef.current?.focus();
   };
 
@@ -139,7 +136,6 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
     });
     terminalRef.current = terminal;
     const fitAddon = new FitAddon();
-    const searchAddon = new SearchAddon();
     const webLinksAddon = new WebLinksAddon((event, uri) => {
       if ((event.metaKey || event.ctrlKey) && isHttpUrl(uri)) {
         event.preventDefault();
@@ -147,9 +143,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       }
     });
     terminal.loadAddon(fitAddon);
-    terminal.loadAddon(searchAddon);
     terminal.loadAddon(webLinksAddon);
-    searchAddonRef.current = searchAddon;
     let disposed = false;
     let attachmentRequested = false;
     let everAttached = false;
@@ -292,7 +286,7 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         !event.altKey &&
         event.key.toLowerCase() === 'f'
       ) {
-        setSearchOpen(true);
+        openSearch();
         return false;
       }
       if (
@@ -428,12 +422,9 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
       if (terminalRef.current === terminal) {
         terminalRef.current = null;
       }
-      if (searchAddonRef.current === searchAddon) {
-        searchAddonRef.current = null;
-      }
       void window.herdr.terminal.close(pane.pane_id);
     };
-  }, [copySelection, pane.pane_id, wheelAccumulator]);
+  }, [copySelection, openSearch, pane.pane_id, wheelAccumulator]);
 
   return (
     <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0f0f10]">
@@ -466,45 +457,34 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
         }}
         ref={containerRef}
       />
-      {searchOpen ? (
+      {search.open ? (
         <div className="absolute right-3 top-3 space-y-1 rounded-base border-2 border-border bg-secondary-background p-1 shadow-shadow">
           <div className="flex items-center gap-1">
             <Input
-              aria-label="Search visible terminal text"
+              aria-label="Search terminal history"
               autoFocus
               className="h-8 w-52 bg-background text-foreground"
-              onChange={(event) => {
-                const query = event.target.value;
-                setSearchQuery(query);
-                if (query) {
-                  searchAddonRef.current?.findNext(query, { incremental: true });
-                } else {
-                  searchAddonRef.current?.clearDecorations();
-                }
-              }}
+              onChange={(event) => search.changeQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Escape') {
                   event.preventDefault();
                   closeSearch();
                   return;
                 }
-                if (event.key !== 'Enter' || !searchQuery) {
+                if (event.nativeEvent.isComposing || event.key !== 'Enter' || !search.query) {
                   return;
                 }
                 event.preventDefault();
-                if (event.shiftKey) {
-                  searchAddonRef.current?.findPrevious(searchQuery);
-                } else {
-                  searchAddonRef.current?.findNext(searchQuery);
-                }
+                search.navigate(event.shiftKey ? 'previous' : 'next');
               }}
               type="search"
-              value={searchQuery}
+              value={search.query}
             />
             <Button
               aria-label="Previous search result"
               className="size-8"
-              onClick={() => searchQuery && searchAddonRef.current?.findPrevious(searchQuery)}
+              disabled={!search.query || search.phase === 'searching'}
+              onClick={() => search.navigate('previous')}
               size="icon"
               variant="neutral"
             >
@@ -513,7 +493,8 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
             <Button
               aria-label="Next search result"
               className="size-8"
-              onClick={() => searchQuery && searchAddonRef.current?.findNext(searchQuery)}
+              disabled={!search.query || search.phase === 'searching'}
+              onClick={() => search.navigate('next')}
               size="icon"
               variant="neutral"
             >
@@ -529,7 +510,30 @@ export function TerminalPanel({ pane, onOpenExternal, onScrollRequest }: Termina
               <X aria-hidden="true" />
             </Button>
           </div>
-          <p className="px-1 text-xs opacity-70">Scroll older output into view to search it.</p>
+          <p className="px-1 text-xs opacity-70" role="status" aria-label="Terminal search status">
+            {search.phase === 'searching'
+              ? 'Searching…'
+              : search.result
+                ? search.result.matchIndex === null
+                  ? 'No matches'
+                  : `${search.result.matchIndex + 1} of ${search.result.matchCount} matches`
+                : search.error
+                  ? null
+                  : 'Search retained terminal history.'}
+          </p>
+          {search.error ? (
+            <p className="px-1 text-xs text-destructive" role="alert">
+              {search.error}
+            </p>
+          ) : null}
+          {search.result?.preview ? (
+            <section
+              aria-label="Selected terminal match"
+              className="max-h-16 max-w-sm overflow-auto whitespace-pre-wrap break-words px-1 font-mono text-xs"
+            >
+              {search.result.preview}
+            </section>
+          ) : null}
         </div>
       ) : null}
       {copyFeedback ? (

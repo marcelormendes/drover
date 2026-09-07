@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { hostInvocation, sandboxPathFromHostPath } from '@/main/flatpak';
-import { HerdrApiClient } from '@/main/herdr/api-client';
+import { HerdrApiClient, HerdrApiError } from '@/main/herdr/api-client';
 import {
   decodeAttachmentBeginResult,
   decodeAttachmentFinishedResult,
@@ -528,6 +528,18 @@ function queryRequest(query: Exclude<HerdrQuery, { type: 'get-integration-status
   params: Record<string, unknown>;
 } {
   switch (query.type) {
+    case 'search-pane-output':
+      return {
+        method: 'pane.search',
+        params: {
+          pane_id: query.paneId,
+          terminal_id: query.terminalId,
+          query: query.query,
+          case_sensitive: query.caseSensitive ?? false,
+          direction: query.direction,
+          ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+        },
+      };
     case 'read-pane-output':
       // The server's 'text' format always strips ANSI (strip_ansi is only
       // honored in 'ansi' format). The chat surface needs the CLI's own
@@ -689,11 +701,26 @@ export class HerdrEngine {
       throw new Error('Herdr server protocol is incompatible.');
     }
     const request = queryRequest(query);
-    const result = await this.requestClient.request(
-      status.server.socket,
-      request.method,
-      request.params,
-    );
+    let result: unknown;
+    try {
+      result = await this.requestClient.request(
+        status.server.socket,
+        request.method,
+        request.params,
+      );
+    } catch (error) {
+      if (
+        query.type === 'search-pane-output' &&
+        error instanceof HerdrApiError &&
+        ((error.code === 'invalid_request' &&
+          /unknown variant [`'"]pane\.search[`'"]/.test(error.message)) ||
+          error.code === 'unknown_method' ||
+          error.code === 'method_not_found')
+      ) {
+        throw new Error('Update Herdr and reconnect to search terminal history.');
+      }
+      throw error;
+    }
     return decodeHerdrQueryResult(query, result);
   }
 

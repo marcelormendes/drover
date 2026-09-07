@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FLATPAK_APP_ID } from '@/main/flatpak';
+import { HerdrApiError } from '@/main/herdr/api-client';
 import {
   type HerdrCommandRunner,
   HerdrEngine,
@@ -839,6 +840,39 @@ describe('HerdrEngine.query', () => {
 
   it.each([
     {
+      query: {
+        type: 'search-pane-output',
+        paneId: 'w1:p1',
+        terminalId: 'term_123',
+        query: 'older café',
+        direction: 'previous',
+        cursor: 'opaque-cursor',
+      } as const,
+      method: 'pane.search',
+      params: {
+        pane_id: 'w1:p1',
+        terminal_id: 'term_123',
+        query: 'older café',
+        case_sensitive: false,
+        direction: 'previous',
+        cursor: 'opaque-cursor',
+      },
+      wireResult: {
+        type: 'pane_search',
+        search: {
+          pane_id: 'w1:p1',
+          terminal_id: 'term_123',
+          query: 'older café',
+          case_sensitive: false,
+          match_count: 3,
+          match_index: 2,
+          cursor: 'next-cursor',
+          preview: 'Context: older café output',
+        },
+      },
+      expectedType: 'pane-search',
+    },
+    {
       query: { type: 'read-pane-output', paneId: 'w1:p1', source: 'visible', lines: 80 } as const,
       method: 'pane.read',
       params: {
@@ -1051,6 +1085,43 @@ describe('HerdrEngine.query', () => {
     await expect(
       engine.query({ type: 'read-pane-output', paneId: 'w1:p1', source: 'visible' }),
     ).rejects.toThrow('Herdr returned an invalid pane output response.');
+  });
+
+  it.each([
+    {
+      error: new HerdrApiError(
+        'invalid_request',
+        'unknown variant `pane.search`, expected pane.read',
+      ),
+      expected: 'Update Herdr and reconnect to search terminal history.',
+    },
+    {
+      error: new HerdrApiError('invalid_request', 'query exceeds the search limit'),
+      expected: 'query exceeds the search limit',
+    },
+    {
+      error: new HerdrApiError('terminal_mismatch', 'The terminal has been replaced.'),
+      expected: 'The terminal has been replaced.',
+    },
+  ])('reports history search failure accurately: $expected', async ({ error, expected }) => {
+    const runner = createRunner(async () => ({
+      stdout: JSON.stringify(runningStatus),
+      stderr: '',
+    }));
+    const engine = new HerdrEngine(runner, { launch: vi.fn() }, async () => undefined, {
+      request: vi.fn(async () => {
+        throw error;
+      }),
+    });
+    await expect(
+      engine.query({
+        type: 'search-pane-output',
+        paneId: 'w1:p1',
+        terminalId: 'term_123',
+        query: 'needle',
+        direction: 'first',
+      }),
+    ).rejects.toThrow(expected);
   });
 
   it('rejects malformed feature query responses', async () => {

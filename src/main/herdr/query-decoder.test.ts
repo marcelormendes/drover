@@ -7,6 +7,68 @@ function integrations(output: unknown) {
   return result.integrations;
 }
 
+describe('terminal history search decoding', () => {
+  const query = {
+    type: 'search-pane-output',
+    paneId: 'w1:p1',
+    terminalId: 'term_123',
+    query: 'needle',
+    direction: 'first',
+  } as const;
+  const search = {
+    pane_id: query.paneId,
+    terminal_id: query.terminalId,
+    query: query.query,
+    case_sensitive: false,
+    match_count: 2,
+    match_index: 0,
+    cursor: 'opaque',
+    preview: 'old needle output',
+  };
+
+  it('keeps the engine cursor and selected match context', () => {
+    expect(decodeHerdrQueryResult(query, { type: 'pane_search', search })).toEqual({
+      type: 'pane-search',
+      paneId: 'w1:p1',
+      terminalId: 'term_123',
+      query: 'needle',
+      caseSensitive: false,
+      matchCount: 2,
+      matchIndex: 0,
+      cursor: 'opaque',
+      preview: 'old needle output',
+    });
+  });
+
+  it('accepts an explicit empty result', () => {
+    expect(
+      decodeHerdrQueryResult(query, {
+        type: 'pane_search',
+        search: { ...search, match_count: 0, match_index: null, cursor: null, preview: null },
+      }),
+    ).toMatchObject({ matchCount: 0, matchIndex: null, cursor: null, preview: null });
+  });
+
+  it.each([
+    { pane_id: 'w1:p2' },
+    { terminal_id: 'term_replaced' },
+    { query: 'stale query' },
+    { case_sensitive: true },
+    { match_count: -1 },
+    { match_count: Number.MAX_SAFE_INTEGER + 1 },
+    { match_index: 2 },
+    { match_index: 0.5 },
+    { cursor: null },
+    { cursor: 'é'.repeat(8193) },
+    { preview: 'é'.repeat(8193) },
+    { match_count: 0 },
+  ])('rejects mismatched or malformed search results: %j', (patch) => {
+    expect(() =>
+      decodeHerdrQueryResult(query, { type: 'pane_search', search: { ...search, ...patch } }),
+    ).toThrow('invalid terminal search');
+  });
+});
+
 describe('integration status CLI decoding', () => {
   it('decodes current, outdated, repair, legacy and missing states without losing path punctuation', () => {
     const rows = integrations(

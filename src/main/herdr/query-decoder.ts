@@ -440,6 +440,45 @@ function decodeIntegrationStatus(value: unknown): HerdrQueryResult {
 
 export function decodeHerdrQueryResult(query: HerdrQuery, value: unknown): HerdrQueryResult {
   switch (query.type) {
+    case 'search-pane-output': {
+      if (!isRecord(value) || value.type !== 'pane_search' || !isRecord(value.search)) {
+        return invalid('terminal search');
+      }
+      const search = value.search;
+      if (
+        search.pane_id !== query.paneId ||
+        search.terminal_id !== query.terminalId ||
+        search.query !== query.query ||
+        search.case_sensitive !== (query.caseSensitive ?? false) ||
+        typeof search.match_count !== 'number' ||
+        !Number.isSafeInteger(search.match_count) ||
+        search.match_count < 0 ||
+        (search.match_count === 0
+          ? search.match_index !== null || search.cursor !== null || search.preview !== null
+          : typeof search.match_index !== 'number' ||
+            !Number.isSafeInteger(search.match_index) ||
+            search.match_index < 0 ||
+            search.match_index >= search.match_count ||
+            !isString(search.cursor) ||
+            !search.cursor ||
+            Buffer.byteLength(search.cursor, 'utf8') > 16_384 ||
+            !isString(search.preview) ||
+            Buffer.byteLength(search.preview, 'utf8') > 16_384)
+      ) {
+        return invalid('terminal search');
+      }
+      return {
+        type: 'pane-search',
+        paneId: query.paneId,
+        terminalId: query.terminalId,
+        query: query.query,
+        caseSensitive: query.caseSensitive ?? false,
+        matchCount: search.match_count,
+        matchIndex: search.match_index as number | null,
+        cursor: search.cursor as string | null,
+        preview: search.preview as string | null,
+      };
+    }
     case 'get-integration-status':
       return decodeIntegrationStatus(value);
     case 'read-pane-output': {

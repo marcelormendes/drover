@@ -276,6 +276,15 @@ export interface PluginInvocationContext {
 
 export type HerdrQuery =
   | { type: 'read-pane-output'; paneId: string; lines?: number; ansi?: boolean; source?: 'visible' }
+  | {
+      type: 'search-pane-output';
+      paneId: string;
+      terminalId: string;
+      query: string;
+      caseSensitive?: boolean;
+      direction: 'first' | 'next' | 'previous';
+      cursor?: string;
+    }
   | { type: 'list-worktrees'; workspaceId?: string; cwd?: string }
   | { type: 'get-agent-manifests' }
   | { type: 'get-integration-status' }
@@ -393,6 +402,17 @@ export interface PluginActionInfo {
 
 export type HerdrQueryResult =
   | { type: 'integration-status'; integrations: IntegrationStatusInfo[] }
+  | {
+      type: 'pane-search';
+      paneId: string;
+      terminalId: string;
+      query: string;
+      caseSensitive: boolean;
+      matchCount: number;
+      matchIndex: number | null;
+      cursor: string | null;
+      preview: string | null;
+    }
   | {
       type: 'pane-output';
       paneId: string;
