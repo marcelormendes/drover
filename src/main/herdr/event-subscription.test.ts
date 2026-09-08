@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +13,69 @@ afterEach(async () => {
 });
 
 describe('HerdrEventSubscription', () => {
+  it('refreshes from connected only after acknowledgement covers the snapshot gap', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'drover-events-order-'));
+    const socketPath = path.join(directory, 'api.sock');
+    let pending: { socket: Socket; id: string } | undefined;
+    let revision = 1;
+    const snapshots: number[] = [revision];
+    const states: string[] = [];
+    const server = createServer((socket) => {
+      let buffer = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        buffer += chunk;
+        const newline = buffer.indexOf('\n');
+        if (newline !== -1) {
+          pending = { socket, id: JSON.parse(buffer.slice(0, newline)).id };
+          // A reply for another request must not trigger snapshot refresh.
+          socket.write(
+            `${JSON.stringify({ id: 'other', result: { type: 'subscription_started' } })}\n`,
+          );
+          socket.write(
+            `${JSON.stringify({ event: 'pane.updated', data: { pane_id: 'w1:p1' } })}\n`,
+          );
+        }
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, resolve);
+    });
+    cleanup.push(
+      () => new Promise<void>((resolve) => server.close(() => resolve())),
+      () => rm(directory, { recursive: true }),
+    );
+    const onEvent = vi.fn();
+    const subscription = new HerdrEventSubscription(onEvent, vi.fn(), {
+      onStateChange: (state) => {
+        states.push(state);
+        // Mirrors the renderer's refresh on connected.
+        if (state === 'connected') snapshots.push(revision);
+      },
+    });
+    cleanup.push(async () => subscription.close());
+    subscription.open(socketPath, ['w1:p1']);
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledOnce());
+    expect(states).not.toContain('connected');
+    // This change happens after bootstrap but before subscription registration,
+    // so a live-only stream will never replay an event for it.
+    revision = 2;
+    pending?.socket.write(
+      `${JSON.stringify({ id: pending.id, result: { type: 'subscription_started' } })}\n`,
+    );
+    await vi.waitFor(() => expect(snapshots).toEqual([1, 2]));
+
+    // Conversation subscription changes have the same gap and must resync too.
+    subscription.setConversationPanes(['w1:p1']);
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledTimes(2));
+    revision = 3;
+    pending?.socket.write(
+      `${JSON.stringify({ id: pending.id, result: { type: 'subscription_started' } })}\n`,
+    );
+    await vi.waitFor(() => expect(snapshots).toEqual([1, 2, 3]));
+  });
+
   it('subscribes to lifecycle and pane-specific events, then forwards pushed envelopes', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'drover-events-'));
     const socketPath = path.join(directory, 'api.sock');

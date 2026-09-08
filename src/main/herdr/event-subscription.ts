@@ -65,9 +65,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseEvent(line: string): HerdrEventEnvelope | null {
+function parseEvent(value: unknown): HerdrEventEnvelope | null {
   try {
-    const value: unknown = JSON.parse(line);
     if (!isRecord(value) || typeof value.event !== 'string' || !isRecord(value.data)) {
       return null;
     }
@@ -113,6 +112,8 @@ export class HerdrEventSubscription {
     this.socket = socket;
     let buffer = '';
     let disconnected = false;
+    let acknowledged = false;
+    const requestId = `desktop:events:${randomUUID()}`;
 
     const handleDisconnect = (error?: Error) => {
       if (disconnected || generation !== this.generation || !this.target) {
@@ -136,22 +137,49 @@ export class HerdrEventSubscription {
       }
       socket.write(
         `${JSON.stringify({
-          id: `desktop:events:${randomUUID()}`,
+          id: requestId,
           method: 'events.subscribe',
           params: {
             subscriptions: subscriptionParams(target.paneIds, target.conversationPaneIds),
           },
         })}\n`,
       );
-      this.emitState('connected');
     });
     socket.on('data', (chunk) => {
+      if (generation !== this.generation || disconnected) {
+        return;
+      }
       buffer += chunk;
       let newline = buffer.indexOf('\n');
       while (newline !== -1) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
-        const event = parseEvent(line);
+        let value: unknown;
+        try {
+          value = JSON.parse(line);
+        } catch {
+          newline = buffer.indexOf('\n');
+          continue;
+        }
+        if (!acknowledged && isRecord(value) && value.id === requestId) {
+          if (isRecord(value.result) && value.result.type === 'subscription_started') {
+            acknowledged = true;
+            this.reconnectAttempt = 0;
+            // The renderer refreshes its snapshot on connected. Herdr 0.9
+            // starts subscriptions with live events, so refresh only after
+            // the server has registered them to cover the bootstrap gap.
+            this.emitState('connected');
+          } else {
+            const message =
+              isRecord(value.error) && typeof value.error.message === 'string'
+                ? value.error.message
+                : 'Herdr returned an invalid event subscription response.';
+            handleDisconnect(new Error(message));
+            socket.destroy();
+            return;
+          }
+        }
+        const event = parseEvent(value);
         if (event) {
           this.reconnectAttempt = 0;
           this.onEvent(event);
